@@ -24,7 +24,8 @@ export const Route = createFileRoute("/app")({
   component: AppLayout,
 });
 
-const items = [
+type NavItem = { title: string; url: string; icon: typeof Sparkles; exact?: boolean };
+const items: NavItem[] = [
   { title: "Dashboard", url: "/app", icon: Sparkles, exact: true },
   { title: "Gerador de ângulos", url: "/app/gerador", icon: Wand2 },
   { title: "Editor de vídeo", url: "/app/editor", icon: Video },
@@ -32,7 +33,8 @@ const items = [
   { title: "Fase de escala", url: "/app/escala", icon: TrendingUp },
   { title: "Histórico", url: "/app/historico", icon: History },
   { title: "Inteligência de nicho", url: "/app/inteligencia", icon: Brain },
-] as const;
+];
+
 
 function AppLayout() {
   return (

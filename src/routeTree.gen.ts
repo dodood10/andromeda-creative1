@@ -9,38 +9,144 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AppVslRouteImport } from './routes/app.vsl'
+import { Route as AppInteligenciaRouteImport } from './routes/app.inteligencia'
+import { Route as AppHistoricoRouteImport } from './routes/app.historico'
+import { Route as AppGeradorRouteImport } from './routes/app.gerador'
+import { Route as AppEscalaRouteImport } from './routes/app.escala'
+import { Route as AppEditorRouteImport } from './routes/app.editor'
 
+const AppRoute = AppRouteImport.update({
+  id: '/app',
+  path: '/app',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppVslRoute = AppVslRouteImport.update({
+  id: '/vsl',
+  path: '/vsl',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppInteligenciaRoute = AppInteligenciaRouteImport.update({
+  id: '/inteligencia',
+  path: '/inteligencia',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppHistoricoRoute = AppHistoricoRouteImport.update({
+  id: '/historico',
+  path: '/historico',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppGeradorRoute = AppGeradorRouteImport.update({
+  id: '/gerador',
+  path: '/gerador',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppEscalaRoute = AppEscalaRouteImport.update({
+  id: '/escala',
+  path: '/escala',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppEditorRoute = AppEditorRouteImport.update({
+  id: '/editor',
+  path: '/editor',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/app': typeof AppRouteWithChildren
+  '/app/editor': typeof AppEditorRoute
+  '/app/escala': typeof AppEscalaRoute
+  '/app/gerador': typeof AppGeradorRoute
+  '/app/historico': typeof AppHistoricoRoute
+  '/app/inteligencia': typeof AppInteligenciaRoute
+  '/app/vsl': typeof AppVslRoute
+  '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/app/editor': typeof AppEditorRoute
+  '/app/escala': typeof AppEscalaRoute
+  '/app/gerador': typeof AppGeradorRoute
+  '/app/historico': typeof AppHistoricoRoute
+  '/app/inteligencia': typeof AppInteligenciaRoute
+  '/app/vsl': typeof AppVslRoute
+  '/app': typeof AppIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/app': typeof AppRouteWithChildren
+  '/app/editor': typeof AppEditorRoute
+  '/app/escala': typeof AppEscalaRoute
+  '/app/gerador': typeof AppGeradorRoute
+  '/app/historico': typeof AppHistoricoRoute
+  '/app/inteligencia': typeof AppInteligenciaRoute
+  '/app/vsl': typeof AppVslRoute
+  '/app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/app'
+    | '/app/editor'
+    | '/app/escala'
+    | '/app/gerador'
+    | '/app/historico'
+    | '/app/inteligencia'
+    | '/app/vsl'
+    | '/app/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/app/editor'
+    | '/app/escala'
+    | '/app/gerador'
+    | '/app/historico'
+    | '/app/inteligencia'
+    | '/app/vsl'
+    | '/app'
+  id:
+    | '__root__'
+    | '/'
+    | '/app'
+    | '/app/editor'
+    | '/app/escala'
+    | '/app/gerador'
+    | '/app/historico'
+    | '/app/inteligencia'
+    | '/app/vsl'
+    | '/app/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/app': {
+      id: '/app'
+      path: '/app'
+      fullPath: '/app'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -48,11 +154,83 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/': {
+      id: '/app/'
+      path: '/'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/vsl': {
+      id: '/app/vsl'
+      path: '/vsl'
+      fullPath: '/app/vsl'
+      preLoaderRoute: typeof AppVslRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/inteligencia': {
+      id: '/app/inteligencia'
+      path: '/inteligencia'
+      fullPath: '/app/inteligencia'
+      preLoaderRoute: typeof AppInteligenciaRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/historico': {
+      id: '/app/historico'
+      path: '/historico'
+      fullPath: '/app/historico'
+      preLoaderRoute: typeof AppHistoricoRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/gerador': {
+      id: '/app/gerador'
+      path: '/gerador'
+      fullPath: '/app/gerador'
+      preLoaderRoute: typeof AppGeradorRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/escala': {
+      id: '/app/escala'
+      path: '/escala'
+      fullPath: '/app/escala'
+      preLoaderRoute: typeof AppEscalaRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/editor': {
+      id: '/app/editor'
+      path: '/editor'
+      fullPath: '/app/editor'
+      preLoaderRoute: typeof AppEditorRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
+interface AppRouteChildren {
+  AppEditorRoute: typeof AppEditorRoute
+  AppEscalaRoute: typeof AppEscalaRoute
+  AppGeradorRoute: typeof AppGeradorRoute
+  AppHistoricoRoute: typeof AppHistoricoRoute
+  AppInteligenciaRoute: typeof AppInteligenciaRoute
+  AppVslRoute: typeof AppVslRoute
+  AppIndexRoute: typeof AppIndexRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppEditorRoute: AppEditorRoute,
+  AppEscalaRoute: AppEscalaRoute,
+  AppGeradorRoute: AppGeradorRoute,
+  AppHistoricoRoute: AppHistoricoRoute,
+  AppInteligenciaRoute: AppInteligenciaRoute,
+  AppVslRoute: AppVslRoute,
+  AppIndexRoute: AppIndexRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
