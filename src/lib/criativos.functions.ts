@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Tables, Enums } from "@/integrations/supabase/types";
 import type { ResultadoAngulos } from "./anthropic.functions";
 import { AnguloSchema, RoteiroBlocoSchema } from "./schemas/angulos.schema";
+import { normalizeAngulo } from "./formato-recomendacao";
 import type { AppLink } from "./app-links";
 import { buildVslRoteiroFromAngulo } from "./vsl-roteiro";
 import { refineBlockWithAI } from "./anthropic-refine";
@@ -170,11 +171,42 @@ export const saveGeracao = createServerFn({ method: "POST" })
     return { geracaoId: geracao.id };
   });
 
+export const getGeracaoResultado = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(z.object({ geracaoId: z.string().uuid() }))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+
+    const { data: geracao, error } = await supabase
+      .from("geracoes")
+      .select("diagnostico, angulos, url, product_type, goal, context")
+      .eq("id", data.geracaoId)
+      .single();
+
+    if (error || !geracao) throw new Error("Geração não encontrada");
+
+    const angulosRaw = (geracao.angulos ?? []) as ResultadoAngulos["angulos"];
+    const resultado: ResultadoAngulos = {
+      diagnostico: geracao.diagnostico as ResultadoAngulos["diagnostico"],
+      angulos: angulosRaw.map((a) => normalizeAngulo(a)),
+    };
+
+    return {
+      resultado,
+      url: geracao.url,
+      productType: geracao.product_type ?? "info",
+      goal: geracao.goal ?? "conv",
+      context: geracao.context ?? "",
+    };
+  });
+
 const CreateDraftSchema = z.object({
   geracaoId: z.string().uuid(),
   anguloIndex: z.number().int().min(0).max(4),
   formatoSaida: z.enum(["criativo_curto", "vsl_curta"]),
   estiloProducao: z.enum(["texto_animado", "clipes_texto"]),
+  formatoSource: z.enum(["ia", "manual"]).optional().default("ia"),
+  aspectRatioPrioritario: z.enum(["9:16", "4:5", "1:1"]).optional(),
   backgroundMediaPath: z.string().optional(),
   projectId: z.string().uuid(),
   organizationId: z.string().uuid(),
@@ -200,15 +232,16 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
 
     const parsed = AnguloSchema.safeParse(angulo);
     const anguloData = parsed.success ? parsed.data : angulo;
+    const anguloNormalized = normalizeAngulo(anguloData);
 
     const roteiro =
       data.formatoSaida === "vsl_curta"
         ? buildVslRoteiroFromAngulo({
-            hook: anguloData.hook,
-            cta: anguloData.cta,
-            estrutura: anguloData.estrutura,
+            hook: anguloNormalized.hook,
+            cta: anguloNormalized.cta,
+            estrutura: anguloNormalized.estrutura,
           })
-        : anguloData.estrutura.map((b, i) => ({
+        : anguloNormalized.estrutura.map((b, i) => ({
             tempo: b.tempo,
             conteudo: b.conteudo,
             tipo: ["hook", "dor", "mecanismo", "prova", "cta"][i] ?? "bloco",
@@ -221,6 +254,21 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
       /* keep */
     }
 
+    const aspectRatio =
+      data.aspectRatioPrioritario ??
+      anguloNormalized.recomendacao_formato.aspect_ratio_prioritario;
+
+    const anguloJson = {
+      ...anguloNormalized,
+      recomendacao_formato_original: anguloNormalized.recomendacao_formato,
+      recomendacao_formato_aplicada: {
+        formato_saida: data.formatoSaida,
+        estilo_producao: data.estiloProducao,
+        aspect_ratio_prioritario: aspectRatio,
+        source: data.formatoSource,
+      },
+    };
+
     const { data: criativo, error } = await supabase
       .from("criativos")
       .insert({
@@ -229,12 +277,12 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
         project_id: data.projectId,
         geracao_id: data.geracaoId,
         produto,
-        angulo: anguloData.nome,
-        formato: data.formatoSaida === "vsl_curta" ? "9:16" : "9:16",
+        angulo: anguloNormalized.nome,
+        formato: aspectRatio,
         estilo: data.estiloProducao === "texto_animado" ? "Texto" : "Clipes",
         formato_saida: data.formatoSaida as FormatoSaida,
         estilo_producao: data.estiloProducao as EstiloProducao,
-        angulo_json: anguloData,
+        angulo_json: anguloJson,
         roteiro,
         background_media_path: data.backgroundMediaPath ?? null,
         utm_content: crypto.randomUUID(),
@@ -317,7 +365,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       feed.push({
         tag: "Oportunidade",
         title: "Você ainda não testou VSL curta",
-        desc: "Teste formato até 2min para diversificar o leilão.",
+        desc: "A próxima geração já traz recomendação de formato por ângulo — teste VSL para diversificar o leilão.",
         action: { to: "/app/gerador", search: { step: "wizard", formato: "vsl_curta" } },
       });
     }
@@ -577,7 +625,17 @@ export const gerarVariacoes = createServerFn({ method: "POST" })
         },
       },
       formato: {
-        instrucao: "Adapte o hook para formato clipes+texto com frases mais curtas e cortes visuais implícitos.",
+        instrucao: (() => {
+          const aj = campeao.angulo_json as {
+            recomendacao_formato?: { justificativa?: string; estilo_producao?: string };
+            recomendacao_formato_original?: { justificativa?: string };
+          } | null;
+          const hint =
+            aj?.recomendacao_formato_original?.justificativa ??
+            aj?.recomendacao_formato?.justificativa ??
+            "";
+          return `Adapte o hook para formato clipes+texto com frases mais curtas e cortes visuais implícitos.${hint ? ` Contexto da pesquisa: ${hint}` : ""}`;
+        })(),
         apply: (texto, r) => {
           const next = [...r];
           if (next[0]) next[0] = { ...next[0], conteudo: texto };

@@ -14,20 +14,30 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   Wand2, Sparkles, ArrowRight, Brain, Loader2, Target, Gauge,
   HelpCircle, Clock, TrendingDown, TrendingUp, Minus, EyeOff, Upload, AlertTriangle,
+  Film, LayoutTemplate,
 } from "lucide-react";
 import {
   gerarAngulos,
   gerarPerguntaCirurgica,
   type ResultadoAngulos,
 } from "@/lib/anthropic.functions";
-import { saveGeracao, createCriativoDraft } from "@/lib/criativos.functions";
-import { useQueryClient } from "@tanstack/react-query";
+import { saveGeracao, createCriativoDraft, getGeracaoResultado } from "@/lib/criativos.functions";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { useNavigate } from "@tanstack/react-router";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/hooks/use-auth";
 import { uploadCriativoMedia } from "@/lib/storage";
 import { toast } from "sonner";
+import {
+  buildFormatoPorAngulo,
+  estiloProducaoLabel,
+  formatoBadgeLabel,
+  formatoSaidaLabel,
+  needsMediaUpload,
+  overrideFromRecomendacao,
+  type FormatoOverride,
+} from "@/lib/formato-recomendacao";
 
 const wizardSearchSchema = z.object({
   step: z.enum(["wizard"]).optional(),
@@ -40,8 +50,7 @@ type WizardPersisted = {
   geracaoId: string;
   selectedAngulos: number[];
   wizardStep: WizardStep;
-  formatoSaida: "criativo_curto" | "vsl_curta";
-  estiloProducao: "texto_animado" | "clipes_texto";
+  formatoPorAngulo: Record<number, FormatoOverride>;
   backgroundMediaPath: string | null;
 };
 
@@ -86,8 +95,14 @@ const janelaColor: Record<string, string> = {
   curta: "bg-warning/15 text-warning border-warning/30",
 };
 
+const confiancaColor: Record<string, string> = {
+  alta: "bg-success/20 text-success border-success/40",
+  media: "bg-primary/20 text-primary-glow border-primary/40",
+  baixa: "bg-muted/40 text-muted-foreground border-border",
+};
+
 type Etapa = "input" | "respondendo" | "resultado" | "wizard";
-type WizardStep = "selecao" | "formato" | "estilo" | "midia";
+type WizardStep = "selecao" | "producao" | "midia";
 
 function Gerador() {
   const navigate = useNavigate();
@@ -96,6 +111,7 @@ function Gerador() {
   const askQuestion = useServerFn(gerarPerguntaCirurgica);
   const run = useServerFn(gerarAngulos);
   const persist = useServerFn(saveGeracao);
+  const fetchGeracao = useServerFn(getGeracaoResultado);
   const createDraft = useServerFn(createCriativoDraft);
   const queryClient = useQueryClient();
 
@@ -116,8 +132,7 @@ function Gerador() {
   const [geracaoId, setGeracaoId] = useState<string | null>(null);
   const [selectedAngulos, setSelectedAngulos] = useState<Set<number>>(new Set());
   const [wizardStep, setWizardStep] = useState<WizardStep>("selecao");
-  const [formatoSaida, setFormatoSaida] = useState<"criativo_curto" | "vsl_curta">("criativo_curto");
-  const [estiloProducao, setEstiloProducao] = useState<"texto_animado" | "clipes_texto">("texto_animado");
+  const [formatoPorAngulo, setFormatoPorAngulo] = useState<Record<number, FormatoOverride>>({});
   const [creatingDrafts, setCreatingDrafts] = useState(false);
   const [createdDrafts, setCreatedDrafts] = useState<Array<{ id: string; nome: string }> | null>(null);
   const [backgroundMediaPath, setBackgroundMediaPath] = useState<string | null>(null);
@@ -126,6 +141,22 @@ function Gerador() {
   const prevProjectRef = useRef<string | null>(null);
   const { user } = useAuth();
 
+  const { data: geracaoRestored, isLoading: loadingGeracao } = useQuery({
+    queryKey: ["geracao-resultado", geracaoId],
+    queryFn: () => fetchGeracao({ data: { geracaoId: geracaoId! } }),
+    enabled: !!geracaoId && !resultado,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (!geracaoRestored?.resultado || resultado) return;
+    setResultado(geracaoRestored.resultado);
+    if (geracaoRestored.url) setUrl(geracaoRestored.url);
+    if (geracaoRestored.productType) setProductType(geracaoRestored.productType);
+    if (geracaoRestored.goal) setGoal(geracaoRestored.goal);
+    if (geracaoRestored.context) setContext(geracaoRestored.context);
+  }, [geracaoRestored, resultado]);
+
   useEffect(() => {
     if (currentProject?.url_default) {
       setUrl(currentProject.url_default);
@@ -133,11 +164,26 @@ function Gerador() {
   }, [currentProject?.url_default, projectId]);
 
   useEffect(() => {
-    if (urlFormato) {
-      setFormatoSaida(urlFormato);
-      if (urlStep === "wizard") setEtapa("wizard");
+    if (urlFormato && urlStep === "wizard") {
+      setEtapa("wizard");
     }
   }, [urlFormato, urlStep]);
+
+  const initFormatoPorAngulo = useCallback(
+    (indices: Iterable<number>, globalFormato?: "criativo_curto" | "vsl_curta") => {
+      if (!resultado) return {};
+      const map = buildFormatoPorAngulo(resultado.angulos, indices);
+      if (globalFormato) {
+        for (const idx of indices) {
+          if (map[idx]) {
+            map[idx] = { ...map[idx], formatoSaida: globalFormato, source: "manual" };
+          }
+        }
+      }
+      return map;
+    },
+    [resultado],
+  );
 
   useEffect(() => {
     if (prevProjectRef.current && prevProjectRef.current !== projectId) {
@@ -148,6 +194,7 @@ function Gerador() {
       setGeracaoId(null);
       setSelectedAngulos(new Set());
       setWizardStep("selecao");
+      setFormatoPorAngulo({});
       setBackgroundMediaPath(null);
       localStorage.removeItem(WIZARD_STORAGE_KEY);
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
@@ -168,15 +215,14 @@ function Gerador() {
         geracaoId: patch.geracaoId ?? geracaoId ?? prev?.geracaoId ?? "",
         selectedAngulos: patch.selectedAngulos ?? prev?.selectedAngulos ?? [...selectedAngulos],
         wizardStep: patch.wizardStep ?? wizardStep,
-        formatoSaida: patch.formatoSaida ?? formatoSaida,
-        estiloProducao: patch.estiloProducao ?? estiloProducao,
+        formatoPorAngulo: patch.formatoPorAngulo ?? formatoPorAngulo,
         backgroundMediaPath: patch.backgroundMediaPath !== undefined ? patch.backgroundMediaPath : backgroundMediaPath,
       };
       localStorage.setItem(WIZARD_STORAGE_KEY, JSON.stringify(next));
     } catch {
       /* ignore */
     }
-  }, [geracaoId, selectedAngulos, wizardStep, formatoSaida, estiloProducao, backgroundMediaPath]);
+  }, [geracaoId, selectedAngulos, wizardStep, formatoPorAngulo, backgroundMediaPath]);
 
   useEffect(() => {
     if (urlStep === "wizard" && geracaoId) {
@@ -192,9 +238,22 @@ function Gerador() {
       if (!saved.geracaoId) return;
       setGeracaoId(saved.geracaoId);
       setSelectedAngulos(new Set(saved.selectedAngulos));
-      setWizardStep(saved.wizardStep);
-      setFormatoSaida(saved.formatoSaida);
-      setEstiloProducao(saved.estiloProducao);
+      setWizardStep(saved.wizardStep === "formato" || saved.wizardStep === "estilo" ? "producao" : saved.wizardStep);
+      if (saved.formatoPorAngulo) {
+        setFormatoPorAngulo(saved.formatoPorAngulo);
+      } else if ("formatoSaida" in saved && saved.formatoSaida) {
+        const legacy = saved as unknown as { formatoSaida: FormatoOverride["formatoSaida"]; estiloProducao: FormatoOverride["estiloProducao"] };
+        const legacyMap: Record<number, FormatoOverride> = {};
+        for (const idx of saved.selectedAngulos) {
+          legacyMap[idx] = {
+            formatoSaida: legacy.formatoSaida,
+            estiloProducao: legacy.estiloProducao,
+            aspectRatioPrioritario: "9:16",
+            source: "manual",
+          };
+        }
+        setFormatoPorAngulo(legacyMap);
+      }
       setBackgroundMediaPath(saved.backgroundMediaPath);
       if (urlStep === "wizard") setEtapa("wizard");
     } catch {
@@ -252,6 +311,7 @@ function Gerador() {
           perguntaCirurgica: pergunta?.pergunta ?? "",
           respostaCirurgica: resposta,
           tomCalibracao,
+          projectId: projectId ?? undefined,
         },
       });
       setLoadingStep("Gerando 5 ângulos...");
@@ -305,12 +365,19 @@ function Gerador() {
     try {
       const created: Array<{ id: string; idx: number }> = [];
       for (const idx of selectedAngulos) {
+        const fmt = formatoPorAngulo[idx];
+        if (!fmt) {
+          toast.error(`Configure o formato do ângulo ${idx + 1}`);
+          return;
+        }
         const { criativoId } = await createDraft({
           data: {
             geracaoId,
             anguloIndex: idx,
-            formatoSaida,
-            estiloProducao,
+            formatoSaida: fmt.formatoSaida,
+            estiloProducao: fmt.estiloProducao,
+            formatoSource: fmt.source,
+            aspectRatioPrioritario: fmt.aspectRatioPrioritario,
             projectId,
             organizationId,
             backgroundMediaPath: backgroundMediaPath ?? undefined,
@@ -493,6 +560,9 @@ function Gerador() {
                 ...(resultado.diagnostico.framework_copy_atual
                   ? [{ l: "Framework de copy atual", v: resultado.diagnostico.framework_copy_atual }]
                   : []),
+                ...(resultado.diagnostico.panorama_formatos_nicho
+                  ? [{ l: "Panorama de formatos no nicho", v: resultado.diagnostico.panorama_formatos_nicho }]
+                  : []),
               ].map((d) => (
                 <div key={d.l} className="p-4 rounded-lg bg-background/40 border border-border/50">
                   <div className="text-xs text-muted-foreground uppercase tracking-wide">{d.l}</div>
@@ -509,10 +579,12 @@ function Gerador() {
                 className="bg-gradient-primary border-0"
                 disabled={selectedAngulos.size === 0}
                 onClick={() => {
+                  const map = initFormatoPorAngulo(selectedAngulos, urlFormato);
+                  setFormatoPorAngulo(map);
                   setEtapa("wizard");
                   setWizardStep("selecao");
                   navigate({ to: "/app/gerador", search: { step: "wizard" } });
-                  persistWizard({ wizardStep: "selecao", selectedAngulos: [...selectedAngulos] });
+                  persistWizard({ wizardStep: "selecao", selectedAngulos: [...selectedAngulos], formatoPorAngulo: map });
                 }}
               >
                 Continuar com selecionados <ArrowRight className="size-4 ml-1.5" />
@@ -522,6 +594,10 @@ function Gerador() {
               {resultado.angulos.map((a, i) => {
                 const sat = saturacaoMeta[a.saturacao_hook?.status] ?? saturacaoMeta.neutro;
                 const SatIcon = sat.icon;
+                const rec = a.recomendacao_formato;
+                const fmtBadge = rec
+                  ? formatoBadgeLabel(overrideFromRecomendacao(rec), rec.duracao_alvo_seg)
+                  : null;
                 return (
                   <AccordionItem key={i} value={`a${i}`} className="glass bg-gradient-card rounded-xl border-0 overflow-hidden">
                     <div className="flex items-center gap-3 px-5 pt-4">
@@ -547,6 +623,11 @@ function Gerador() {
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                          {fmtBadge && (
+                            <Badge variant="outline" className="text-[10px] bg-accent/10 border-accent/30">
+                              <Film className="size-3 mr-1" /> {fmtBadge}
+                            </Badge>
+                          )}
                           <Badge variant="outline" className={tipoColor[a.tipo] ?? ""}>{a.tipo}</Badge>
                           {a.nivel_conspiracao && a.nivel_conspiracao !== "sem" && (
                             <Badge variant="outline" className={conspiracaoColor[a.nivel_conspiracao] ?? ""}>
@@ -576,6 +657,29 @@ function Gerador() {
                           <div className="font-medium mt-0.5">{a.hook_visual}</div>
                         </div>
                       </div>
+
+                      {rec && (
+                        <div className="p-4 rounded-lg bg-accent/10 border border-accent/30 space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <LayoutTemplate className="size-4 text-accent" />
+                            <span className="text-xs uppercase tracking-wide text-accent font-medium">Formato recomendado</span>
+                            <Badge variant="outline" className={confiancaColor[rec.confianca] ?? ""}>
+                              Confiança {rec.confianca}
+                            </Badge>
+                            {rec.requer_midia_usuario && (
+                              <Badge variant="outline" className="bg-warning/10 text-warning border-warning/30 text-[10px]">
+                                Requer mídia
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground leading-relaxed">{rec.justificativa}</p>
+                          {rec.formatos_saturados_nicho.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              Saturados no nicho: {rec.formatos_saturados_nicho.join(", ")}
+                            </p>
+                          )}
+                        </div>
+                      )}
 
                       <div className="p-4 rounded-lg bg-primary/10 border border-primary/30">
                         <div className="text-xs uppercase tracking-wide text-primary-glow mb-1">Hook · 0–3s</div>
@@ -662,6 +766,11 @@ function Gerador() {
 
       {etapa === "wizard" && (
         <Card className="glass bg-gradient-card p-6 space-y-6">
+          {loadingGeracao && !resultado && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+              <Loader2 className="size-4 animate-spin" /> Carregando geração salva...
+            </div>
+          )}
           <div className="flex items-center justify-between flex-wrap gap-3">
             <h2 className="font-display text-xl font-semibold">Configurar produção</h2>
             <p className="text-sm text-muted-foreground">
@@ -669,79 +778,179 @@ function Gerador() {
             </p>
           </div>
           <div className="flex gap-2 text-xs">
-            {(["selecao", "formato", "estilo", "midia"] as WizardStep[]).map((s, i) => (
+            {(["selecao", "producao", "midia"] as WizardStep[]).map((s, i) => (
               <span
                 key={s}
                 className={`px-2 py-1 rounded ${wizardStep === s ? "bg-primary/20 text-primary-glow" : "text-muted-foreground"}`}
               >
-                {i + 1}. {s}
+                {i + 1}. {s === "producao" ? "produção" : s}
               </span>
             ))}
           </div>
 
-          {formatoSaida === "vsl_curta" && (
-            <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
-              <p className="font-medium text-primary-glow">Modo VSL curta</p>
-              <p className="text-muted-foreground mt-1">
-                O rascunho será montado em 6 blocos (hook, problema, mecanismo, prova, oferta, CTA) — até ~2 minutos.
-              </p>
-            </div>
-          )}
-
           {wizardStep === "selecao" && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">{selectedAngulos.size} ângulo(s) selecionado(s)</p>
-              <Button onClick={() => { setWizardStep("formato"); persistWizard({ wizardStep: "formato" }); }} disabled={selectedAngulos.size === 0}>
-                Próximo: formato <ArrowRight className="size-4 ml-1" />
+              <Button
+                onClick={() => {
+                  const map = Object.keys(formatoPorAngulo).length > 0
+                    ? formatoPorAngulo
+                    : initFormatoPorAngulo(selectedAngulos, urlFormato);
+                  setFormatoPorAngulo(map);
+                  setWizardStep("producao");
+                  persistWizard({ wizardStep: "producao", formatoPorAngulo: map });
+                }}
+                disabled={selectedAngulos.size === 0}
+              >
+                Próximo: produção <ArrowRight className="size-4 ml-1" />
               </Button>
             </div>
           )}
 
-          {wizardStep === "formato" && (
+          {wizardStep === "producao" && resultado && (
             <div className="space-y-4">
-              <Label>Formato de saída</Label>
-              <Select value={formatoSaida} onValueChange={(v) => {
-                const val = v as typeof formatoSaida;
-                setFormatoSaida(val);
-                persistWizard({ formatoSaida: val });
-              }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="criativo_curto">Criativo curto (30–60s)</SelectItem>
-                  <SelectItem value="vsl_curta">VSL curta (até 2min)</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <Label>Formato por ângulo (recomendação da IA)</Label>
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const map = initFormatoPorAngulo(selectedAngulos);
+                      setFormatoPorAngulo(map);
+                      persistWizard({ formatoPorAngulo: map });
+                      toast.success("Recomendações da IA restauradas");
+                    }}
+                  >
+                    Restaurar recomendações da IA
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const first = [...selectedAngulos][0];
+                      const firstFmt = formatoPorAngulo[first];
+                      if (!firstFmt) return;
+                      const next: Record<number, FormatoOverride> = { ...formatoPorAngulo };
+                      for (const idx of selectedAngulos) {
+                        next[idx] = { ...firstFmt, source: "manual" };
+                      }
+                      setFormatoPorAngulo(next);
+                      persistWizard({ formatoPorAngulo: next });
+                      toast.info("Formato do primeiro ângulo aplicado a todos");
+                    }}
+                  >
+                    Usar formato do 1º para todos
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {[...selectedAngulos].sort((a, b) => a - b).map((idx) => {
+                  const angulo = resultado.angulos[idx];
+                  const fmt = formatoPorAngulo[idx];
+                  const rec = angulo?.recomendacao_formato;
+                  if (!angulo || !fmt) return null;
+                  return (
+                    <div key={idx} className="p-4 rounded-lg border border-border/50 bg-background/30 space-y-3">
+                      <div className="flex items-start justify-between gap-2 flex-wrap">
+                        <div>
+                          <p className="font-medium text-sm">{angulo.nome}</p>
+                          {rec && fmt.source === "ia" && (
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{rec.justificativa}</p>
+                          )}
+                          {fmt.source === "manual" && (
+                            <Badge variant="outline" className="mt-1 text-[10px]">Alterado manualmente</Badge>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Formato</Label>
+                          <Select
+                            value={fmt.formatoSaida}
+                            onValueChange={(v) => {
+                              const val = v as FormatoOverride["formatoSaida"];
+                              const next = {
+                                ...fmt,
+                                formatoSaida: val,
+                                source: "manual" as const,
+                              };
+                              const updated = { ...formatoPorAngulo, [idx]: next };
+                              setFormatoPorAngulo(updated);
+                              persistWizard({ formatoPorAngulo: updated });
+                            }}
+                          >
+                            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="criativo_curto">{formatoSaidaLabel("criativo_curto")}</SelectItem>
+                              <SelectItem value="vsl_curta">{formatoSaidaLabel("vsl_curta")}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Estilo</Label>
+                          <Select
+                            value={fmt.estiloProducao}
+                            onValueChange={(v) => {
+                              const val = v as FormatoOverride["estiloProducao"];
+                              const next = {
+                                ...fmt,
+                                estiloProducao: val,
+                                source: "manual" as const,
+                              };
+                              const updated = { ...formatoPorAngulo, [idx]: next };
+                              setFormatoPorAngulo(updated);
+                              persistWizard({ formatoPorAngulo: updated });
+                            }}
+                          >
+                            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="texto_animado">{estiloProducaoLabel("texto_animado")}</SelectItem>
+                              <SelectItem value="clipes_texto">{estiloProducaoLabel("clipes_texto")}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      {fmt.formatoSaida === "vsl_curta" && (
+                        <p className="text-xs text-muted-foreground">
+                          VSL curta: 6 blocos (hook, problema, mecanismo, prova, oferta, CTA) — até ~2 min.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setWizardStep("selecao")}>Voltar</Button>
-                <Button onClick={() => { setWizardStep("estilo"); persistWizard({ wizardStep: "estilo" }); }}>Próximo <ArrowRight className="size-4 ml-1" /></Button>
+                <Button onClick={() => { setWizardStep("midia"); persistWizard({ wizardStep: "midia" }); }}>
+                  Próximo <ArrowRight className="size-4 ml-1" />
+                </Button>
               </div>
             </div>
           )}
 
-          {wizardStep === "estilo" && (
+          {wizardStep === "midia" && resultado && (
             <div className="space-y-4">
-              <Label>Estilo de produção</Label>
-              <Select value={estiloProducao} onValueChange={(v) => {
-                const val = v as typeof estiloProducao;
-                setEstiloProducao(val);
-                persistWizard({ estiloProducao: val });
-              }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="texto_animado">A — Texto animado + voz</SelectItem>
-                  <SelectItem value="clipes_texto">B — Clipes + texto sobreposto</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setWizardStep("formato")}>Voltar</Button>
-                <Button onClick={() => { setWizardStep("midia"); persistWizard({ wizardStep: "midia" }); }}>Próximo <ArrowRight className="size-4 ml-1" /></Button>
-              </div>
-            </div>
-          )}
-
-          {wizardStep === "midia" && (
-            <div className="space-y-4">
-              <Label>Mídia de fundo (opcional)</Label>
+              {(() => {
+                const mediaIndices = needsMediaUpload(resultado.angulos, selectedAngulos, formatoPorAngulo);
+                if (mediaIndices.length === 0) return null;
+                return (
+                  <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+                    <p className="font-medium text-warning flex items-center gap-1.5">
+                      <AlertTriangle className="size-4" /> Mídia recomendada
+                    </p>
+                    <p className="text-muted-foreground mt-1">
+                      Ângulo(s) {mediaIndices.map((i) => i + 1).join(", ")} pedem clipes — envie vídeo/imagem ou adicione no editor.
+                    </p>
+                  </div>
+                );
+              })()}
+              <Label>
+                Mídia de fundo
+                {needsMediaUpload(resultado.angulos, selectedAngulos, formatoPorAngulo).length > 0
+                  ? " (recomendado)"
+                  : " (opcional)"}
+              </Label>
               <input
                 ref={mediaRef}
                 type="file"
@@ -778,7 +987,7 @@ function Gerador() {
                 Banco de mídia da plataforma (Pexels/Unsplash): em breve. Você também pode enviar no editor.
               </p>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setWizardStep("estilo")}>Voltar</Button>
+                <Button variant="outline" onClick={() => setWizardStep("producao")}>Voltar</Button>
                 <Button
                   className="bg-gradient-primary border-0"
                   onClick={handleCreateDrafts}

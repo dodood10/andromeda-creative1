@@ -3,7 +3,8 @@ import { z } from "zod";
 import { refineBlockWithAI } from "./anthropic-refine";
 import { trackApiUsage } from "./api-usage";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { ResultadoAngulosSchema } from "./schemas/angulos.schema";
+import { getProjectFormatContext, normalizeAngulo } from "./formato-recomendacao";
+import { ResultadoAngulosSchema, type RecomendacaoFormato } from "./schemas/angulos.schema";
 
 const PRODUCT_QUESTION_RULES: Record<string, string> = {
   ecom: "qual é a principal objeção que impede a compra deste produto específico",
@@ -109,6 +110,7 @@ const InputSchema = z.object({
     .enum(["direto", "empatico", "autoritativo"])
     .optional()
     .default("direto"),
+  projectId: z.string().uuid().optional(),
 });
 
 const SYSTEM_PROMPT = `IDENTIDADE E PAPEL
@@ -166,7 +168,7 @@ A calibração escolhida pelo usuário (direto / empático / autoritativo) NÃO 
 PROCESSO
 
 1) Acessar a URL via web_search e extrair headline, mecanismo, oferta, prova, CTA.
-2) Pesquisar em tempo real o que escala AGORA no nicho: formatos, ângulos, hooks SATURANDO, micropersonas sub-exploradas, variáveis fixas.
+2) Pesquisar em tempo real o que escala AGORA no nicho: formatos visuais SATURADOS vs SUB-EXPLORADOS, ângulos, hooks saturando, micropersonas sub-exploradas, variáveis fixas. Mapeie explicitamente UGC talking head, texto animado, clipes+B-roll, VSL curta, carrossel, etc.
 3) Mapear persona em 6 camadas + 3 micropersonas distintas.
 4) Separar variáveis fixas vs exploráveis.
 5) Diagnóstico em 4 pontos.
@@ -195,7 +197,8 @@ Responda APENAS com JSON válido. Sem markdown. Sem texto antes ou depois. Sem c
     "nivel_consciencia": "string — nível Schwartz (1-5) + justificativa",
     "sofisticacao_mercado": "novo" | "intermediario" | "sofisticado",
     "variavel_oportunidade": "string — variável explorável sub-explorada + porquê",
-    "framework_copy_atual": "string — framework de copy identificado no site (AIDA, PAS, etc.)"
+    "framework_copy_atual": "string — framework de copy identificado no site (AIDA, PAS, etc.)",
+    "panorama_formatos_nicho": "string — resumo dos formatos visuais que escalam vs saturaram no nicho agora"
   },
   "angulos": [
     {
@@ -230,6 +233,16 @@ Responda APENAS com JSON válido. Sem markdown. Sem texto antes ou depois. Sem c
         "tipo": "atemporal" | "media" | "curta",
         "estimativa": "string — ex: '60-90 dias antes de saturar no nicho'",
         "motivo": "string"
+      },
+      "recomendacao_formato": {
+        "formato_saida": "criativo_curto" | "vsl_curta",
+        "estilo_producao": "texto_animado" | "clipes_texto",
+        "aspect_ratio_prioritario": "9:16" | "4:5" | "1:1",
+        "duracao_alvo_seg": "number — 15 a 120",
+        "justificativa": "string — por que este formato para ESTE ângulo com base na pesquisa",
+        "formatos_saturados_nicho": ["string — formatos visuais saturados no nicho"],
+        "confianca": "alta" | "media" | "baixa",
+        "requer_midia_usuario": "boolean — true se estilo_producao for clipes_texto"
       }
     }
   ]
@@ -242,6 +255,16 @@ nivel_conspiracao: para nichos onde conspiração é variável fixa (saúde, ema
 saturacao_hook: na etapa 2 você mapeou hooks saturando. Devolva esse sinal explicitamente para cada ângulo: "saturado" (em queda de hook rate), "neutro" (uso normal), "sub_explorado" (variação não explorada com tendência de alta).
 
 janela_relevancia: ângulos de mecanismo único e objeção invertida tendem a "atemporal". Ângulos baseados em tendência ou evento sazonal tendem a "curta". Maioria é "media".
+
+recomendacao_formato — OBRIGATÓRIO em cada ângulo:
+- Deve alinhar com hook_visual, saturacao_hook e variavel_explorada do MESMO ângulo.
+- Schwartz 4-5, mecanismo complexo, alto ticket → tendência vsl_curta.
+- Hook sub_explorado, teste rápido de leilão → tendência criativo_curto.
+- hook_visual pede B-roll/cenas → clipes_texto + requer_midia_usuario: true.
+- Nicho saturado em UGC talking head → texto_animado OU clipes_texto conforme hook_visual.
+- Reels/Stories dominante → aspect_ratio_prioritario 9:16; feed quadrado em nicho específico → 4:5 ou 1:1.
+- requer_midia_usuario DEVE ser true quando estilo_producao for clipes_texto.
+- Se CONTEXTO DO PROJETO indicar formatos não testados, priorize diversidade quando coerente com o ângulo.
 
 Sempre EXATAMENTE 5 ângulos, cada um para micropersona diferente. Português do Brasil.`;
 
@@ -258,15 +281,23 @@ export const gerarAngulos = createServerFn({ method: "POST" })
       autoritativo: "Autoritativo e técnico",
     }[data.tomCalibracao];
 
+    let projectContextBlock = "";
+    if (data.projectId) {
+      const ctx = await getProjectFormatContext(context.supabase, data.projectId);
+      if (ctx) {
+        projectContextBlock = `\n\nCONTEXTO DO PROJETO (diversidade de leilão):\n${ctx.summaryText}`;
+      }
+    }
+
     const userMsg = `URL analisada: ${data.url}
 Tipo de produto: ${data.productType}
 Objetivo da campanha: ${data.goal}
 Contexto adicional: ${data.context || "(nenhum)"}
 Pergunta cirúrgica feita: ${data.perguntaCirurgica || "(não feita)"}
 Resposta do usuário à pergunta cirúrgica: ${data.respostaCirurgica || "(não respondida)"}
-Calibração de tom: ${tomLabel}
+Calibração de tom: ${tomLabel}${projectContextBlock}
 
-Execute o processo completo: visite a URL com web_search, pesquise o que escala agora no nicho, mapeie persona e micropersonas, identifique variáveis fixas vs exploráveis, e devolva o JSON especificado com diagnóstico + 5 ângulos. Aplique as REGRAS DE CALIBRAÇÃO DE TOM POR BLOCO. Inclua nivel_conspiracao, saturacao_hook e janela_relevancia em cada ângulo.`;
+Execute o processo completo: visite a URL com web_search, pesquise o que escala agora no nicho, mapeie persona e micropersonas, identifique variáveis fixas vs exploráveis, e devolva o JSON especificado com diagnóstico + 5 ângulos. Aplique as REGRAS DE CALIBRAÇÃO DE TOM POR BLOCO. Inclua nivel_conspiracao, saturacao_hook, janela_relevancia e recomendacao_formato em cada ângulo. Inclua panorama_formatos_nicho no diagnóstico.`;
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -307,8 +338,12 @@ Execute o processo completo: visite a URL com web_search, pesquise o que escala 
       trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
       throw new Error("JSON inválido: " + parsed.error.message.slice(0, 200));
     }
+    const normalized = {
+      ...parsed.data,
+      angulos: parsed.data.angulos.map((a) => normalizeAngulo(a)),
+    };
     trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: true });
-    return parsed.data as ResultadoAngulos;
+    return normalized as ResultadoAngulos;
   });
 
 export const refinarBloco = createServerFn({ method: "POST" })
@@ -348,6 +383,7 @@ export type ResultadoAngulos = {
     sofisticacao_mercado: "novo" | "intermediario" | "sofisticado" | string;
     variavel_oportunidade: string;
     framework_copy_atual?: string;
+    panorama_formatos_nicho?: string;
   };
   angulos: Array<{
     numero: number;
@@ -376,5 +412,6 @@ export type ResultadoAngulos = {
       estimativa: string;
       motivo: string;
     };
+    recomendacao_formato: RecomendacaoFormato;
   }>;
 };

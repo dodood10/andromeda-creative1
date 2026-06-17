@@ -1,5 +1,18 @@
 import { z } from "zod";
 
+export const RecomendacaoFormatoSchema = z.object({
+  formato_saida: z.enum(["criativo_curto", "vsl_curta"]),
+  estilo_producao: z.enum(["texto_animado", "clipes_texto"]),
+  aspect_ratio_prioritario: z.enum(["9:16", "4:5", "1:1"]).default("9:16"),
+  duracao_alvo_seg: z.number().int().min(15).max(120),
+  justificativa: z.string(),
+  formatos_saturados_nicho: z.array(z.string()).default([]),
+  confianca: z.enum(["alta", "media", "baixa"]),
+  requer_midia_usuario: z.boolean(),
+});
+
+export type RecomendacaoFormato = z.infer<typeof RecomendacaoFormatoSchema>;
+
 export const AnguloSchema = z.object({
   numero: z.number(),
   nome: z.string(),
@@ -27,6 +40,7 @@ export const AnguloSchema = z.object({
     estimativa: z.string(),
     motivo: z.string(),
   }),
+  recomendacao_formato: RecomendacaoFormatoSchema.optional(),
 });
 
 export const ResultadoAngulosSchema = z.object({
@@ -36,6 +50,7 @@ export const ResultadoAngulosSchema = z.object({
     sofisticacao_mercado: z.string(),
     variavel_oportunidade: z.string(),
     framework_copy_atual: z.string().optional(),
+    panorama_formatos_nicho: z.string().optional(),
   }),
   angulos: z.array(AnguloSchema).length(5),
 });
