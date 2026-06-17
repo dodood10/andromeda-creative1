@@ -9,16 +9,24 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppVslRouteImport } from './routes/app.vsl'
+import { Route as AppProjetosRouteImport } from './routes/app.projetos'
+import { Route as AppOnboardingRouteImport } from './routes/app.onboarding'
 import { Route as AppInteligenciaRouteImport } from './routes/app.inteligencia'
 import { Route as AppHistoricoRouteImport } from './routes/app.historico'
 import { Route as AppGeradorRouteImport } from './routes/app.gerador'
 import { Route as AppEscalaRouteImport } from './routes/app.escala'
 import { Route as AppEditorRouteImport } from './routes/app.editor'
 
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppRoute = AppRouteImport.update({
   id: '/app',
   path: '/app',
@@ -37,6 +45,16 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppVslRoute = AppVslRouteImport.update({
   id: '/vsl',
   path: '/vsl',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProjetosRoute = AppProjetosRouteImport.update({
+  id: '/projetos',
+  path: '/projetos',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOnboardingRoute = AppOnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
   getParentRoute: () => AppRoute,
 } as any)
 const AppInteligenciaRoute = AppInteligenciaRouteImport.update({
@@ -68,21 +86,27 @@ const AppEditorRoute = AppEditorRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/login': typeof LoginRoute
   '/app/editor': typeof AppEditorRoute
   '/app/escala': typeof AppEscalaRoute
   '/app/gerador': typeof AppGeradorRoute
   '/app/historico': typeof AppHistoricoRoute
   '/app/inteligencia': typeof AppInteligenciaRoute
+  '/app/onboarding': typeof AppOnboardingRoute
+  '/app/projetos': typeof AppProjetosRoute
   '/app/vsl': typeof AppVslRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
   '/app/editor': typeof AppEditorRoute
   '/app/escala': typeof AppEscalaRoute
   '/app/gerador': typeof AppGeradorRoute
   '/app/historico': typeof AppHistoricoRoute
   '/app/inteligencia': typeof AppInteligenciaRoute
+  '/app/onboarding': typeof AppOnboardingRoute
+  '/app/projetos': typeof AppProjetosRoute
   '/app/vsl': typeof AppVslRoute
   '/app': typeof AppIndexRoute
 }
@@ -90,11 +114,14 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/login': typeof LoginRoute
   '/app/editor': typeof AppEditorRoute
   '/app/escala': typeof AppEscalaRoute
   '/app/gerador': typeof AppGeradorRoute
   '/app/historico': typeof AppHistoricoRoute
   '/app/inteligencia': typeof AppInteligenciaRoute
+  '/app/onboarding': typeof AppOnboardingRoute
+  '/app/projetos': typeof AppProjetosRoute
   '/app/vsl': typeof AppVslRoute
   '/app/': typeof AppIndexRoute
 }
@@ -103,32 +130,41 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/app'
+    | '/login'
     | '/app/editor'
     | '/app/escala'
     | '/app/gerador'
     | '/app/historico'
     | '/app/inteligencia'
+    | '/app/onboarding'
+    | '/app/projetos'
     | '/app/vsl'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/login'
     | '/app/editor'
     | '/app/escala'
     | '/app/gerador'
     | '/app/historico'
     | '/app/inteligencia'
+    | '/app/onboarding'
+    | '/app/projetos'
     | '/app/vsl'
     | '/app'
   id:
     | '__root__'
     | '/'
     | '/app'
+    | '/login'
     | '/app/editor'
     | '/app/escala'
     | '/app/gerador'
     | '/app/historico'
     | '/app/inteligencia'
+    | '/app/onboarding'
+    | '/app/projetos'
     | '/app/vsl'
     | '/app/'
   fileRoutesById: FileRoutesById
@@ -136,10 +172,18 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  LoginRoute: typeof LoginRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app': {
       id: '/app'
       path: '/app'
@@ -166,6 +210,20 @@ declare module '@tanstack/react-router' {
       path: '/vsl'
       fullPath: '/app/vsl'
       preLoaderRoute: typeof AppVslRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/projetos': {
+      id: '/app/projetos'
+      path: '/projetos'
+      fullPath: '/app/projetos'
+      preLoaderRoute: typeof AppProjetosRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/onboarding': {
+      id: '/app/onboarding'
+      path: '/onboarding'
+      fullPath: '/app/onboarding'
+      preLoaderRoute: typeof AppOnboardingRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/inteligencia': {
@@ -212,6 +270,8 @@ interface AppRouteChildren {
   AppGeradorRoute: typeof AppGeradorRoute
   AppHistoricoRoute: typeof AppHistoricoRoute
   AppInteligenciaRoute: typeof AppInteligenciaRoute
+  AppOnboardingRoute: typeof AppOnboardingRoute
+  AppProjetosRoute: typeof AppProjetosRoute
   AppVslRoute: typeof AppVslRoute
   AppIndexRoute: typeof AppIndexRoute
 }
@@ -222,6 +282,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppGeradorRoute: AppGeradorRoute,
   AppHistoricoRoute: AppHistoricoRoute,
   AppInteligenciaRoute: AppInteligenciaRoute,
+  AppOnboardingRoute: AppOnboardingRoute,
+  AppProjetosRoute: AppProjetosRoute,
   AppVslRoute: AppVslRoute,
   AppIndexRoute: AppIndexRoute,
 }
@@ -231,7 +293,18 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

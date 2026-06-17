@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: andromeda-ffmpeg-render
+    runtime: docker
+    plan: starter
+    rootDir: services/ffmpeg-render
+    dockerfilePath: Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: FFMPEG_SERVICE_SECRET
+        generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

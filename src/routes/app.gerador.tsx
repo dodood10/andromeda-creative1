@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,14 @@ import {
   gerarPerguntaCirurgica,
   type ResultadoAngulos,
 } from "@/lib/anthropic.functions";
+import { saveGeracao, createCriativoDraft } from "@/lib/criativos.functions";
+import { useQueryClient } from "@tanstack/react-query";
+import { useWorkspace } from "@/contexts/workspace-context";
+import { useNavigate } from "@tanstack/react-router";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useAuth } from "@/hooks/use-auth";
+import { uploadCriativoMedia } from "@/lib/storage";
+import { Upload } from "lucide-react";
 
 export const Route = createFileRoute("/app/gerador")({
   head: () => ({
@@ -60,11 +68,17 @@ const janelaColor: Record<string, string> = {
   curta: "bg-warning/15 text-warning border-warning/30",
 };
 
-type Etapa = "input" | "respondendo" | "resultado";
+type Etapa = "input" | "respondendo" | "resultado" | "wizard";
+type WizardStep = "selecao" | "formato" | "estilo" | "midia";
 
 function Gerador() {
+  const navigate = useNavigate();
+  const { organizationId, projectId } = useWorkspace();
   const askQuestion = useServerFn(gerarPerguntaCirurgica);
   const run = useServerFn(gerarAngulos);
+  const persist = useServerFn(saveGeracao);
+  const createDraft = useServerFn(createCriativoDraft);
+  const queryClient = useQueryClient();
 
   const [url, setUrl] = useState("https://meuproduto.com.br");
   const [productType, setProductType] = useState("info");
@@ -78,7 +92,18 @@ function Gerador() {
 
   const [loadingPergunta, setLoadingPergunta] = useState(false);
   const [loadingAngulos, setLoadingAngulos] = useState(false);
+  const [loadingStep, setLoadingStep] = useState("");
   const [resultado, setResultado] = useState<ResultadoAngulos | null>(null);
+  const [geracaoId, setGeracaoId] = useState<string | null>(null);
+  const [selectedAngulos, setSelectedAngulos] = useState<Set<number>>(new Set());
+  const [wizardStep, setWizardStep] = useState<WizardStep>("selecao");
+  const [formatoSaida, setFormatoSaida] = useState<"criativo_curto" | "vsl_curta">("criativo_curto");
+  const [estiloProducao, setEstiloProducao] = useState<"texto_animado" | "clipes_texto">("texto_animado");
+  const [creatingDrafts, setCreatingDrafts] = useState(false);
+  const [backgroundMediaPath, setBackgroundMediaPath] = useState<string | null>(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const mediaRef = useRef<HTMLInputElement>(null);
+  const { user } = useAuth();
 
   async function handleAskQuestion() {
     if (!url.trim()) {
@@ -98,28 +123,99 @@ function Gerador() {
     }
   }
 
-  async function handleGenerate(skip = false) {
+  async function handleGenerate() {
     if (!url.trim()) {
       toast.error("Informe a URL do site");
       return;
     }
+    if (!resposta.trim()) {
+      toast.error("Responda a pergunta cirúrgica antes de gerar os ângulos");
+      return;
+    }
+    if (!organizationId || !projectId) {
+      toast.error("Selecione um projeto no header");
+      return;
+    }
     setLoadingAngulos(true);
+    setLoadingStep("Lendo site e pesquisando nicho...");
+    const start = Date.now();
     try {
       const data = await run({
         data: {
           url, productType, goal, context,
-          perguntaCirurgica: skip ? "" : pergunta?.pergunta ?? "",
-          respostaCirurgica: skip ? "" : resposta,
+          perguntaCirurgica: pergunta?.pergunta ?? "",
+          respostaCirurgica: resposta,
           tomCalibracao,
         },
       });
+      setLoadingStep("Gerando 5 ângulos...");
       setResultado(data);
       setEtapa("resultado");
+
+      const elapsed = Date.now() - start;
+      if (elapsed > 60000) toast.warning("Geração levou mais de 60 segundos");
+
+      try {
+        const saved = await persist({
+          data: {
+            url, productType, goal, context,
+            resultado: data,
+            criarCriativos: false,
+            projectId,
+            organizationId,
+          },
+        });
+        setGeracaoId(saved.geracaoId);
+        queryClient.invalidateQueries({ queryKey: ["criativos"] });
+        queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+        toast.success("Ângulos salvos");
+      } catch (persistErr) {
+        console.error(persistErr);
+        toast.error("Ângulos gerados, mas não foi possível salvar");
+      }
     } catch (e) {
       console.error(e);
-      toast.error(e instanceof Error ? e.message : "Erro ao gerar ângulos");
+      const msg = e instanceof Error ? e.message : "Erro ao gerar ângulos";
+      if (msg.includes("Unauthorized")) {
+        navigate({ to: "/login" });
+        return;
+      }
+      toast.error(msg);
     } finally {
       setLoadingAngulos(false);
+      setLoadingStep("");
+    }
+  }
+
+  async function handleCreateDrafts() {
+    if (!geracaoId || !organizationId || !projectId || selectedAngulos.size === 0) {
+      toast.error("Selecione ao menos um ângulo");
+      return;
+    }
+    setCreatingDrafts(true);
+    try {
+      let firstId: string | null = null;
+      for (const idx of selectedAngulos) {
+        const { criativoId } = await createDraft({
+          data: {
+            geracaoId,
+            anguloIndex: idx,
+            formatoSaida,
+            estiloProducao,
+            projectId,
+            organizationId,
+            backgroundMediaPath: backgroundMediaPath ?? undefined,
+          },
+        });
+        if (!firstId) firstId = criativoId;
+      }
+      if (firstId) {
+        navigate({ to: "/app/editor", search: { criativoId: firstId } });
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao criar rascunho");
+    } finally {
+      setCreatingDrafts(false);
     }
   }
 
@@ -191,27 +287,18 @@ function Gerador() {
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2 justify-end">
-          {etapa !== "respondendo" && (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => handleGenerate(true)}
-                disabled={loadingAngulos || loadingPergunta}
-              >
-                Pular e gerar direto
-              </Button>
-              <Button
-                onClick={handleAskQuestion}
-                disabled={loadingPergunta || loadingAngulos}
-                className="bg-gradient-primary border-0 shadow-glow"
-              >
-                {loadingPergunta ? (
-                  <><Loader2 className="size-4 mr-1.5 animate-spin" /> Gerando pergunta...</>
-                ) : (
-                  <><HelpCircle className="size-4 mr-1.5" /> Gerar pergunta cirúrgica</>
-                )}
-              </Button>
-            </>
+          {etapa !== "respondendo" && etapa !== "wizard" && (
+            <Button
+              onClick={handleAskQuestion}
+              disabled={loadingPergunta || loadingAngulos}
+              className="bg-gradient-primary border-0 shadow-glow"
+            >
+              {loadingPergunta ? (
+                <><Loader2 className="size-4 mr-1.5 animate-spin" /> Gerando pergunta...</>
+              ) : (
+                <><HelpCircle className="size-4 mr-1.5" /> Gerar pergunta cirúrgica</>
+              )}
+            </Button>
           )}
         </div>
       </Card>
@@ -240,12 +327,12 @@ function Gerador() {
               Voltar
             </Button>
             <Button
-              onClick={() => handleGenerate(false)}
+              onClick={() => handleGenerate()}
               disabled={loadingAngulos || !resposta.trim()}
               className="bg-gradient-primary border-0 shadow-glow"
             >
               {loadingAngulos ? (
-                <><Loader2 className="size-4 mr-1.5 animate-spin" /> Pesquisando e gerando...</>
+                <><Loader2 className="size-4 mr-1.5 animate-spin" /> {loadingStep || "Gerando..."}</>
               ) : (
                 <><Wand2 className="size-4 mr-1.5" /> Gerar 5 ângulos</>
               )}
@@ -267,6 +354,9 @@ function Gerador() {
                 { l: "Nível de consciência (Schwartz)", v: resultado.diagnostico.nivel_consciencia },
                 { l: "Sofisticação do mercado", v: resultado.diagnostico.sofisticacao_mercado },
                 { l: "Variável de maior oportunidade agora", v: resultado.diagnostico.variavel_oportunidade },
+                ...(resultado.diagnostico.framework_copy_atual
+                  ? [{ l: "Framework de copy atual", v: resultado.diagnostico.framework_copy_atual }]
+                  : []),
               ].map((d) => (
                 <div key={d.l} className="p-4 rounded-lg bg-background/40 border border-border/50">
                   <div className="text-xs text-muted-foreground uppercase tracking-wide">{d.l}</div>
@@ -279,11 +369,13 @@ function Gerador() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-xl font-semibold">5 ângulos gerados</h2>
-              <Link to="/app/editor">
-                <Button className="bg-gradient-primary border-0">
-                  Enviar selecionados ao editor <ArrowRight className="size-4 ml-1.5" />
-                </Button>
-              </Link>
+              <Button
+                className="bg-gradient-primary border-0"
+                disabled={selectedAngulos.size === 0}
+                onClick={() => { setEtapa("wizard"); setWizardStep("selecao"); }}
+              >
+                Continuar com selecionados <ArrowRight className="size-4 ml-1.5" />
+              </Button>
             </div>
             <Accordion type="multiple" className="space-y-3">
               {resultado.angulos.map((a, i) => {
@@ -293,6 +385,15 @@ function Gerador() {
                   <AccordionItem key={i} value={`a${i}`} className="glass bg-gradient-card rounded-xl px-5 border-0">
                     <AccordionTrigger className="hover:no-underline">
                       <div className="flex items-center gap-3 text-left flex-1 pr-4">
+                        <Checkbox
+                          checked={selectedAngulos.has(i)}
+                          onCheckedChange={(checked) => {
+                            const next = new Set(selectedAngulos);
+                            if (checked) next.add(i); else next.delete(i);
+                            setSelectedAngulos(next);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
                         <div className="size-9 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
                           <Sparkles className="size-4 text-primary-glow" />
                         </div>
@@ -408,13 +509,6 @@ function Gerador() {
                         </div>
                         <p className="text-xs text-muted-foreground mt-1.5">{a.janela_relevancia?.motivo}</p>
                       </div>
-
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="outline">Refinar com IA</Button>
-                        <Link to="/app/editor">
-                          <Button size="sm" className="bg-gradient-primary border-0">Abrir no editor</Button>
-                        </Link>
-                      </div>
                     </AccordionContent>
                   </AccordionItem>
                 );
@@ -422,6 +516,105 @@ function Gerador() {
             </Accordion>
           </div>
         </>
+      )}
+
+      {etapa === "wizard" && (
+        <Card className="glass bg-gradient-card p-6 space-y-6">
+          <h2 className="font-display text-xl font-semibold">Configurar produção</h2>
+
+          {wizardStep === "selecao" && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">{selectedAngulos.size} ângulo(s) selecionado(s)</p>
+              <Button onClick={() => setWizardStep("formato")} disabled={selectedAngulos.size === 0}>
+                Próximo: formato <ArrowRight className="size-4 ml-1" />
+              </Button>
+            </div>
+          )}
+
+          {wizardStep === "formato" && (
+            <div className="space-y-4">
+              <Label>Formato de saída</Label>
+              <Select value={formatoSaida} onValueChange={(v) => setFormatoSaida(v as typeof formatoSaida)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="criativo_curto">Criativo curto (30–60s)</SelectItem>
+                  <SelectItem value="vsl_curta">VSL curta (até 2min)</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setWizardStep("selecao")}>Voltar</Button>
+                <Button onClick={() => setWizardStep("estilo")}>Próximo <ArrowRight className="size-4 ml-1" /></Button>
+              </div>
+            </div>
+          )}
+
+          {wizardStep === "estilo" && (
+            <div className="space-y-4">
+              <Label>Estilo de produção</Label>
+              <Select value={estiloProducao} onValueChange={(v) => setEstiloProducao(v as typeof estiloProducao)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="texto_animado">A — Texto animado + voz</SelectItem>
+                  <SelectItem value="clipes_texto">B — Clipes + texto sobreposto</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setWizardStep("formato")}>Voltar</Button>
+                <Button onClick={() => setWizardStep("midia")}>Próximo <ArrowRight className="size-4 ml-1" /></Button>
+              </div>
+            </div>
+          )}
+
+          {wizardStep === "midia" && (
+            <div className="space-y-4">
+              <Label>Mídia de fundo (opcional)</Label>
+              <input
+                ref={mediaRef}
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file || !user || !projectId) return;
+                  setUploadingMedia(true);
+                  try {
+                    const { path } = await uploadCriativoMedia(user.id, file, projectId);
+                    setBackgroundMediaPath(path);
+                    toast.success("Mídia enviada");
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : "Erro no upload");
+                  } finally {
+                    setUploadingMedia(false);
+                  }
+                }}
+              />
+              <Button
+                variant="outline"
+                onClick={() => mediaRef.current?.click()}
+                disabled={uploadingMedia}
+              >
+                {uploadingMedia ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4 mr-1" />}
+                {backgroundMediaPath ? "Trocar arquivo" : "Upload imagem/vídeo"}
+              </Button>
+              {backgroundMediaPath && (
+                <p className="text-xs text-muted-foreground truncate">{backgroundMediaPath}</p>
+              )}
+              <p className="text-sm text-muted-foreground">
+                Banco de mídia da plataforma (Pexels/Unsplash): em breve. Você também pode enviar no editor.
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setWizardStep("estilo")}>Voltar</Button>
+                <Button
+                  className="bg-gradient-primary border-0"
+                  onClick={handleCreateDrafts}
+                  disabled={creatingDrafts}
+                >
+                  {creatingDrafts ? <Loader2 className="size-4 animate-spin" /> : "Abrir no editor"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
       )}
     </div>
   );

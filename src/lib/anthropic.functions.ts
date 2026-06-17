@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { ResultadoAngulosSchema } from "./schemas/angulos.schema";
 
 const PRODUCT_QUESTION_RULES: Record<string, string> = {
   ecom: "qual é a principal objeção que impede a compra deste produto específico",
@@ -32,6 +34,7 @@ Responda APENAS com JSON válido, sem markdown:
 }`;
 
 export const gerarPerguntaCirurgica = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => PerguntaInputSchema.parse(input))
   .handler(async ({ data }) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -94,7 +97,7 @@ const InputSchema = z.object({
   goal: z.string().optional().default("conv"),
   context: z.string().optional().default(""),
   perguntaCirurgica: z.string().optional().default(""),
-  respostaCirurgica: z.string().optional().default(""),
+  respostaCirurgica: z.string().min(1, "Resposta cirúrgica obrigatória"),
   tomCalibracao: z
     .enum(["direto", "empatico", "autoritativo"])
     .optional()
@@ -184,7 +187,8 @@ Responda APENAS com JSON válido. Sem markdown. Sem texto antes ou depois. Sem c
     "mecanismo": "string",
     "nivel_consciencia": "string — nível Schwartz (1-5) + justificativa",
     "sofisticacao_mercado": "novo" | "intermediario" | "sofisticado",
-    "variavel_oportunidade": "string — variável explorável sub-explorada + porquê"
+    "variavel_oportunidade": "string — variável explorável sub-explorada + porquê",
+    "framework_copy_atual": "string — framework de copy identificado no site (AIDA, PAS, etc.)"
   },
   "angulos": [
     {
@@ -235,6 +239,7 @@ janela_relevancia: ângulos de mecanismo único e objeção invertida tendem a "
 Sempre EXATAMENTE 5 ângulos, cada um para micropersona diferente. Português do Brasil.`;
 
 export const gerarAngulos = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))
   .handler(async ({ data }) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -289,7 +294,58 @@ Execute o processo completo: visite a URL com web_search, pesquise o que escala 
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("Resposta sem JSON: " + text.slice(0, 200));
 
-    return JSON.parse(jsonMatch[0]) as ResultadoAngulos;
+    const parsed = ResultadoAngulosSchema.safeParse(JSON.parse(jsonMatch[0]));
+    if (!parsed.success) {
+      throw new Error("JSON inválido: " + parsed.error.message.slice(0, 200));
+    }
+    return parsed.data as ResultadoAngulos;
+  });
+
+export const refinarBloco = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    z.object({
+      conteudoAtual: z.string(),
+      instrucao: z.string().min(1),
+      tempo: z.string(),
+      tomCalibracao: z.enum(["direto", "empatico", "autoritativo"]).optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
+
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-5",
+        max_tokens: 512,
+        system:
+          "Reescreva APENAS o bloco solicitado. Responda só com o texto do bloco, sem markdown.",
+        messages: [
+          {
+            role: "user",
+            content: `Bloco ${data.tempo}:\n"${data.conteudoAtual}"\n\nInstrução: ${data.instrucao}\nTom: ${data.tomCalibracao ?? "direto"}`,
+          },
+        ],
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
+    const payload = (await res.json()) as {
+      content: Array<{ type: string; text?: string }>;
+    };
+    const text = payload.content
+      .filter((b) => b.type === "text" && b.text)
+      .map((b) => b.text as string)
+      .join("\n")
+      .trim();
+    return { conteudo: text };
   });
 
 export type ResultadoAngulos = {
@@ -298,6 +354,7 @@ export type ResultadoAngulos = {
     nivel_consciencia: string;
     sofisticacao_mercado: "novo" | "intermediario" | "sofisticado" | string;
     variavel_oportunidade: string;
+    framework_copy_atual?: string;
   };
   angulos: Array<{
     numero: number;

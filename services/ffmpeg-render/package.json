@@ -1,0 +1,11 @@
+{
+  "name": "andromeda-ffmpeg-render",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.108.2"
+  }
+}

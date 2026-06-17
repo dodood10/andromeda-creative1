@@ -14,16 +14,242 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      criativos: {
+        Row: {
+          angulo: string
+          angulo_json: Json | null
+          audio_paths: Json | null
+          background_media_path: string | null
+          created_at: string
+          estilo: string
+          estilo_producao: Database["public"]["Enums"]["estilo_producao"] | null
+          export_paths: Json | null
+          export_status: Database["public"]["Enums"]["export_status"] | null
+          formato: string
+          formato_saida: Database["public"]["Enums"]["formato_saida"] | null
+          geracao_id: string | null
+          id: string
+          observacoes: string | null
+          organization_id: string | null
+          produto: string
+          project_id: string | null
+          roteiro: Json | null
+          score_json: Json | null
+          status: Database["public"]["Enums"]["criativo_status"]
+          storage_path: string | null
+          updated_at: string
+          user_id: string
+          utm_content: string | null
+          voice_id: string | null
+        }
+        Insert: {
+          angulo: string
+          angulo_json?: Json | null
+          audio_paths?: Json | null
+          background_media_path?: string | null
+          created_at?: string
+          estilo?: string
+          estilo_producao?: Database["public"]["Enums"]["estilo_producao"] | null
+          export_paths?: Json | null
+          export_status?: Database["public"]["Enums"]["export_status"] | null
+          formato?: string
+          formato_saida?: Database["public"]["Enums"]["formato_saida"] | null
+          geracao_id?: string | null
+          id?: string
+          observacoes?: string | null
+          organization_id?: string | null
+          produto: string
+          project_id?: string | null
+          roteiro?: Json | null
+          score_json?: Json | null
+          status?: Database["public"]["Enums"]["criativo_status"]
+          storage_path?: string | null
+          updated_at?: string
+          user_id: string
+          utm_content?: string | null
+          voice_id?: string | null
+        }
+        Update: {
+          angulo?: string
+          angulo_json?: Json | null
+          audio_paths?: Json | null
+          background_media_path?: string | null
+          created_at?: string
+          estilo?: string
+          estilo_producao?: Database["public"]["Enums"]["estilo_producao"] | null
+          export_paths?: Json | null
+          export_status?: Database["public"]["Enums"]["export_status"] | null
+          formato?: string
+          formato_saida?: Database["public"]["Enums"]["formato_saida"] | null
+          geracao_id?: string | null
+          id?: string
+          observacoes?: string | null
+          organization_id?: string | null
+          produto?: string
+          project_id?: string | null
+          roteiro?: Json | null
+          score_json?: Json | null
+          status?: Database["public"]["Enums"]["criativo_status"]
+          storage_path?: string | null
+          updated_at?: string
+          user_id?: string
+          utm_content?: string | null
+          voice_id?: string | null
+        }
+        Relationships: []
+      }
+      geracoes: {
+        Row: {
+          angulos: Json
+          context: string | null
+          created_at: string
+          diagnostico: Json
+          goal: string
+          id: string
+          organization_id: string | null
+          product_type: string
+          project_id: string | null
+          url: string
+          user_id: string
+        }
+        Insert: {
+          angulos?: Json
+          context?: string | null
+          created_at?: string
+          diagnostico?: Json
+          goal?: string
+          id?: string
+          organization_id?: string | null
+          product_type?: string
+          project_id?: string | null
+          url: string
+          user_id: string
+        }
+        Update: {
+          angulos?: Json
+          context?: string | null
+          created_at?: string
+          diagnostico?: Json
+          goal?: string
+          id?: string
+          organization_id?: string | null
+          product_type?: string
+          project_id?: string | null
+          url?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      organization_members: {
+        Row: {
+          created_at: string
+          id: string
+          organization_id: string
+          role: Database["public"]["Enums"]["org_member_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          organization_id: string
+          role?: Database["public"]["Enums"]["org_member_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          organization_id?: string
+          role?: Database["public"]["Enums"]["org_member_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      organizations: {
+        Row: { created_at: string; id: string; name: string; slug: string }
+        Insert: { created_at?: string; id?: string; name: string; slug: string }
+        Update: { created_at?: string; id?: string; name?: string; slug?: string }
+        Relationships: []
+      }
+      profiles: {
+        Row: { created_at: string; display_name: string | null; id: string; nicho: string | null }
+        Insert: { created_at?: string; display_name?: string | null; id: string; nicho?: string | null }
+        Update: { created_at?: string; display_name?: string | null; id?: string; nicho?: string | null }
+        Relationships: []
+      }
+      projects: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          nicho: string | null
+          organization_id: string
+          url_default: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          nicho?: string | null
+          organization_id: string
+          url_default?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          nicho?: string | null
+          organization_id?: string
+          url_default?: string | null
+        }
+        Relationships: []
+      }
+      resultados_reportados: {
+        Row: {
+          created_at: string
+          criativo_id: string
+          id: string
+          metrica: string | null
+          observacao: string | null
+          tipo: Database["public"]["Enums"]["resultado_tipo"]
+          user_id: string
+          valor: string | null
+        }
+        Insert: {
+          created_at?: string
+          criativo_id: string
+          id?: string
+          metrica?: string | null
+          observacao?: string | null
+          tipo: Database["public"]["Enums"]["resultado_tipo"]
+          user_id: string
+          valor?: string | null
+        }
+        Update: {
+          created_at?: string
+          criativo_id?: string
+          id?: string
+          metrica?: string | null
+          observacao?: string | null
+          tipo?: Database["public"]["Enums"]["resultado_tipo"]
+          user_id?: string
+          valor?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      is_org_member: { Args: { org_id: string }; Returns: boolean }
     }
     Enums: {
-      [_ in never]: never
+      criativo_status: "Gerado" | "Subiu" | "Rodando" | "Performando" | "Pausado"
+      estilo_producao: "texto_animado" | "clipes_texto"
+      export_status: "rascunho" | "renderizando" | "pronto" | "erro"
+      formato_saida: "criativo_curto" | "vsl_curta"
+      org_member_role: "owner" | "editor" | "viewer"
+      resultado_tipo: "venda" | "lead" | "clique"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +376,13 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      criativo_status: ["Gerado", "Subiu", "Rodando", "Performando", "Pausado"],
+      estilo_producao: ["texto_animado", "clipes_texto"],
+      export_status: ["rascunho", "renderizando", "pronto", "erro"],
+      formato_saida: ["criativo_curto", "vsl_curta"],
+      org_member_role: ["owner", "editor", "viewer"],
+      resultado_tipo: ["venda", "lead", "clique"],
+    },
   },
 } as const

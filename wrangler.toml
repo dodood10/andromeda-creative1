@@ -1,0 +1,8 @@
+name = "andromeda-creative"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+main = ".output/server/index.mjs"
+assets = { directory = ".output/public", binding = "ASSETS" }
+
+[observability]
+enabled = true
