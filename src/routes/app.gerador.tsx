@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { Wand2, Sparkles, ArrowRight, Brain } from "lucide-react";
+import { Wand2, Sparkles, ArrowRight, Brain, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { gerarAngulos } from "@/lib/anthropic.functions";
 
 export const Route = createFileRoute("/app/gerador")({
   head: () => ({
@@ -20,13 +23,7 @@ export const Route = createFileRoute("/app/gerador")({
   component: Gerador,
 });
 
-const angulos = [
-  { nome: "Dor aguda", tipo: "Previsibilidade", schwartz: "Consciente do problema", hook: "Você acorda cansado mesmo dormindo 8 horas?" },
-  { nome: "Mecanismo único", tipo: "Escala", schwartz: "Consciente da solução", hook: "Descobriram um nutriente que o seu corpo não absorve depois dos 35." },
-  { nome: "Prova social com resultado", tipo: "Previsibilidade", schwartz: "Consciente do produto", hook: "12.483 mulheres já fizeram. Veja o resultado da Carla." },
-  { nome: "Antes e depois com contraste", tipo: "Escala", schwartz: "Consciente do problema", hook: "Em 90 dias. Sem dieta. Sem academia." },
-  { nome: "Objeção invertida", tipo: "Orgânico", schwartz: "Mais consciente", hook: "Não é mais um chá. Não é mais um app. É outra coisa." },
-];
+type Resultado = Awaited<ReturnType<typeof gerarAngulos>>;
 
 const tipoColor: Record<string, string> = {
   Previsibilidade: "bg-primary/20 text-primary-glow border-primary/40",
@@ -35,7 +32,30 @@ const tipoColor: Record<string, string> = {
 };
 
 function Gerador() {
-  const [generated, setGenerated] = useState(false);
+  const run = useServerFn(gerarAngulos);
+  const [url, setUrl] = useState("https://meuproduto.com.br");
+  const [productType, setProductType] = useState("info");
+  const [goal, setGoal] = useState("conv");
+  const [context, setContext] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [resultado, setResultado] = useState<Resultado | null>(null);
+
+  async function handleGenerate() {
+    if (!url.trim()) {
+      toast.error("Informe a URL do site");
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await run({ data: { url, productType, goal, context } });
+      setResultado(data);
+    } catch (e) {
+      console.error(e);
+      toast.error(e instanceof Error ? e.message : "Erro ao gerar ângulos");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="container mx-auto px-6 py-8 max-w-6xl space-y-8">
@@ -48,11 +68,11 @@ function Gerador() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-1.5">
             <Label>URL do site</Label>
-            <Input placeholder="https://seuproduto.com" defaultValue="https://meuproduto.com.br" />
+            <Input placeholder="https://seuproduto.com" value={url} onChange={(e) => setUrl(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>Tipo de produto</Label>
-            <Select defaultValue="info">
+            <Select value={productType} onValueChange={setProductType}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="ecom">E-commerce físico</SelectItem>
@@ -65,7 +85,7 @@ function Gerador() {
           </div>
           <div className="space-y-1.5">
             <Label>Objetivo</Label>
-            <Select defaultValue="conv">
+            <Select value={goal} onValueChange={setGoal}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="conv">Conversão</SelectItem>
@@ -77,18 +97,26 @@ function Gerador() {
         </div>
         <div className="mt-4 space-y-1.5">
           <Label>Contexto adicional (opcional)</Label>
-          <Textarea placeholder="Preço, concorrente, público específico..." rows={2} />
+          <Textarea
+            placeholder="Preço, concorrente, público específico..."
+            rows={2}
+            value={context}
+            onChange={(e) => setContext(e.target.value)}
+          />
         </div>
         <div className="mt-5 flex justify-end">
-          <Button onClick={() => setGenerated(true)} className="bg-gradient-primary border-0 shadow-glow">
-            <Wand2 className="size-4 mr-1.5" /> Gerar ângulos
+          <Button onClick={handleGenerate} disabled={loading} className="bg-gradient-primary border-0 shadow-glow">
+            {loading ? (
+              <><Loader2 className="size-4 mr-1.5 animate-spin" /> Pesquisando e gerando...</>
+            ) : (
+              <><Wand2 className="size-4 mr-1.5" /> Gerar ângulos</>
+            )}
           </Button>
         </div>
       </Card>
 
-      {generated && (
+      {resultado && (
         <>
-          {/* Diagnóstico */}
           <Card className="glass bg-gradient-card p-6">
             <div className="flex items-center gap-2 mb-4">
               <Brain className="size-5 text-primary-glow" />
@@ -96,10 +124,10 @@ function Gerador() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               {[
-                { l: "Mecanismo da oferta", v: "Suplemento natural com bioativos de absorção rápida." },
-                { l: "Framework de copy atual", v: "PAS clássico com prova social fraca no topo." },
-                { l: "Nível de consciência (Schwartz)", v: "Consciente do problema, em transição para consciente da solução." },
-                { l: "Sofisticação do mercado", v: "Estágio 4 — público já viu várias soluções, precisa de mecanismo único." },
+                { l: "Mecanismo da oferta", v: resultado.diagnostico.mecanismo },
+                { l: "Framework de copy atual", v: resultado.diagnostico.framework_atual },
+                { l: "Nível de consciência (Schwartz)", v: resultado.diagnostico.consciencia_schwartz },
+                { l: "Sofisticação do mercado", v: resultado.diagnostico.sofisticacao_mercado },
               ].map((d) => (
                 <div key={d.l} className="p-4 rounded-lg bg-background/40 border border-border/50">
                   <div className="text-xs text-muted-foreground uppercase tracking-wide">{d.l}</div>
@@ -109,7 +137,6 @@ function Gerador() {
             </div>
           </Card>
 
-          {/* Ângulos */}
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-xl font-semibold">5 ângulos gerados</h2>
@@ -120,8 +147,8 @@ function Gerador() {
               </Link>
             </div>
             <Accordion type="multiple" className="space-y-3">
-              {angulos.map((a, i) => (
-                <AccordionItem key={a.nome} value={`a${i}`} className="glass bg-gradient-card rounded-xl px-5 border-0">
+              {resultado.angulos.map((a, i) => (
+                <AccordionItem key={i} value={`a${i}`} className="glass bg-gradient-card rounded-xl px-5 border-0">
                   <AccordionTrigger className="hover:no-underline">
                     <div className="flex items-center gap-3 text-left flex-1 pr-4">
                       <div className="size-9 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
@@ -142,22 +169,16 @@ function Gerador() {
                       </div>
                       <div className="p-3 rounded bg-background/40 border border-border/50">
                         <div className="text-xs text-muted-foreground">Hook visual</div>
-                        <div className="font-medium">Close no rosto + zoom abrupto no mecanismo</div>
+                        <div className="font-medium">{a.hook_visual}</div>
                       </div>
                     </div>
                     <div>
                       <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Estrutura bloco a bloco</div>
                       <div className="space-y-2">
-                        {[
-                          { t: "0-3s", c: a.hook },
-                          { t: "3-10s", c: "Agitação da dor com cenário concreto." },
-                          { t: "10-20s", c: "Apresentação do mecanismo único." },
-                          { t: "20-30s", c: "Prova social com resultado específico." },
-                          { t: "30-45s", c: "CTA com benefício embutido." },
-                        ].map((b) => (
-                          <div key={b.t} className="flex gap-3 text-sm">
-                            <div className="w-14 shrink-0 text-primary-glow font-mono text-xs pt-0.5">{b.t}</div>
-                            <div className="flex-1 text-muted-foreground">{b.c}</div>
+                        {a.estrutura.map((b, idx) => (
+                          <div key={idx} className="flex gap-3 text-sm">
+                            <div className="w-14 shrink-0 text-primary-glow font-mono text-xs pt-0.5">{b.tempo}</div>
+                            <div className="flex-1 text-muted-foreground">{b.conteudo}</div>
                           </div>
                         ))}
                       </div>
