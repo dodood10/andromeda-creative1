@@ -134,6 +134,7 @@ function Gerador() {
   const [wizardStep, setWizardStep] = useState<WizardStep>("selecao");
   const [formatoPorAngulo, setFormatoPorAngulo] = useState<Record<number, FormatoOverride>>({});
   const [creatingDrafts, setCreatingDrafts] = useState(false);
+  const [creatingVsl, setCreatingVsl] = useState(false);
   const [createdDrafts, setCreatedDrafts] = useState<Array<{ id: string; nome: string }> | null>(null);
   const [backgroundMediaPath, setBackgroundMediaPath] = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
@@ -362,6 +363,8 @@ function Gerador() {
       return;
     }
     setCreatingDrafts(true);
+    const hasVsl = [...selectedAngulos].some((idx) => formatoPorAngulo[idx]?.formatoSaida === "vsl_curta");
+    if (hasVsl) setCreatingVsl(true);
     try {
       const created: Array<{ id: string; idx: number }> = [];
       for (const idx of selectedAngulos) {
@@ -370,7 +373,7 @@ function Gerador() {
           toast.error(`Configure o formato do ângulo ${idx + 1}`);
           return;
         }
-        const { criativoId } = await createDraft({
+        const { criativoId, vslDevMode } = await createDraft({
           data: {
             geracaoId,
             anguloIndex: idx,
@@ -383,6 +386,9 @@ function Gerador() {
             backgroundMediaPath: backgroundMediaPath ?? undefined,
           },
         });
+        if (fmt.formatoSaida === "vsl_curta" && vslDevMode) {
+          toast.info(`Ângulo ${idx + 1}: roteiro VSL em modo offline (sem API key)`);
+        }
         created.push({ id: criativoId, idx });
       }
       localStorage.removeItem(WIZARD_STORAGE_KEY);
@@ -402,6 +408,7 @@ function Gerador() {
       toast.error(e instanceof Error ? e.message : "Erro ao criar rascunho");
     } finally {
       setCreatingDrafts(false);
+      setCreatingVsl(false);
     }
   }
 
@@ -673,6 +680,11 @@ function Gerador() {
                             )}
                           </div>
                           <p className="text-sm text-muted-foreground leading-relaxed">{rec.justificativa}</p>
+                          {rec.formato_saida === "vsl_curta" && (
+                            <p className="text-sm text-primary-glow">
+                              Ao criar o rascunho, a IA gera roteiro VSL completo de ~2 min (6 blocos, hook visual, objeções e CTA com valor).
+                            </p>
+                          )}
                           {rec.formatos_saturados_nicho.length > 0 && (
                             <p className="text-xs text-muted-foreground">
                               Saturados no nicho: {rec.formatos_saturados_nicho.join(", ")}
@@ -994,7 +1006,10 @@ function Gerador() {
                   disabled={creatingDrafts}
                 >
                   {creatingDrafts ? (
-                    <Loader2 className="size-4 animate-spin" />
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      {creatingVsl ? "Gerando roteiro VSL (~30–60s)…" : "Criando rascunhos…"}
+                    </>
                   ) : selectedAngulos.size > 1 ? (
                     `Criar ${selectedAngulos.size} rascunhos`
                   ) : (

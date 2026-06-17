@@ -7,7 +7,8 @@ import { AnguloSchema, RoteiroBlocoSchema } from "./schemas/angulos.schema";
 import { normalizeAngulo } from "./formato-recomendacao";
 import type { AppLink } from "./app-links";
 import { buildVslRoteiroFromAngulo } from "./vsl-roteiro";
-import { refineBlockWithAI } from "./anthropic-refine";
+import { generateVslFromAngulo } from "./vsl.functions";
+import { gerarVariacoesEscala } from "./escala.functions";
 import { trackApiUsage } from "./api-usage";
 
 export type CriativoRow = Tables<"criativos">;
@@ -234,7 +235,7 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
     const anguloData = parsed.success ? parsed.data : angulo;
     const anguloNormalized = normalizeAngulo(anguloData);
 
-    const roteiro =
+    let roteiro =
       data.formatoSaida === "vsl_curta"
         ? buildVslRoteiroFromAngulo({
             hook: anguloNormalized.hook,
@@ -246,6 +247,24 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
             conteudo: b.conteudo,
             tipo: ["hook", "dor", "mecanismo", "prova", "cta"][i] ?? "bloco",
           }));
+
+    let vslExtras: Record<string, unknown> = {};
+
+    if (data.formatoSaida === "vsl_curta") {
+      const vslResult = await generateVslFromAngulo({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        userId,
+        organizationId: data.organizationId,
+        angulo: anguloNormalized,
+        url: geracao.url,
+        productType: geracao.product_type ?? "info",
+        goal: geracao.goal ?? "conv",
+        context: geracao.context ?? "",
+        tomCalibracao: "direto",
+      });
+      roteiro = vslResult.roteiro;
+      vslExtras = vslResult.anguloJsonExtras;
+    }
 
     let produto = geracao.url;
     try {
@@ -260,6 +279,7 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
 
     const anguloJson = {
       ...anguloNormalized,
+      ...vslExtras,
       recomendacao_formato_original: anguloNormalized.recomendacao_formato,
       recomendacao_formato_aplicada: {
         formato_saida: data.formatoSaida,
@@ -292,7 +312,7 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
       .single();
 
     if (error) throw new Error(error.message);
-    return { criativoId: criativo.id };
+    return { criativoId: criativo.id, vslDevMode: data.formatoSaida === "vsl_curta" && !!vslExtras.vsl_dev_mode };
   });
 
 export const getDashboardStats = createServerFn({ method: "POST" })
@@ -346,7 +366,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       feed.push({
         tag: "Escalando",
         title: `${counts.Performando} criativo(s) performando`,
-        desc: "Abra o histórico e escale os campeões com variações.",
+        desc: "Analise o campeão e gere variações completas com IA na fase de escala.",
         action: { to: "/app/historico", search: { status: "Performando" } },
       });
     }
@@ -365,7 +385,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       feed.push({
         tag: "Oportunidade",
         title: "Você ainda não testou VSL curta",
-        desc: "A próxima geração já traz recomendação de formato por ângulo — teste VSL para diversificar o leilão.",
+        desc: "A IA gera roteiro completo de 2 min (6 blocos) com hook visual, objeções e CTA com valor.",
         action: { to: "/app/gerador", search: { step: "wizard", formato: "vsl_curta" } },
       });
     }
@@ -556,159 +576,24 @@ export const gerarVariacoes = createServerFn({ method: "POST" })
       projectId: z.string().uuid(),
     }),
   )
-  .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
+  .handler(async ({ data }) => {
+    const validIds = new Set(["hook-v", "hook-t", "avatar", "formato", "empilha", "benef", "cta"]);
+    const variacoes = data.tipos
+      .filter((t) => validIds.has(t))
+      .map((variacaoId) => ({ variacaoId: variacaoId as "hook-v" | "hook-t" | "avatar" | "formato" | "empilha" | "benef" | "cta" }));
 
-    const { data: campeao, error } = await supabase
-      .from("criativos")
-      .select("*")
-      .eq("id", data.criativoId)
-      .single();
-
-    if (error || !campeao) throw new Error("Criativo não encontrado");
-
-    const roteiro = (campeao.roteiro as Array<{ tempo: string; conteudo: string; tipo?: string }>) ?? [];
-    const hookAtual = roteiro[0]?.conteudo ?? campeao.angulo;
-    const variacoesGeradas: Array<{ tipo: string; hook: string; criativoId?: string; angulo: string }> = [];
-
-    const instrucaoMap: Record<string, { instrucao: string; apply: (texto: string, r: typeof roteiro) => typeof roteiro }> = {
-      "hook-t": {
-        instrucao: "Crie um novo hook textual mais agressivo para os primeiros 3 segundos, mantendo o mesmo ângulo.",
-        apply: (texto, r) => {
-          const next = [...r];
-          if (next[0]) next[0] = { ...next[0], conteudo: texto };
-          return next;
-        },
-      },
-      empilha: {
-        instrucao: "Empilhe um gancho mais forte na frente do hook atual, colando duas camadas de curiosidade.",
-        apply: (texto, r) => {
-          const next = [...r];
-          if (next[0]) next[0] = { ...next[0], conteudo: texto };
-          return next;
-        },
-      },
-      cta: {
-        instrucao: "Gere um CTA mais direto com âncora de valor ou urgência real.",
-        apply: (texto, r) => {
-          const next = [...r];
-          if (next.length > 0) next[next.length - 1] = { ...next[next.length - 1], conteudo: texto };
-          return next;
-        },
-      },
-      benef: {
-        instrucao: "Expanda o bloco de mecanismo/benefícios com 2 benefícios adicionais e consequência emocional.",
-        apply: (texto, r) => {
-          const next = [...r];
-          const mecIdx = next.findIndex((b) => b.tipo === "mecanismo");
-          const idx = mecIdx >= 0 ? mecIdx : Math.min(2, Math.max(0, next.length - 1));
-          if (next[idx]) next[idx] = { ...next[idx], conteudo: texto };
-          return next;
-        },
-      },
-      "hook-v": {
-        instrucao: `Descreva em 1 frase o novo padrão visual do hook para: ${campeao.angulo}. Integre ao texto do hook.`,
-        apply: (texto, r) => {
-          const next = [...r];
-          if (next[0]) next[0] = { ...next[0], conteudo: `[Visual: ${texto}]\n\n${next[0].conteudo}` };
-          return next;
-        },
-      },
-      avatar: {
-        instrucao: "Reescreva o hook com outra persona/narrador (tom e vocabulário diferentes), mantendo a promessa.",
-        apply: (texto, r) => {
-          const next = [...r];
-          if (next[0]) next[0] = { ...next[0], conteudo: texto };
-          return next;
-        },
-      },
-      formato: {
-        instrucao: (() => {
-          const aj = campeao.angulo_json as {
-            recomendacao_formato?: { justificativa?: string; estilo_producao?: string };
-            recomendacao_formato_original?: { justificativa?: string };
-          } | null;
-          const hint =
-            aj?.recomendacao_formato_original?.justificativa ??
-            aj?.recomendacao_formato?.justificativa ??
-            "";
-          return `Adapte o hook para formato clipes+texto com frases mais curtas e cortes visuais implícitos.${hint ? ` Contexto da pesquisa: ${hint}` : ""}`;
-        })(),
-        apply: (texto, r) => {
-          const next = [...r];
-          if (next[0]) next[0] = { ...next[0], conteudo: texto };
-          return next;
-        },
-      },
-    };
-
-    for (const tipo of data.tipos) {
-      const cfg = instrucaoMap[tipo];
-      if (!cfg) continue;
-
-      const blocoIdx = tipo === "cta" ? roteiro.length - 1 : tipo === "benef" ? 2 : 0;
-      const bloco = roteiro[blocoIdx] ?? roteiro[0];
-      if (!bloco) continue;
-
-      let texto: string;
-      try {
-        texto = await refineBlockWithAI(
-          apiKey,
-          bloco.conteudo,
-          cfg.instrucao,
-          bloco.tempo,
-        );
-      } catch {
-        continue;
-      }
-      if (!texto) continue;
-
-      const novoRoteiro = cfg.apply(texto, roteiro);
-      const estiloAlt =
-        tipo === "formato" && campeao.estilo_producao === "texto_animado"
-          ? "clipes_texto"
-          : campeao.estilo_producao;
-
-      const { data: draft } = await supabase
-        .from("criativos")
-        .insert({
-          user_id: userId,
-          organization_id: data.organizationId,
-          project_id: data.projectId,
-          geracao_id: campeao.geracao_id,
-          produto: campeao.produto,
-          angulo: `${campeao.angulo} · var ${tipo}`,
-          formato: campeao.formato,
-          estilo: campeao.estilo,
-          formato_saida: campeao.formato_saida,
-          estilo_producao: estiloAlt,
-          angulo_json: campeao.angulo_json,
-          roteiro: novoRoteiro,
-          utm_content: crypto.randomUUID(),
-          export_status: "rascunho",
-        })
-        .select("id")
-        .single();
-
-      variacoesGeradas.push({
-        tipo,
-        hook: texto.slice(0, 120),
-        criativoId: draft?.id,
-        angulo: `${campeao.angulo} · var ${tipo}`,
-      });
+    if (variacoes.length === 0) {
+      return { variacoes: [] };
     }
 
-    trackApiUsage({
-      userId,
-      organizationId: data.organizationId,
-      eventType: "gerar_variacoes",
-      tokensEstimated: data.tipos.length * 3000,
-      success: variacoesGeradas.length > 0,
+    return gerarVariacoesEscala({
+      data: {
+        criativoId: data.criativoId,
+        variacoes,
+        organizationId: data.organizationId,
+        projectId: data.projectId,
+      },
     });
-
-    return { variacoes: variacoesGeradas };
   });
 
 export const getInteligenciaNicho = createServerFn({ method: "POST" })

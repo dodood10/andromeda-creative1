@@ -61,6 +61,13 @@ export const RoteiroBlocoSchema = z.object({
   tempo: z.string(),
   conteudo: z.string(),
   tipo: z.string().optional(),
+  hook_visual: z.string().optional(),
+  objetivo_bloco: z.string().optional(),
+  linguagem_micropersona: z.array(z.string()).optional(),
+  vilao_nomeado: z.string().optional(),
+  metafora_visual: z.string().optional(),
+  depoimento: z.string().optional(),
+  objecoes: z.array(z.object({ objecao: z.string(), quebra: z.string() })).optional(),
 });
 
 export type RoteiroBloco = z.infer<typeof RoteiroBlocoSchema>;

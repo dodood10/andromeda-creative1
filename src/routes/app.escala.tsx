@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -9,13 +9,25 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { TrendingUp, Upload, Sparkles, Play, Loader2, ArrowRight } from "lucide-react";
+import {
+  TrendingUp,
+  Upload,
+  Sparkles,
+  Play,
+  Loader2,
+  ArrowRight,
+  Search,
+  AlertTriangle,
+  ListOrdered,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { uploadCriativoMedia } from "@/lib/storage";
-import { getCriativo, gerarVariacoes } from "@/lib/criativos.functions";
+import { getCriativo } from "@/lib/criativos.functions";
+import { analisarCampeao, gerarVariacoesEscala } from "@/lib/escala.functions";
 import { getSignedExportUrls } from "@/lib/export.functions";
+import type { EscalaAnalise } from "@/lib/schemas/escala.schema";
 
 const searchSchema = z.object({
   criativoId: z.string().uuid().optional(),
@@ -26,21 +38,23 @@ export const Route = createFileRoute("/app/escala")({
   head: () => ({
     meta: [
       { title: "Fase de escala · Andromeda" },
-      { name: "description", content: "Gere variações em lote do seu criativo campeão." },
+      { name: "description", content: "Analise o campeão e gere variações completas com IA." },
     ],
   }),
   component: Escala,
 });
 
-const variacoes = [
-  { id: "hook-v", nome: "Variações de hook visual", desc: "Mantém o corpo, troca os primeiros 3 segundos." },
-  { id: "hook-t", nome: "Variações de hook textual", desc: "Novos ganchos textuais via IA (refinarBloco)." },
-  { id: "avatar", nome: "Variações de avatar", desc: "Troca o perfil de quem fala no hook." },
-  { id: "formato", nome: "Variações de formato", desc: "Mesmo roteiro, estilo clipes+texto." },
-  { id: "empilha", nome: "Empilhamento de gancho", desc: "Hook empilhado mais agressivo na frente." },
-  { id: "benef", nome: "Expansão de benefícios", desc: "Adiciona benefícios ao bloco de mecanismo." },
-  { id: "cta", nome: "Novo CTA", desc: "Âncora de preço ou benefício adicional." },
-];
+type SelectedVariacao = { variacaoId: string; hookOptionIndex?: number };
+
+const RISCO_COLORS: Record<string, string> = {
+  baixo: "bg-success/20 text-success border-success/40",
+  medio: "bg-warning/20 text-warning border-warning/40",
+  alto: "bg-destructive/20 text-destructive border-destructive/40",
+};
+
+function variacaoKey(v: SelectedVariacao) {
+  return v.hookOptionIndex != null ? `${v.variacaoId}:${v.hookOptionIndex}` : v.variacaoId;
+}
 
 function Escala() {
   const { criativoId } = Route.useSearch();
@@ -49,7 +63,8 @@ function Escala() {
   const { organizationId, projectId } = useWorkspace();
   const queryClient = useQueryClient();
   const fetchCriativo = useServerFn(getCriativo);
-  const runVariacoes = useServerFn(gerarVariacoes);
+  const runAnalise = useServerFn(analisarCampeao);
+  const runVariacoes = useServerFn(gerarVariacoesEscala);
   const signExports = useServerFn(getSignedExportUrls);
 
   const { data: campeao } = useQuery({
@@ -58,41 +73,74 @@ function Escala() {
     enabled: !!criativoId,
   });
 
+  const aj = (campeao?.angulo_json as { escala_analise?: EscalaAnalise } | null) ?? {};
+  const analiseCache = aj.escala_analise;
+
+  const [analise, setAnalise] = useState<EscalaAnalise | null>(analiseCache ?? null);
+  const [step, setStep] = useState<"analise" | "geracao">(analiseCache ? "geracao" : "analise");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (analiseCache) {
+      setAnalise(analiseCache);
+      setStep("geracao");
+    }
+  }, [analiseCache]);
+
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadedPath, setUploadedPath] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set(["hook-v", "hook-t", "empilha"]));
   const [variacoesCriadas, setVariacoesCriadas] = useState<
     Array<{ tipo: string; hook: string; criativoId?: string; angulo: string }> | null
   >(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  const toggle = (id: string) => {
+  const statusOk = ["Performando", "Rodando", "Subiu"].includes(campeao?.status ?? "");
+
+  const analiseMutation = useMutation({
+    mutationFn: (force: boolean) => {
+      if (!criativoId) throw new Error("Selecione um criativo");
+      return runAnalise({ data: { criativoId, force } });
+    },
+    onSuccess: (data) => {
+      setAnalise(data.analise);
+      setStep("geracao");
+      queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
+      toast.success(data.cached ? "Análise carregada do cache" : "Análise do campeão concluída");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Erro na análise"),
+  });
+
+  const toggleVariacao = (v: SelectedVariacao) => {
+    const key = variacaoKey(v);
     const next = new Set(selected);
-    next.has(id) ? next.delete(id) : next.add(id);
+    next.has(key) ? next.delete(key) : next.add(key);
     setSelected(next);
   };
 
-  async function loadPreview() {
-    const paths = (campeao?.export_paths as string[]) ?? [];
-    if (paths.length === 0) return;
-    try {
-      const { urls } = await signExports({ data: { paths: [paths[0]] } });
-      setPreviewUrl(urls[paths[0]] ?? null);
-    } catch {
-      /* ignore */
+  const selectedList = (): SelectedVariacao[] => {
+    const list: SelectedVariacao[] = [];
+    for (const key of selected) {
+      const [id, idx] = key.split(":");
+      list.push({
+        variacaoId: id,
+        hookOptionIndex: idx != null ? Number(idx) : undefined,
+      });
     }
-  }
+    return list;
+  };
 
   const gerarMutation = useMutation({
     mutationFn: () => {
       if (!criativoId || !organizationId || !projectId) {
         throw new Error("Selecione um criativo campeão no histórico");
       }
+      const variacoes = selectedList();
+      if (variacoes.length === 0) throw new Error("Selecione ao menos uma variação");
       return runVariacoes({
         data: {
           criativoId,
-          tipos: [...selected],
+          variacoes: variacoes as Array<{ variacaoId: "hook-v" | "hook-t" | "avatar" | "formato" | "empilha" | "benef" | "cta"; hookOptionIndex?: number }>,
           organizationId,
           projectId,
         },
@@ -115,6 +163,17 @@ function Escala() {
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Erro ao gerar lote"),
   });
+
+  async function loadPreview() {
+    const paths = (campeao?.export_paths as string[]) ?? [];
+    if (paths.length === 0) return;
+    try {
+      const { urls } = await signExports({ data: { paths: [paths[0]] } });
+      setPreviewUrl(urls[paths[0]] ?? null);
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function handleFileUpload(file: File) {
     if (!user) {
@@ -174,37 +233,224 @@ function Escala() {
               <div className="flex-1">
                 {campeao ? (
                   <>
-                    <Badge className="bg-success/20 text-success border-success/40 mb-2">Performando</Badge>
+                    <Badge className="bg-success/20 text-success border-success/40 mb-2">{campeao.status}</Badge>
                     <h2 className="font-display text-xl font-semibold">{campeao.angulo}</h2>
                     <p className="text-sm text-muted-foreground mt-1">{campeao.produto} · {campeao.formato_saida ?? campeao.formato}</p>
-                    <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
-                      <div className="p-3 bg-background/40 rounded border border-border/40">
-                        <div className="text-xs text-muted-foreground">Estilo</div>
-                        <div className="font-medium mt-0.5">{campeao.estilo_producao ?? campeao.estilo}</div>
+                    {!statusOk && (
+                      <div className="mt-3 flex items-start gap-2 text-sm text-warning p-3 rounded-lg bg-warning/10 border border-warning/30">
+                        <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+                        <span>Este criativo ainda não está marcado como performando — você pode analisar mesmo assim para testar o fluxo.</span>
                       </div>
-                      <div className="p-3 bg-background/40 rounded border border-border/40">
-                        <div className="text-xs text-muted-foreground">Export</div>
-                        <div className="font-medium mt-0.5">{campeao.export_status ?? "rascunho"}</div>
-                      </div>
-                      <div className="p-3 bg-background/40 rounded border border-border/40">
-                        <div className="text-xs text-muted-foreground">UTM</div>
-                        <div className="font-medium mt-0.5 font-mono text-xs">{campeao.utm_content?.slice(0, 8)}</div>
-                      </div>
-                    </div>
-                    <Link to="/app/inteligencia" className="text-xs text-primary-glow underline mt-3 inline-block">
-                      Ver inteligência do nicho
-                    </Link>
+                    )}
                   </>
                 ) : (
                   <>
                     <Badge className="bg-muted/20 text-muted-foreground border-border mb-2">Sem criativo selecionado</Badge>
                     <h2 className="font-display text-xl font-semibold">Selecione um campeão no histórico</h2>
-                    <p className="text-sm text-muted-foreground mt-1">Marque um criativo como Performando e clique em Escalar.</p>
                   </>
                 )}
               </div>
             </div>
           </Card>
+
+          {/* Passo 1 — Análise */}
+          <Card className="glass p-6 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="font-display text-lg font-semibold flex items-center gap-2">
+                  <Search className="size-5 text-primary-glow" /> Passo 1 — Análise do campeão
+                </h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  4 operações: transcrição, estrutura invisível, pontos de força e menu de 7 variações.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                {analise && (
+                  <Button variant="outline" size="sm" disabled={analiseMutation.isPending || !criativoId} onClick={() => analiseMutation.mutate(true)}>
+                    Reanalisar
+                  </Button>
+                )}
+                <Button
+                  className="bg-gradient-primary border-0"
+                  disabled={!criativoId || analiseMutation.isPending}
+                  onClick={() => analiseMutation.mutate(false)}
+                >
+                  {analiseMutation.isPending ? (
+                    <Loader2 className="size-4 animate-spin mr-1.5" />
+                  ) : (
+                    <Search className="size-4 mr-1.5" />
+                  )}
+                  {analise ? "Atualizar análise" : "Analisar campeão"}
+                </Button>
+              </div>
+            </div>
+
+            {analise && (
+              <div className="space-y-4 pt-2 border-t border-border/40">
+                {analise.transcricao_blocos.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2">Transcrição por blocos</h3>
+                    <div className="space-y-2">
+                      {analise.transcricao_blocos.map((b, i) => (
+                        <div key={i} className="p-3 rounded-lg bg-background/40 border border-border/40 text-sm">
+                          <div className="flex items-center gap-2 text-xs text-primary-glow font-mono mb-1">
+                            <span>{b.tempo}</span>
+                            {b.tipo && <Badge variant="outline" className="text-[10px]">{b.tipo}</Badge>}
+                          </div>
+                          <p className="text-muted-foreground">{b.conteudo}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">Estrutura invisível</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                    <div className="p-3 rounded-lg bg-background/40 border border-border/40">
+                      <span className="text-xs text-muted-foreground">Ângulo psicológico</span>
+                      <p className="mt-0.5">{analise.estrutura_invisivel.angulo_psicologico}</p>
+                    </div>
+                    <div className="p-3 rounded-lg bg-background/40 border border-border/40">
+                      <span className="text-xs text-muted-foreground">Micropersona alvo</span>
+                      <p className="mt-0.5">{analise.estrutura_invisivel.micropersona_alvo}</p>
+                    </div>
+                    {analise.estrutura_invisivel.vilao_nomeado && (
+                      <div className="p-3 rounded-lg bg-background/40 border border-border/40">
+                        <span className="text-xs text-muted-foreground">Vilão nomeado</span>
+                        <p className="mt-0.5">{analise.estrutura_invisivel.vilao_nomeado}</p>
+                      </div>
+                    )}
+                    {analise.estrutura_invisivel.mecanismo && (
+                      <div className="p-3 rounded-lg bg-background/40 border border-border/40">
+                        <span className="text-xs text-muted-foreground">Mecanismo</span>
+                        <p className="mt-0.5">{analise.estrutura_invisivel.mecanismo}</p>
+                      </div>
+                    )}
+                    {analise.estrutura_invisivel.avatar_falante && (
+                      <div className="p-3 rounded-lg bg-background/40 border border-border/40">
+                        <span className="text-xs text-muted-foreground">Avatar falante</span>
+                        <p className="mt-0.5">{analise.estrutura_invisivel.avatar_falante}</p>
+                      </div>
+                    )}
+                    {analise.estrutura_invisivel.nivel_schwartz && (
+                      <div className="p-3 rounded-lg bg-background/40 border border-border/40">
+                        <span className="text-xs text-muted-foreground">Schwartz</span>
+                        <p className="mt-0.5">{analise.estrutura_invisivel.nivel_schwartz}</p>
+                      </div>
+                    )}
+                  </div>
+                  {analise.estrutura_invisivel.gatilhos_por_bloco && (
+                    <p className="text-xs text-muted-foreground mt-2 p-3 rounded-lg bg-background/30 border border-border/30">
+                      {analise.estrutura_invisivel.gatilhos_por_bloco}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">Pontos de força (não tocar)</h3>
+                  <ul className="text-sm text-muted-foreground space-y-1 list-disc pl-5">
+                    {analise.pontos_forca.map((p, i) => (
+                      <li key={i}>{p}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {(["baixo_risco", "medio_risco", "alto_risco"] as const).map((k) => (
+                    <div key={k} className="p-3 rounded-lg bg-background/40 border border-border/40">
+                      <div className="text-xs font-semibold uppercase text-muted-foreground mb-2">
+                        {k === "baixo_risco" ? "Baixo risco" : k === "medio_risco" ? "Médio risco" : "Alto risco"}
+                      </div>
+                      <ul className="text-xs space-y-1">
+                        {analise.variaveis_testaveis[k].map((v, i) => (
+                          <li key={i}>{v}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+                {analise.ordem_lancamento.length > 0 && (
+                  <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
+                    <div className="text-sm font-semibold flex items-center gap-1.5 mb-2">
+                      <ListOrdered className="size-4 text-primary-glow" /> Ordem de lançamento recomendada
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {analise.ordem_lancamento.map((id, i) => (
+                        <Badge key={id} variant="outline" className="text-xs">
+                          {i + 1}. {id}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* Passo 2 — Geração */}
+          {analise && step === "geracao" && (
+            <div className="space-y-4">
+              <h2 className="font-display text-xl font-semibold">Passo 2 — Gerar variações selecionadas</h2>
+              <div className="grid grid-cols-1 gap-3">
+                {analise.menu_variacoes.map((item) => (
+                  <Card key={item.id} className="glass p-4 space-y-3">
+                    {item.id === "hook-t" && item.opcoes_hook_textual?.length ? (
+                      <>
+                        <div className="flex items-start gap-3">
+                          <Badge className={RISCO_COLORS[item.nivel_risco] ?? "bg-muted/20"}>{item.nivel_risco}</Badge>
+                          <div className="flex-1">
+                            <div className="font-medium">{item.nome}</div>
+                            <p className="text-sm text-muted-foreground mt-0.5">{item.justificativa_probabilistica}</p>
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Escolha quais hooks textuais gerar (corpo idêntico a partir do 3s):</p>
+                        {item.opcoes_hook_textual.map((hook, idx) => {
+                          const v: SelectedVariacao = { variacaoId: item.id, hookOptionIndex: idx };
+                          const key = variacaoKey(v);
+                          return (
+                            <label key={key} className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition ${
+                              selected.has(key) ? "border border-primary/50 bg-primary/5" : "border border-border/40"
+                            }`}>
+                              <Checkbox checked={selected.has(key)} onCheckedChange={() => toggleVariacao(v)} className="mt-0.5" />
+                              <div className="text-sm">
+                                <span className="text-xs text-muted-foreground">Opção {idx + 1}</span>
+                                <p className="mt-0.5">{hook}</p>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </>
+                    ) : (
+                      <label className={`flex items-start gap-3 cursor-pointer ${
+                        selected.has(item.id) ? "" : ""
+                      }`}>
+                        <Checkbox
+                          checked={selected.has(item.id)}
+                          onCheckedChange={() => toggleVariacao({ variacaoId: item.id })}
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium">{item.nome}</span>
+                            <Badge className={RISCO_COLORS[item.nivel_risco] ?? "bg-muted/20"}>{item.nivel_risco}</Badge>
+                            {item.probabilidade_superar_original && (
+                              <span className="text-xs text-primary-glow">{item.probabilidade_superar_original}</span>
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-1">{item.justificativa_probabilistica}</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2 text-xs">
+                            <div><span className="text-muted-foreground">Muda:</span> {item.o_que_muda}</div>
+                            <div><span className="text-muted-foreground">Permanece:</span> {item.o_que_permanece}</div>
+                          </div>
+                          {item.hook_rate_estimado && (
+                            <p className="text-xs text-muted-foreground mt-1">Hook rate estimado: {item.hook_rate_estimado}</p>
+                          )}
+                        </div>
+                      </label>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="externo" className="mt-6">
@@ -215,7 +461,7 @@ function Escala() {
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) handleFileUpload(file);
+              if (file) void handleFileUpload(file);
             }}
           />
           <Card
@@ -230,63 +476,39 @@ function Escala() {
             <p className="font-medium">
               {uploadedPath ? "Vídeo enviado — clique para trocar" : "Arraste seu vídeo ou clique para enviar"}
             </p>
-            <p className="text-sm text-muted-foreground mt-1">
-              MP4/WebM até 100 MB · análise manual em breve
-            </p>
-            {uploadedPath && (
-              <p className="text-xs text-muted-foreground mt-3 font-mono truncate max-w-md mx-auto">{uploadedPath}</p>
-            )}
+            <p className="text-sm text-muted-foreground mt-1">MP4/WebM até 100 MB · análise manual em breve</p>
           </Card>
         </TabsContent>
       </Tabs>
 
-      <div>
-        <h2 className="font-display text-xl font-semibold mb-4">Variações disponíveis</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {variacoes.map((v) => (
-            <label key={v.id} className={`glass rounded-xl p-4 flex items-start gap-3 cursor-pointer transition ${
-              selected.has(v.id) ? "border-primary/50 bg-primary/5" : "hover:border-border"
-            }`}>
-              <Checkbox checked={selected.has(v.id)} onCheckedChange={() => toggle(v.id)} className="mt-0.5" />
-              <div>
-                <div className="font-medium">{v.nome}</div>
-                <div className="text-sm text-muted-foreground mt-0.5">{v.desc}</div>
-              </div>
-            </label>
-          ))}
+      {analise && (
+        <div className="sticky bottom-4 flex justify-between items-center glass bg-gradient-card rounded-xl p-4">
+          <div className="text-sm">
+            <span className="text-muted-foreground">Selecionadas:</span>{" "}
+            <span className="font-semibold">{selected.size}</span>
+          </div>
+          <Button
+            className="bg-gradient-primary border-0 shadow-glow"
+            disabled={!criativoId || selected.size === 0 || gerarMutation.isPending}
+            onClick={() => gerarMutation.mutate()}
+          >
+            {gerarMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin mr-1.5" />
+            ) : (
+              <Sparkles className="size-4 mr-1.5" />
+            )}
+            Gerar selecionadas
+          </Button>
         </div>
-      </div>
-
-      <div className="sticky bottom-4 flex justify-between items-center glass bg-gradient-card rounded-xl p-4">
-        <div className="text-sm">
-          <span className="text-muted-foreground">Selecionadas:</span>{" "}
-          <span className="font-semibold">{selected.size}</span> ·{" "}
-          <span className="font-semibold">{selected.size} rascunho(s)</span> via IA
-        </div>
-        <Button
-          className="bg-gradient-primary border-0 shadow-glow"
-          disabled={!criativoId || selected.size === 0 || gerarMutation.isPending}
-          onClick={() => gerarMutation.mutate()}
-        >
-          {gerarMutation.isPending ? (
-            <Loader2 className="size-4 animate-spin mr-1.5" />
-          ) : (
-            <Sparkles className="size-4 mr-1.5" />
-          )}
-          Gerar lote
-        </Button>
-      </div>
+      )}
 
       <Dialog open={!!variacoesCriadas} onOpenChange={(open) => !open && setVariacoesCriadas(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{variacoesCriadas?.length ?? 0} variações criadas</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Cada variação virou um rascunho no histórico. Abra no editor para revisar e exportar.
-          </p>
           <div className="space-y-2 max-h-64 overflow-auto py-2">
-            {variacoesCriadas?.map((v) => (
+            {variacoesCriadas?.map((v) =>
               v.criativoId ? (
                 <Link
                   key={v.criativoId}
@@ -302,12 +524,9 @@ function Escala() {
                     <ArrowRight className="size-4 shrink-0" />
                   </Button>
                 </Link>
-              ) : null
-            ))}
+              ) : null,
+            )}
           </div>
-          <Link to="/app/historico" search={{ status: "Gerado" }} onClick={() => setVariacoesCriadas(null)}>
-            <Button variant="ghost" className="w-full">Ver no histórico</Button>
-          </Link>
         </DialogContent>
       </Dialog>
     </div>

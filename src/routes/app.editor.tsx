@@ -11,7 +11,7 @@ import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Download, Mic, Music, Type, Loader2, Sparkles, Upload, Image, Copy, CheckCircle2, AlertTriangle, ExternalLink } from "lucide-react";
+import { Download, Mic, Music, Type, Loader2, Sparkles, Upload, Image, Copy, CheckCircle2, AlertTriangle, ExternalLink, ChevronDown, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { getCriativo, getLatestCriativo, updateCriativoRoteiro, updateCriativoStatus } from "@/lib/criativos.functions";
 import {
@@ -30,7 +30,9 @@ import { uploadCriativoMedia } from "@/lib/storage";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { useAuth } from "@/hooks/use-auth";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
-import { VSL_BLOCOS_META, vslBlockLabel, isVslRoteiro } from "@/lib/vsl-roteiro";
+import { VSL_BLOCOS_META, vslBlockLabel, isVslRoteiro, type VslAnguloJsonExtras } from "@/lib/vsl-roteiro";
+import { gerarVslCurta } from "@/lib/vsl.functions";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 const searchSchema = z.object({
   criativoId: z.string().uuid().optional(),
@@ -111,6 +113,7 @@ function Editor({ criativoId }: { criativoId: string }) {
   const runAudio = useServerFn(gerarAudio);
   const runAudioAll = useServerFn(gerarAudioRoteiroCompleto);
   const runRefinar = useServerFn(refinarBloco);
+  const runGerarVsl = useServerFn(gerarVslCurta);
   const fetchVozes = useServerFn(listVozes);
   const pollExport = useServerFn(getExportStatus);
   const signUrls = useServerFn(getSignedExportUrls);
@@ -242,6 +245,20 @@ function Editor({ criativoId }: { criativoId: string }) {
       toast.success("Bloco refinado");
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Erro"),
+  });
+
+  const regenVslMutation = useMutation({
+    mutationFn: () => runGerarVsl({ data: { criativoId } }),
+    onSuccess: (result) => {
+      setRoteiro(result.roteiro);
+      queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
+      if (result.devMode) {
+        toast.info("Roteiro VSL gerado em modo offline (sem API key)");
+      } else {
+        toast.success("Roteiro VSL regenerado com IA");
+      }
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Erro ao regenerar VSL"),
   });
 
   async function handleGerarAudio() {
@@ -391,6 +408,8 @@ function Editor({ criativoId }: { criativoId: string }) {
   const anguloNome = criativo.angulo;
   const estilo = criativo.estilo_producao ?? "texto_animado";
   const isVsl = criativo.formato_saida === "vsl_curta" || isVslRoteiro(roteiro);
+  const vslExtras = (criativo.angulo_json as VslAnguloJsonExtras | null) ?? {};
+  const blocoAtual = roteiro[block];
   const audioPaths = (criativo.audio_paths as Record<string, string>) ?? {};
   const exportPaths = (criativo.export_paths as string[]) ?? [];
 
@@ -432,6 +451,21 @@ function Editor({ criativoId }: { criativoId: string }) {
         </div>
         <div className="flex gap-2 items-center">
           {exporting && <Loader2 className="size-4 animate-spin text-primary-glow" />}
+          {isVsl && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={regenVslMutation.isPending}
+              onClick={() => regenVslMutation.mutate()}
+            >
+              {regenVslMutation.isPending ? (
+                <Loader2 className="size-4 animate-spin mr-1.5" />
+              ) : (
+                <RefreshCw className="size-4 mr-1.5" />
+              )}
+              Regenerar roteiro VSL
+            </Button>
+          )}
           <Tabs value={estilo === "texto_animado" ? "A" : "B"}>
             <TabsList>
               <TabsTrigger value="A" disabled={estilo !== "texto_animado"}>Texto animado</TabsTrigger>
@@ -493,6 +527,27 @@ function Editor({ criativoId }: { criativoId: string }) {
             {isVsl && VSL_BLOCOS_META[block] && (
               <p className="text-xs text-muted-foreground">{VSL_BLOCOS_META[block].hint}</p>
             )}
+            {isVsl && blocoAtual?.hook_visual && (
+              <div className="p-2 rounded border border-primary/20 bg-primary/5 text-xs">
+                <span className="font-semibold text-primary-glow">Hook visual:</span>{" "}
+                <span className="text-muted-foreground">{blocoAtual.hook_visual}</span>
+              </div>
+            )}
+            {isVsl && blocoAtual?.objetivo_bloco && (
+              <p className="text-xs text-muted-foreground">
+                <span className="font-medium">Objetivo:</span> {blocoAtual.objetivo_bloco}
+              </p>
+            )}
+            {isVsl && blocoAtual?.objecoes && blocoAtual.objecoes.length > 0 && (
+              <div className="space-y-1 text-xs">
+                {blocoAtual.objecoes.map((o, i) => (
+                  <div key={i} className="p-2 rounded border border-border/40 bg-card/30">
+                    <div className="font-medium text-warning">{o.objecao}</div>
+                    <div className="text-muted-foreground mt-0.5">→ {o.quebra}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             <Textarea
               rows={4}
               value={roteiro[block]?.conteudo ?? ""}
@@ -535,6 +590,52 @@ function Editor({ criativoId }: { criativoId: string }) {
         </section>
 
         <aside className="w-72 border-l border-border/50 p-4 space-y-5 overflow-auto">
+          {isVsl && vslExtras.vsl_diagnostico && (
+            <Collapsible defaultOpen>
+              <CollapsibleTrigger className="flex items-center justify-between w-full text-left">
+                <Label className="cursor-pointer">Diagnóstico VSL</Label>
+                <ChevronDown className="size-4 text-muted-foreground" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-2 space-y-2 text-xs">
+                <div><span className="text-muted-foreground">Micropersona:</span> {vslExtras.vsl_diagnostico.nome_micropersona}</div>
+                <div><span className="text-muted-foreground">Papel temido:</span> {vslExtras.vsl_diagnostico.papel_temido}</div>
+                <div><span className="text-muted-foreground">Schwartz:</span> {vslExtras.vsl_diagnostico.nivel_consciencia_schwartz}</div>
+                <div><span className="text-muted-foreground">Objeção principal:</span> {vslExtras.vsl_diagnostico.objecao_principal}</div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+          {isVsl && vslExtras.vsl_sinais && (
+            <Collapsible>
+              <CollapsibleTrigger className="flex items-center justify-between w-full text-left">
+                <Label className="cursor-pointer">Sinais Andromeda</Label>
+                <ChevronDown className="size-4 text-muted-foreground" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-2 space-y-1.5 text-xs text-muted-foreground">
+                <div>Hook rate: {vslExtras.vsl_sinais.hook_rate_estimado}</div>
+                <div>Hold 30s: {vslExtras.vsl_sinais.hold_rate_30s}</div>
+                <div>Conclusão: {vslExtras.vsl_sinais.taxa_conclusao_estimada}</div>
+                {vslExtras.vsl_sinais.feedback_negativo_esperado && (
+                  <div className="text-warning">Feedback negativo: {vslExtras.vsl_sinais.feedback_negativo_esperado}</div>
+                )}
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+          {isVsl && vslExtras.vsl_producao && (
+            <Collapsible>
+              <CollapsibleTrigger className="flex items-center justify-between w-full text-left">
+                <Label className="cursor-pointer">Indicações de produção</Label>
+                <ChevronDown className="size-4 text-muted-foreground" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-2 space-y-1.5 text-xs text-muted-foreground">
+                <div><span className="font-medium text-foreground">Formato:</span> {vslExtras.vsl_producao.formato_sugerido}</div>
+                <div><span className="font-medium text-foreground">Tom:</span> {vslExtras.vsl_producao.tom_voz}</div>
+                {vslExtras.vsl_producao.safe_zone && (
+                  <div><span className="font-medium text-foreground">Safe zone:</span> {vslExtras.vsl_producao.safe_zone}</div>
+                )}
+                <div className="pt-1">{vslExtras.vsl_producao.hook_visual_detalhado}</div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
           <div className="space-y-1.5">
             <Label className="flex items-center gap-1.5"><Mic className="size-3.5" /> Voz</Label>
             <Select value={voiceId} onValueChange={setVoiceId}>

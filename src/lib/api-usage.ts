@@ -6,7 +6,9 @@ export type ApiUsageEventType =
   | "refinar_bloco"
   | "gerar_variacoes"
   | "gerar_audio"
-  | "export";
+  | "export"
+  | "gerar_vsl"
+  | "analisar_campeao";
 
 const TOKEN_ESTIMATES: Record<ApiUsageEventType, number> = {
   pergunta_cirurgica: 800,
@@ -15,6 +17,8 @@ const TOKEN_ESTIMATES: Record<ApiUsageEventType, number> = {
   gerar_variacoes: 3000,
   gerar_audio: 500,
   export: 200,
+  gerar_vsl: 10000,
+  analisar_campeao: 8000,
 };
 
 /** Fire-and-forget — não bloqueia a resposta ao usuário. */
