@@ -277,6 +277,9 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
       data.aspectRatioPrioritario ??
       anguloNormalized.recomendacao_formato.aspect_ratio_prioritario;
 
+    const formatoTag = data.formatoSaida === "vsl_curta" ? "VSL" : "Curto";
+    const anguloDisplay = `${anguloNormalized.nome} · ${formatoTag} · ${aspectRatio}`;
+
     const anguloJson = {
       ...anguloNormalized,
       ...vslExtras,
@@ -297,7 +300,7 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
         project_id: data.projectId,
         geracao_id: data.geracaoId,
         produto,
-        angulo: anguloNormalized.nome,
+        angulo: anguloDisplay,
         formato: aspectRatio,
         estilo: data.estiloProducao === "texto_animado" ? "Texto" : "Clipes",
         formato_saida: data.formatoSaida as FormatoSaida,
@@ -361,24 +364,33 @@ export const getDashboardStats = createServerFn({ method: "POST" })
     const saturacaoPct =
       ativos > 0 && topAngulo ? Math.round((topAngulo[1] / ativos) * 100) : 0;
 
+    const semExportList = (criativos ?? []).filter(
+      (c) => c.export_status !== "pronto" && c.status !== "Pausado",
+    );
+    const semExport = semExportList.length;
+    const firstExportPendingId = semExportList[0]?.id ?? null;
+    const campeao = (criativos ?? []).find((c) => c.status === "Performando");
+    const firstPerformandoId = campeao?.id ?? null;
+
     const feed: Array<{ tag: string; title: string; desc: string; action: AppLink }> = [];
     if (counts.Performando > 0) {
       feed.push({
         tag: "Escalando",
         title: `${counts.Performando} criativo(s) performando`,
         desc: "Analise o campeão e gere variações completas com IA na fase de escala.",
-        action: { to: "/app/historico", search: { status: "Performando" } },
+        action: firstPerformandoId
+          ? { to: "/app/escala", search: { criativoId: firstPerformandoId } }
+          : { to: "/app/historico", search: { status: "Performando" } },
       });
     }
-    const semExport = (criativos ?? []).filter(
-      (c) => c.export_status !== "pronto" && c.status !== "Pausado",
-    ).length;
     if (semExport > 0 && total > 0) {
       feed.push({
         tag: "Ação",
         title: `${semExport} criativo(s) sem export`,
         desc: "Finalize o export no editor antes de subir no Meta.",
-        action: { to: "/app/historico", search: { export: "pendente" } },
+        action: firstExportPendingId
+          ? { to: "/app/editor", search: { criativoId: firstExportPendingId } }
+          : { to: "/app/historico", search: { export: "pendente" } },
       });
     }
     if (!formatosTestados.has("vsl_curta") && total > 0) {
@@ -411,15 +423,19 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       if (semExport > 0) {
         return {
           label: `Exportar ${semExport} criativo(s) pendente(s)`,
-          to: "/app/historico",
-          search: { export: "pendente" },
+          to: firstExportPendingId ? "/app/editor" : "/app/historico",
+          search: firstExportPendingId
+            ? { criativoId: firstExportPendingId }
+            : { export: "pendente" },
         };
       }
       if (counts.Performando > 0) {
         return {
           label: `Escalar ${counts.Performando} campeão(ões)`,
-          to: "/app/historico",
-          search: { status: "Performando" },
+          to: firstPerformandoId ? "/app/escala" : "/app/historico",
+          search: firstPerformandoId
+            ? { criativoId: firstPerformandoId }
+            : { status: "Performando" },
         };
       }
       if (counts.Rodando > 0) {
@@ -443,6 +459,9 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       saturacaoPct,
       feed,
       nextAction,
+      firstExportPendingId,
+      firstPerformandoId,
+      volumeTarget: 12,
       sugestao:
         total === 0
           ? "Comece gerando seus primeiros 5 ângulos Andromeda."

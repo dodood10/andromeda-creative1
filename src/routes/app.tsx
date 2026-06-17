@@ -29,6 +29,9 @@ import {
   Loader2,
   FolderKanban,
   Settings,
+  Pencil,
+  BarChart3,
+  Video,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { WorkspaceProvider, useWorkspace } from "@/contexts/workspace-context";
@@ -48,7 +51,10 @@ type NavItem = { title: string; url: string; icon: typeof Sparkles; exact?: bool
 const productionItems: NavItem[] = [
   { title: "Dashboard", url: "/app", icon: Sparkles, exact: true },
   { title: "Gerar ângulos", url: "/app/gerador", icon: Wand2 },
+  { title: "Editor", url: "/app/editor", icon: Pencil },
   { title: "Meus criativos", url: "/app/historico", icon: History },
+  { title: "Inteligência", url: "/app/inteligencia", icon: BarChart3 },
+  { title: "VSL curta", url: "/app/vsl", icon: Video },
 ];
 
 function AppAuthGate({ children }: { children: React.ReactNode }) {

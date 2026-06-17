@@ -32,10 +32,12 @@ import { useAuth } from "@/hooks/use-auth";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
 import { VSL_BLOCOS_META, vslBlockLabel, isVslRoteiro, type VslAnguloJsonExtras } from "@/lib/vsl-roteiro";
 import { gerarVslCurta } from "@/lib/vsl.functions";
+import { trackFunnelEvent } from "@/lib/funnel-events";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 const searchSchema = z.object({
   criativoId: z.string().uuid().optional(),
+  focus: z.enum(["audio", "score", "media"]).optional(),
 });
 
 export const Route = createFileRoute("/app/editor")({
@@ -95,12 +97,13 @@ function EditorPage() {
     return null;
   }
 
-  return <Editor criativoId={searchId} />;
+  const { focus } = Route.useSearch();
+  return <Editor criativoId={searchId} focus={focus} />;
 }
 
-function Editor({ criativoId }: { criativoId: string }) {
+function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "score" | "media" }) {
   const { user } = useAuth();
-  const { projectId } = useWorkspace();
+  const { projectId, organizationId } = useWorkspace();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -151,6 +154,14 @@ function Editor({ criativoId }: { criativoId: string }) {
   const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
   const [uploadingBg, setUploadingBg] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openedTracked = useRef<string | null>(null);
+  const focusHandled = useRef(false);
+
+  useEffect(() => {
+    if (!criativo || openedTracked.current === criativoId) return;
+    openedTracked.current = criativoId;
+    trackFunnelEvent({ userId: user?.id, organizationId, event: "editor_opened" });
+  }, [criativo, criativoId, user?.id, organizationId]);
 
   useEffect(() => {
     if (criativo?.score_json) {
@@ -325,6 +336,22 @@ function Editor({ criativoId }: { criativoId: string }) {
     }
   }
 
+  useEffect(() => {
+    focusHandled.current = false;
+  }, [criativoId]);
+
+  useEffect(() => {
+    if (!criativo || !focus || focusHandled.current) return;
+    focusHandled.current = true;
+    if (focus === "score") {
+      void handleAvaliar();
+    } else if (focus === "audio") {
+      document.getElementById("editor-audio")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (focus === "media") {
+      document.getElementById("editor-media")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [criativo, focus, criativoId]);
+
   async function pollUntilReady() {
     for (let i = 0; i < 60; i++) {
       await new Promise((r) => setTimeout(r, 2000));
@@ -357,6 +384,7 @@ function Editor({ criativoId }: { criativoId: string }) {
       setShowPostExport(true);
       setScoreOpen(false);
       toast.success("Export concluído!");
+      trackFunnelEvent({ userId: user?.id, organizationId, event: "export_pronto", success: true });
       queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro no export");
@@ -409,17 +437,22 @@ function Editor({ criativoId }: { criativoId: string }) {
   const estilo = criativo.estilo_producao ?? "texto_animado";
   const isVsl = criativo.formato_saida === "vsl_curta" || isVslRoteiro(roteiro);
   const vslExtras = (criativo.angulo_json as VslAnguloJsonExtras | null) ?? {};
+  const vslDevMode = !!vslExtras.vsl_dev_mode;
   const blocoAtual = roteiro[block];
   const audioPaths = (criativo.audio_paths as Record<string, string>) ?? {};
-  const exportPaths = (criativo.export_paths as string[]) ?? [];
+  const exportPaths = (criativo.export_paths as string[]) ?? {};
 
   return (
     <div className="h-[calc(100vh-3.5rem)] flex flex-col">
-      {(exportDevMode || audioDevMode) && (
+      {(exportDevMode || audioDevMode || vslDevMode) && (
         <div className="px-6 py-2 bg-warning/15 border-b border-warning/30 flex items-center gap-2 text-sm">
           <AlertTriangle className="size-4 text-warning shrink-0" />
           <span>
-            {exportDevMode && audioDevMode
+            {vslDevMode && (exportDevMode || audioDevMode)
+              ? "Modo desenvolvimento: VSL mecânico, export e/ou narração são placeholders."
+              : vslDevMode
+                ? "VSL em modo offline (sem API key) — roteiro mecânico. Regenerar com ANTHROPIC_API_KEY para versão completa."
+                : exportDevMode && audioDevMode
               ? "Modo desenvolvimento: export MP4 e narração são placeholders. Configure FFMPEG_SERVICE_URL e ELEVENLABS_API_KEY antes de subir no Meta."
               : exportDevMode
                 ? "Export em modo dev: arquivos MP4 são placeholders. Configure FFMPEG_SERVICE_URL para render real."
@@ -636,7 +669,7 @@ function Editor({ criativoId }: { criativoId: string }) {
               </CollapsibleContent>
             </Collapsible>
           )}
-          <div className="space-y-1.5">
+          <div id="editor-audio" className="space-y-1.5">
             <Label className="flex items-center gap-1.5"><Mic className="size-3.5" /> Voz</Label>
             <Select value={voiceId} onValueChange={setVoiceId}>
               <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
@@ -653,7 +686,7 @@ function Editor({ criativoId }: { criativoId: string }) {
               Gerar roteiro completo
             </Button>
           </div>
-          <div className="space-y-1.5">
+          <div id="editor-media" className="space-y-1.5">
             <Label className="flex items-center gap-1.5"><Image className="size-3.5" /> Mídia de fundo</Label>
             <input
               ref={fileRef}

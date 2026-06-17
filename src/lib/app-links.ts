@@ -1,6 +1,14 @@
 /** Links tipados para navegação no app (TanStack Router search params). */
 export type AppLink = {
-  to: "/app" | "/app/gerador" | "/app/historico" | "/app/editor" | "/app/projetos";
+  to:
+    | "/app"
+    | "/app/gerador"
+    | "/app/historico"
+    | "/app/editor"
+    | "/app/projetos"
+    | "/app/escala"
+    | "/app/inteligencia"
+    | "/app/vsl";
   search?: Record<string, string | undefined>;
 };
 

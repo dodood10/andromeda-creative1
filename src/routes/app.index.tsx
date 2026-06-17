@@ -72,7 +72,7 @@ function Dashboard() {
       }))
     : [];
 
-  const volumeTarget = 12;
+  const volumeTarget = stats?.volumeTarget ?? 12;
   const volumeAtual = stats?.ativos ?? 0;
   const volumePct = Math.min(100, Math.round((volumeAtual / volumeTarget) * 100));
 
@@ -169,8 +169,9 @@ function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Link to="/app/historico">
-          <Card className="glass bg-gradient-card p-6 hover:border-primary/40 transition cursor-pointer h-full">
+        {volumeAtual < volumeTarget ? (
+          <Link to="/app/gerador">
+            <Card className="glass bg-gradient-card p-6 hover:border-primary/40 transition cursor-pointer h-full">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-semibold flex items-center gap-2">
@@ -192,7 +193,29 @@ function Dashboard() {
                 : "Volume ideal atingido para esta fase."}
             </p>
           </Card>
-        </Link>
+          </Link>
+        ) : (
+          <Link to="/app/historico">
+            <Card className="glass bg-gradient-card p-6 hover:border-primary/40 transition cursor-pointer h-full">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <Zap className="size-4 text-primary-glow" /> Volume recomendado
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-1">Para R$ 5.000/dia de orçamento</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-display font-bold">
+                    {volumeAtual} / {volumeTarget}
+                  </div>
+                  <div className="text-xs text-muted-foreground">criativos ativos</div>
+                </div>
+              </div>
+              <Progress value={volumePct} className="h-2" />
+              <p className="text-xs text-muted-foreground mt-3">Volume ideal atingido para esta fase.</p>
+            </Card>
+          </Link>
+        )}
 
         <Card className="glass border-warning/30 p-6">
           <h3 className="font-semibold flex items-center gap-2">
@@ -221,9 +244,12 @@ function Dashboard() {
           <p className="text-sm">
             <span className="font-semibold">{stats?.semExport}</span> criativo(s) aguardando export no editor.
           </p>
-          <Link to="/app/historico" search={{ export: "pendente" }}>
+          <Link
+            to={stats?.firstExportPendingId ? "/app/editor" : "/app/historico"}
+            search={stats?.firstExportPendingId ? { criativoId: stats.firstExportPendingId } : { export: "pendente" }}
+          >
             <Button size="sm" variant="outline">
-              Ver pendentes <ArrowRight className="size-3.5 ml-1" />
+              Exportar agora <ArrowRight className="size-3.5 ml-1" />
             </Button>
           </Link>
         </Card>

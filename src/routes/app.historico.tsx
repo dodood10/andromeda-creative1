@@ -268,7 +268,12 @@ function Historico() {
             </Badge>
           )}
         </div>
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex flex-col items-end gap-2">
+          <Link to="/app/gerador">
+            <Button size="sm" className="bg-gradient-primary border-0">
+              Gerar novos ângulos
+            </Button>
+          </Link>
           <Button
             variant="outline"
             disabled={exportaveis.length === 0 || zipLoading}

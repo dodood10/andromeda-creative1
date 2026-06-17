@@ -10,18 +10,26 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Wand2, Sparkles, ArrowRight, Brain, Loader2, Target, Gauge,
   HelpCircle, Clock, TrendingDown, TrendingUp, Minus, EyeOff, Upload, AlertTriangle,
-  Film, LayoutTemplate,
+  Film, LayoutTemplate, RefreshCw, Layers,
 } from "lucide-react";
 import {
   gerarAngulos,
   gerarPerguntaCirurgica,
   type ResultadoAngulos,
 } from "@/lib/anthropic.functions";
-import { saveGeracao, createCriativoDraft, getGeracaoResultado } from "@/lib/criativos.functions";
+import { saveGeracao, createCriativoDraft, getGeracaoResultado, getInteligenciaNicho } from "@/lib/criativos.functions";
+import {
+  pickRecommendedAngulos,
+  pickAbTestPackage,
+  formatAnthropicError,
+  angleIntelBadge,
+} from "@/lib/gerador-helpers";
+import { trackFunnelEvent } from "@/lib/funnel-events";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { useNavigate } from "@tanstack/react-router";
@@ -102,12 +110,12 @@ const confiancaColor: Record<string, string> = {
 };
 
 type Etapa = "input" | "respondendo" | "resultado" | "wizard";
-type WizardStep = "selecao" | "producao" | "midia";
+type WizardStep = "producao" | "midia";
 
 function Gerador() {
   const navigate = useNavigate();
   const { step: urlStep, formato: urlFormato } = Route.useSearch();
-  const { organizationId, projectId, currentProject } = useWorkspace();
+  const { organizationId, projectId, currentProject, setWorkspace } = useWorkspace();
   const askQuestion = useServerFn(gerarPerguntaCirurgica);
   const run = useServerFn(gerarAngulos);
   const persist = useServerFn(saveGeracao);
@@ -129,12 +137,17 @@ function Gerador() {
   const [loadingAngulos, setLoadingAngulos] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
   const [resultado, setResultado] = useState<ResultadoAngulos | null>(null);
+  const [unsavedResultado, setUnsavedResultado] = useState<ResultadoAngulos | null>(null);
   const [geracaoId, setGeracaoId] = useState<string | null>(null);
   const [selectedAngulos, setSelectedAngulos] = useState<Set<number>>(new Set());
-  const [wizardStep, setWizardStep] = useState<WizardStep>("selecao");
+  const [wizardStep, setWizardStep] = useState<WizardStep>("producao");
   const [formatoPorAngulo, setFormatoPorAngulo] = useState<Record<number, FormatoOverride>>({});
   const [creatingDrafts, setCreatingDrafts] = useState(false);
   const [creatingVsl, setCreatingVsl] = useState(false);
+  const [draftProgress, setDraftProgress] = useState<{ done: number; total: number } | null>(null);
+  const [pendingFormato, setPendingFormato] = useState<"criativo_curto" | "vsl_curta" | null>(null);
+  const [partialDrafts, setPartialDrafts] = useState<Array<{ id: string; nome: string }> | null>(null);
+  const [checklistDraft, setChecklistDraft] = useState<{ id: string; nome: string; needsMedia: boolean } | null>(null);
   const [createdDrafts, setCreatedDrafts] = useState<Array<{ id: string; nome: string }> | null>(null);
   const [backgroundMediaPath, setBackgroundMediaPath] = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
@@ -142,7 +155,16 @@ function Gerador() {
   const prevProjectRef = useRef<string | null>(null);
   const { user } = useAuth();
 
-  const { data: geracaoRestored, isLoading: loadingGeracao } = useQuery({
+  const fetchIntel = useServerFn(getInteligenciaNicho);
+
+  const { data: intelNicho } = useQuery({
+    queryKey: ["inteligencia-nicho", projectId],
+    queryFn: () => fetchIntel({ data: { projectId: projectId! } }),
+    enabled: !!projectId && !!resultado,
+    staleTime: 120_000,
+  });
+
+  const { data: geracaoRestored, isLoading: loadingGeracao, isError: geracaoRestoreError } = useQuery({
     queryKey: ["geracao-resultado", geracaoId],
     queryFn: () => fetchGeracao({ data: { geracaoId: geracaoId! } }),
     enabled: !!geracaoId && !resultado,
@@ -165,10 +187,28 @@ function Gerador() {
   }, [currentProject?.url_default, projectId]);
 
   useEffect(() => {
-    if (urlFormato && urlStep === "wizard") {
-      setEtapa("wizard");
+    if (geracaoRestoreError) {
+      toast.error("Não foi possível restaurar a geração salva");
+      localStorage.removeItem(WIZARD_STORAGE_KEY);
+      setGeracaoId(null);
     }
-  }, [urlFormato, urlStep]);
+  }, [geracaoRestoreError]);
+
+  useEffect(() => {
+    if (urlFormato && urlStep === "wizard" && !geracaoId && !resultado && !loadingGeracao) {
+      setPendingFormato(urlFormato);
+      setEtapa("input");
+      navigate({ to: "/app/gerador", search: {}, replace: true });
+      toast.info("Gere seus ângulos primeiro — o formato VSL será aplicado na produção.");
+    }
+  }, [urlFormato, urlStep, geracaoId, resultado, loadingGeracao, navigate]);
+
+  useEffect(() => {
+    if (urlFormato && urlStep === "wizard" && geracaoId && resultado) {
+      setEtapa("wizard");
+      setWizardStep("producao");
+    }
+  }, [urlFormato, urlStep, geracaoId, resultado]);
 
   const initFormatoPorAngulo = useCallback(
     (indices: Iterable<number>, globalFormato?: "criativo_curto" | "vsl_curta") => {
@@ -188,13 +228,18 @@ function Gerador() {
 
   useEffect(() => {
     if (prevProjectRef.current && prevProjectRef.current !== projectId) {
+      const hadProgress = etapa !== "input" || resultado !== null;
+      if (hadProgress && !window.confirm("Trocar de projeto vai descartar o progresso atual. Continuar?")) {
+        if (organizationId) setWorkspace(organizationId, prevProjectRef.current);
+        return;
+      }
       setEtapa("input");
       setPergunta(null);
       setResposta("");
       setResultado(null);
       setGeracaoId(null);
       setSelectedAngulos(new Set());
-      setWizardStep("selecao");
+      setWizardStep("producao");
       setFormatoPorAngulo({});
       setBackgroundMediaPath(null);
       localStorage.removeItem(WIZARD_STORAGE_KEY);
@@ -205,7 +250,7 @@ function Gerador() {
       toast.info(`Projeto alterado para ${currentProject?.name ?? "novo projeto"}`);
     }
     prevProjectRef.current = projectId;
-  }, [projectId, currentProject?.name, currentProject?.url_default, queryClient]);
+  }, [projectId, currentProject?.name, currentProject?.url_default, queryClient, etapa, resultado, organizationId, setWorkspace]);
 
   const persistWizard = useCallback((patch: Partial<WizardPersisted> & { geracaoId?: string }) => {
     if (!geracaoId && !patch.geracaoId) return;
@@ -239,7 +284,7 @@ function Gerador() {
       if (!saved.geracaoId) return;
       setGeracaoId(saved.geracaoId);
       setSelectedAngulos(new Set(saved.selectedAngulos));
-      setWizardStep(saved.wizardStep === "formato" || saved.wizardStep === "estilo" ? "producao" : saved.wizardStep);
+      setWizardStep(saved.wizardStep === "formato" || saved.wizardStep === "estilo" || saved.wizardStep === "selecao" ? "producao" : saved.wizardStep);
       if (saved.formatoPorAngulo) {
         setFormatoPorAngulo(saved.formatoPorAngulo);
       } else if ("formatoSaida" in saved && saved.formatoSaida) {
@@ -280,12 +325,12 @@ function Gerador() {
     }
   }
 
-  async function handleGenerate() {
+  async function runGerarAngulos(skipPergunta = false) {
     if (!url.trim()) {
       toast.error("Informe a URL do site");
       return;
     }
-    if (!resposta.trim()) {
+    if (!skipPergunta && !resposta.trim()) {
       toast.error("Responda a pergunta cirúrgica antes de gerar os ângulos");
       return;
     }
@@ -294,36 +339,22 @@ function Gerador() {
       return;
     }
     setLoadingAngulos(true);
-    setLoadingStep("Lendo site e pesquisando nicho...");
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-    });
-    const stepTimer = window.setTimeout(() => {
-      setLoadingStep("Analisando página e concorrentes...");
-    }, 8000);
-    const stepTimer2 = window.setTimeout(() => {
-      setLoadingStep("Gerando 5 ângulos Andromeda...");
-    }, 20000);
+    setLoadingStep("Consultando IA (pode levar 30–90s)...");
     const start = Date.now();
     try {
       const data = await run({
         data: {
           url, productType, goal, context,
-          perguntaCirurgica: pergunta?.pergunta ?? "",
-          respostaCirurgica: resposta,
+          perguntaCirurgica: skipPergunta ? "Geração direta" : (pergunta?.pergunta ?? ""),
+          respostaCirurgica: skipPergunta ? context || "Gerar com contexto mínimo da URL." : resposta,
           tomCalibracao,
           projectId: projectId ?? undefined,
         },
       });
-      setLoadingStep("Gerando 5 ângulos...");
-      setResultado(data);
-      setEtapa("resultado");
 
-      const elapsed = Date.now() - start;
-      if (elapsed > 60000) toast.warning("Geração levou mais de 60 segundos");
-
+      let saved: { geracaoId: string };
       try {
-        const saved = await persist({
+        saved = await persist({
           data: {
             url, productType, goal, context,
             resultado: data,
@@ -332,15 +363,28 @@ function Gerador() {
             organizationId,
           },
         });
-        setGeracaoId(saved.geracaoId);
-        persistWizard({ geracaoId: saved.geracaoId, selectedAngulos: [...selectedAngulos] });
-        queryClient.invalidateQueries({ queryKey: ["criativos"] });
-        queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-        toast.success("Ângulos salvos");
       } catch (persistErr) {
-        console.error(persistErr);
-        toast.error("Ângulos gerados, mas não foi possível salvar");
+        setUnsavedResultado(data);
+        const msg = persistErr instanceof Error ? persistErr.message : "Erro ao salvar geração";
+        toast.error(formatAnthropicError(msg), {
+          action: { label: "Tentar salvar", onClick: () => void retrySaveGeracao(data) },
+        });
+        return;
       }
+
+      setUnsavedResultado(null);
+      setResultado(data);
+      setGeracaoId(saved.geracaoId);
+      setEtapa("resultado");
+      persistWizard({ geracaoId: saved.geracaoId, selectedAngulos: [...selectedAngulos] });
+      queryClient.invalidateQueries({ queryKey: ["criativos"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      trackFunnelEvent({ userId: user?.id, organizationId, event: "angulos_gerados", success: true });
+      trackFunnelEvent({ userId: user?.id, organizationId, event: "wizard_step", success: true });
+
+      const elapsed = Date.now() - start;
+      if (elapsed > 60000) toast.warning("Geração levou mais de 60 segundos");
+      toast.success("Ângulos salvos");
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error ? e.message : "Erro ao gerar ângulos";
@@ -348,13 +392,57 @@ function Gerador() {
         navigate({ to: "/login" });
         return;
       }
-      toast.error(msg);
+      toast.error(formatAnthropicError(msg));
     } finally {
-      window.clearTimeout(stepTimer);
-      window.clearTimeout(stepTimer2);
       setLoadingAngulos(false);
       setLoadingStep("");
     }
+  }
+
+  async function retrySaveGeracao(data: ResultadoAngulos) {
+    if (!organizationId || !projectId) {
+      toast.error("Selecione um projeto no header");
+      return;
+    }
+    try {
+      const saved = await persist({
+        data: {
+          url, productType, goal, context,
+          resultado: data,
+          criarCriativos: false,
+          projectId,
+          organizationId,
+        },
+      });
+      setUnsavedResultado(null);
+      setResultado(data);
+      setGeracaoId(saved.geracaoId);
+      setEtapa("resultado");
+      persistWizard({ geracaoId: saved.geracaoId, selectedAngulos: [...selectedAngulos] });
+      queryClient.invalidateQueries({ queryKey: ["criativos"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      trackFunnelEvent({ userId: user?.id, organizationId, event: "angulos_gerados", success: true });
+      toast.success("Geração salva com sucesso");
+    } catch (e) {
+      toast.error(formatAnthropicError(e instanceof Error ? e.message : "Erro ao salvar"));
+    }
+  }
+
+  async function handleGenerate() {
+    await runGerarAngulos(false);
+  }
+
+  async function handleGenerateDirect() {
+    await runGerarAngulos(true);
+  }
+
+  async function handleRegenerateAngles() {
+    if (!geracaoId) {
+      toast.error("Salve uma geração antes de regenerar");
+      return;
+    }
+    setSelectedAngulos(new Set());
+    await runGerarAngulos(!!context.trim());
   }
 
   async function handleCreateDrafts() {
@@ -362,53 +450,101 @@ function Gerador() {
       toast.error("Selecione ao menos um ângulo");
       return;
     }
+
+    const mediaIndices = resultado
+      ? needsMediaUpload(resultado.angulos, selectedAngulos, formatoPorAngulo)
+      : [];
+    if (mediaIndices.length > 0 && !backgroundMediaPath) {
+      toast.error("Envie mídia de fundo — obrigatório para criativos em formato clipes+texto");
+      setWizardStep("midia");
+      return;
+    }
+
     setCreatingDrafts(true);
-    const hasVsl = [...selectedAngulos].some((idx) => formatoPorAngulo[idx]?.formatoSaida === "vsl_curta");
+    const indices = [...selectedAngulos].sort((a, b) => a - b);
+    const hasVsl = indices.some((idx) => formatoPorAngulo[idx]?.formatoSaida === "vsl_curta");
     if (hasVsl) setCreatingVsl(true);
+    setDraftProgress({ done: 0, total: indices.length });
+
+    const created: Array<{ id: string; idx: number }> = [];
+    const failed: number[] = [];
+
     try {
-      const created: Array<{ id: string; idx: number }> = [];
-      for (const idx of selectedAngulos) {
-        const fmt = formatoPorAngulo[idx];
-        if (!fmt) {
-          toast.error(`Configure o formato do ângulo ${idx + 1}`);
-          return;
-        }
-        const { criativoId, vslDevMode } = await createDraft({
-          data: {
-            geracaoId,
-            anguloIndex: idx,
-            formatoSaida: fmt.formatoSaida,
-            estiloProducao: fmt.estiloProducao,
-            formatoSource: fmt.source,
-            aspectRatioPrioritario: fmt.aspectRatioPrioritario,
-            projectId,
-            organizationId,
-            backgroundMediaPath: backgroundMediaPath ?? undefined,
-          },
-        });
-        if (fmt.formatoSaida === "vsl_curta" && vslDevMode) {
-          toast.info(`Ângulo ${idx + 1}: roteiro VSL em modo offline (sem API key)`);
-        }
-        created.push({ id: criativoId, idx });
+      const results = await Promise.allSettled(
+        indices.map(async (idx) => {
+          const fmt = formatoPorAngulo[idx];
+          if (!fmt) throw new Error(`Configure o formato do ângulo ${idx + 1}`);
+          const { criativoId, vslDevMode } = await createDraft({
+            data: {
+              geracaoId,
+              anguloIndex: idx,
+              formatoSaida: fmt.formatoSaida,
+              estiloProducao: fmt.estiloProducao,
+              formatoSource: fmt.source,
+              aspectRatioPrioritario: fmt.aspectRatioPrioritario,
+              projectId,
+              organizationId,
+              backgroundMediaPath: backgroundMediaPath ?? undefined,
+            },
+          });
+          if (fmt.formatoSaida === "vsl_curta" && vslDevMode) {
+            toast.info(`Ângulo ${idx + 1}: roteiro VSL em modo offline (sem API key)`);
+          }
+          setDraftProgress((p) => (p ? { ...p, done: p.done + 1 } : null));
+          return { id: criativoId, idx };
+        }),
+      );
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (r.status === "fulfilled") created.push(r.value);
+        else failed.push(indices[i]);
       }
+
+      if (created.length === 0) {
+        toast.error("Nenhum rascunho criado — verifique a configuração");
+        return;
+      }
+
       localStorage.removeItem(WIZARD_STORAGE_KEY);
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
+      trackFunnelEvent({ userId: user?.id, organizationId, event: "draft_created", success: true });
 
       const draftList = created.map((c) => ({
         id: c.id,
         nome: resultado?.angulos[c.idx]?.nome ?? `Ângulo ${c.idx + 1}`,
       }));
 
+      if (failed.length > 0) {
+        setPartialDrafts(draftList);
+        toast.warning(`${created.length} criado(s), ${failed.length} falhou(aram)`);
+        return;
+      }
+
       if (created.length === 1) {
-        navigate({ to: "/app/editor", search: { criativoId: created[0].id } });
+        const needsMedia = mediaIndices.length > 0;
+        setChecklistDraft({
+          id: created[0].id,
+          nome: draftList[0].nome,
+          needsMedia,
+        });
       } else {
         setCreatedDrafts(draftList);
       }
     } catch (e) {
+      if (created.length > 0) {
+        setPartialDrafts(
+          created.map((c) => ({
+            id: c.id,
+            nome: resultado?.angulos[c.idx]?.nome ?? `Ângulo ${c.idx + 1}`,
+          })),
+        );
+      }
       toast.error(e instanceof Error ? e.message : "Erro ao criar rascunho");
     } finally {
       setCreatingDrafts(false);
       setCreatingVsl(false);
+      setDraftProgress(null);
     }
   }
 
@@ -431,6 +567,26 @@ function Gerador() {
         </div>
       )}
 
+      {unsavedResultado && (
+        <div className="flex items-center justify-between gap-3 p-4 rounded-lg border border-warning/40 bg-warning/10 text-sm">
+          <span>Ângulos gerados mas não salvos — crie rascunhos após salvar.</span>
+          <Button size="sm" variant="outline" onClick={() => void retrySaveGeracao(unsavedResultado)}>
+            Tentar salvar
+          </Button>
+        </div>
+      )}
+
+      {pendingFormato && (
+        <div className="flex items-center justify-between gap-3 p-4 rounded-lg border border-primary/40 bg-primary/10 text-sm">
+          <span>
+            Formato <strong>{pendingFormato === "vsl_curta" ? "VSL curta" : "criativo curto"}</strong> será aplicado ao criar rascunhos.
+          </span>
+          <Button size="sm" variant="ghost" onClick={() => setPendingFormato(null)}>Ok</Button>
+        </div>
+      )}
+
+      {(etapa === "input" || etapa === "respondendo") && (
+      <>
       <div>
         <h1 className="text-3xl font-display font-bold">Gerador de ângulos</h1>
         <p className="text-muted-foreground mt-1">
@@ -497,23 +653,34 @@ function Gerador() {
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2 justify-end">
-          {etapa !== "respondendo" && etapa !== "wizard" && (
-            <Button
-              onClick={handleAskQuestion}
-              disabled={loadingPergunta || loadingAngulos}
-              className="bg-gradient-primary border-0 shadow-glow"
-            >
-              {loadingPergunta ? (
-                <><Loader2 className="size-4 mr-1.5 animate-spin" /> Gerando pergunta...</>
-              ) : (
-                <><HelpCircle className="size-4 mr-1.5" /> Gerar pergunta cirúrgica</>
-              )}
-            </Button>
+          {etapa !== "respondendo" && (
+            <>
+              <Button
+                variant="outline"
+                onClick={handleGenerateDirect}
+                disabled={loadingPergunta || loadingAngulos || !url.trim()}
+              >
+                Gerar direto (sem pergunta)
+              </Button>
+              <Button
+                onClick={handleAskQuestion}
+                disabled={loadingPergunta || loadingAngulos}
+                className="bg-gradient-primary border-0 shadow-glow"
+              >
+                {loadingPergunta ? (
+                  <><Loader2 className="size-4 mr-1.5 animate-spin" /> Gerando pergunta...</>
+                ) : (
+                  <><HelpCircle className="size-4 mr-1.5" /> Gerar pergunta cirúrgica</>
+                )}
+              </Button>
+            </>
           )}
         </div>
       </Card>
+      </>
+      )}
 
-      {etapa === "respondendo" && pergunta && (
+      {etapa !== "wizard" && etapa === "respondendo" && pergunta && (
         <Card className="glass bg-gradient-card p-6 border border-primary/30">
           <div className="flex items-center gap-2 mb-3">
             <HelpCircle className="size-5 text-primary-glow" />
@@ -551,8 +718,17 @@ function Gerador() {
         </Card>
       )}
 
-      {resultado && (
+      {resultado && etapa === "resultado" && (
         <>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-display font-bold">5 ângulos gerados</h1>
+              <p className="text-muted-foreground mt-1">Selecione os que quer transformar em rascunhos.</p>
+            </div>
+            <Link to="/app/historico">
+              <Button variant="outline" size="sm">Ver criativos</Button>
+            </Link>
+          </div>
           <Card className="glass bg-gradient-card p-6">
             <div className="flex items-center gap-2 mb-4">
               <Brain className="size-5 text-primary-glow" />
@@ -580,23 +756,112 @@ function Gerador() {
           </Card>
 
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-display text-xl font-semibold">5 ângulos gerados</h2>
-              <Button
-                className="bg-gradient-primary border-0"
-                disabled={selectedAngulos.size === 0}
-                onClick={() => {
-                  const map = initFormatoPorAngulo(selectedAngulos, urlFormato);
-                  setFormatoPorAngulo(map);
-                  setEtapa("wizard");
-                  setWizardStep("selecao");
-                  navigate({ to: "/app/gerador", search: { step: "wizard" } });
-                  persistWizard({ wizardStep: "selecao", selectedAngulos: [...selectedAngulos], formatoPorAngulo: map });
-                }}
-              >
-                Continuar com selecionados <ArrowRight className="size-4 ml-1.5" />
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 className="font-display text-xl font-semibold">Selecione os ângulos</h2>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const picks = pickRecommendedAngulos(resultado, 2);
+                    setSelectedAngulos(new Set(picks));
+                    toast.success("2 ângulos recomendados selecionados");
+                  }}
+                >
+                  Selecionar recomendados (2)
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const picks = pickAbTestPackage(resultado);
+                    setSelectedAngulos(new Set(picks));
+                    toast.success("Pacote A/B: 3 ângulos selecionados");
+                  }}
+                >
+                  <Layers className="size-3.5 mr-1" /> Pacote A/B (3)
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void handleRegenerateAngles()} disabled={loadingAngulos}>
+                  <RefreshCw className="size-3.5 mr-1" /> Gerar outros 5
+                </Button>
+                <Button
+                  className="bg-gradient-primary border-0"
+                  disabled={selectedAngulos.size === 0}
+                  onClick={() => {
+                    const globalFmt = pendingFormato ?? urlFormato;
+                    const map = initFormatoPorAngulo(selectedAngulos, globalFmt ?? undefined);
+                    setFormatoPorAngulo(map);
+                    setEtapa("wizard");
+                    setWizardStep("producao");
+                    navigate({ to: "/app/gerador", search: { step: "wizard" } });
+                    persistWizard({ wizardStep: "producao", selectedAngulos: [...selectedAngulos], formatoPorAngulo: map });
+                    trackFunnelEvent({ userId: user?.id, organizationId, event: "wizard_step" });
+                  }}
+                >
+                  Continuar <ArrowRight className="size-4 ml-1.5" />
+                </Button>
+              </div>
             </div>
+            <Card className="glass p-4 mb-4 overflow-x-auto">
+              <p className="text-xs text-muted-foreground mb-3 uppercase tracking-wide">Comparador rápido</p>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10" />
+                    <TableHead>Ângulo</TableHead>
+                    <TableHead>Hook</TableHead>
+                    <TableHead>Schwartz</TableHead>
+                    <TableHead>Formato IA</TableHead>
+                    <TableHead>Saturação</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {resultado.angulos.map((a, i) => {
+                    const rec = a.recomendacao_formato;
+                    const sat = saturacaoMeta[a.saturacao_hook?.status] ?? saturacaoMeta.neutro;
+                    const SatIcon = sat.icon;
+                    return (
+                      <TableRow
+                        key={i}
+                        className={selectedAngulos.has(i) ? "bg-primary/5" : undefined}
+                        onClick={() => {
+                          const next = new Set(selectedAngulos);
+                          if (next.has(i)) next.delete(i);
+                          else next.add(i);
+                          setSelectedAngulos(next);
+                        }}
+                      >
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedAngulos.has(i)}
+                            onCheckedChange={(checked) => {
+                              const next = new Set(selectedAngulos);
+                              if (checked) next.add(i);
+                              else next.delete(i);
+                              setSelectedAngulos(next);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium text-sm">{a.nome}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate" title={a.hook}>
+                          {a.hook}
+                        </TableCell>
+                        <TableCell className="text-sm">{a.nivel_schwartz}</TableCell>
+                        <TableCell className="text-sm">
+                          {rec ? formatoBadgeLabel(overrideFromRecomendacao(rec), rec.duracao_alvo_seg) : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`${sat.color} text-[10px]`}>
+                            <SatIcon className="size-3 mr-1" /> {sat.label}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </Card>
             <Accordion type="multiple" className="space-y-3">
               {resultado.angulos.map((a, i) => {
                 const sat = saturacaoMeta[a.saturacao_hook?.status] ?? saturacaoMeta.neutro;
@@ -604,6 +869,9 @@ function Gerador() {
                 const rec = a.recomendacao_formato;
                 const fmtBadge = rec
                   ? formatoBadgeLabel(overrideFromRecomendacao(rec), rec.duracao_alvo_seg)
+                  : null;
+                const intelBadge = intelNicho?.topAngulos
+                  ? angleIntelBadge(a.nome, intelNicho.topAngulos)
                   : null;
                 return (
                   <AccordionItem key={i} value={`a${i}`} className="glass bg-gradient-card rounded-xl border-0 overflow-hidden">
@@ -628,6 +896,11 @@ function Gerador() {
                           <div className="text-xs text-muted-foreground mt-0.5">
                             Micropersona: {a.micropersona?.nome} — teme perder o papel de {a.micropersona?.papel_temido}
                           </div>
+                          {intelBadge && (
+                            <Badge variant="outline" className="mt-1 text-[10px] bg-success/10 border-success/30">
+                              {intelBadge}
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                           {fmtBadge && (
@@ -777,6 +1050,13 @@ function Gerador() {
       )}
 
       {etapa === "wizard" && (
+        <div>
+          <h1 className="text-3xl font-display font-bold">Produção dos rascunhos</h1>
+          <p className="text-muted-foreground mt-1">Configure formato e mídia antes de abrir no editor.</p>
+        </div>
+      )}
+
+      {etapa === "wizard" && (
         <Card className="glass bg-gradient-card p-6 space-y-6">
           {loadingGeracao && !resultado && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
@@ -784,40 +1064,27 @@ function Gerador() {
             </div>
           )}
           <div className="flex items-center justify-between flex-wrap gap-3">
-            <h2 className="font-display text-xl font-semibold">Configurar produção</h2>
+            <div>
+              <h2 className="font-display text-xl font-semibold">Configurar produção</h2>
+              <Button variant="link" className="h-auto p-0 text-xs text-muted-foreground" onClick={() => setEtapa("resultado")}>
+                ← Voltar aos ângulos
+              </Button>
+            </div>
             <p className="text-sm text-muted-foreground">
               {selectedAngulos.size} ângulo(s) → {selectedAngulos.size} rascunho(s)
+              {draftProgress && ` · ${draftProgress.done}/${draftProgress.total}`}
             </p>
           </div>
           <div className="flex gap-2 text-xs">
-            {(["selecao", "producao", "midia"] as WizardStep[]).map((s, i) => (
+            {(["producao", "midia"] as WizardStep[]).map((s, i) => (
               <span
                 key={s}
                 className={`px-2 py-1 rounded ${wizardStep === s ? "bg-primary/20 text-primary-glow" : "text-muted-foreground"}`}
               >
-                {i + 1}. {s === "producao" ? "produção" : s}
+                {i + 1}. {s === "producao" ? "produção" : "mídia"}
               </span>
             ))}
           </div>
-
-          {wizardStep === "selecao" && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">{selectedAngulos.size} ângulo(s) selecionado(s)</p>
-              <Button
-                onClick={() => {
-                  const map = Object.keys(formatoPorAngulo).length > 0
-                    ? formatoPorAngulo
-                    : initFormatoPorAngulo(selectedAngulos, urlFormato);
-                  setFormatoPorAngulo(map);
-                  setWizardStep("producao");
-                  persistWizard({ wizardStep: "producao", formatoPorAngulo: map });
-                }}
-                disabled={selectedAngulos.size === 0}
-              >
-                Próximo: produção <ArrowRight className="size-4 ml-1" />
-              </Button>
-            </div>
-          )}
 
           {wizardStep === "producao" && resultado && (
             <div className="space-y-4">
@@ -875,7 +1142,7 @@ function Gerador() {
                           )}
                         </div>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div className="space-y-1.5">
                           <Label className="text-xs">Formato</Label>
                           <Select
@@ -922,6 +1189,29 @@ function Gerador() {
                             </SelectContent>
                           </Select>
                         </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Proporção</Label>
+                          <Select
+                            value={fmt.aspectRatioPrioritario}
+                            onValueChange={(v) => {
+                              const next = {
+                                ...fmt,
+                                aspectRatioPrioritario: v as FormatoOverride["aspectRatioPrioritario"],
+                                source: "manual" as const,
+                              };
+                              const updated = { ...formatoPorAngulo, [idx]: next };
+                              setFormatoPorAngulo(updated);
+                              persistWizard({ formatoPorAngulo: updated });
+                            }}
+                          >
+                            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="9:16">9:16 (Stories/Reels)</SelectItem>
+                              <SelectItem value="4:5">4:5 (Feed)</SelectItem>
+                              <SelectItem value="1:1">1:1 (Quadrado)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
                       {fmt.formatoSaida === "vsl_curta" && (
                         <p className="text-xs text-muted-foreground">
@@ -933,7 +1223,7 @@ function Gerador() {
                 })}
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setWizardStep("selecao")}>Voltar</Button>
+                <Button variant="outline" onClick={() => setEtapa("resultado")}>Voltar aos ângulos</Button>
                 <Button onClick={() => { setWizardStep("midia"); persistWizard({ wizardStep: "midia" }); }}>
                   Próximo <ArrowRight className="size-4 ml-1" />
                 </Button>
@@ -1008,7 +1298,11 @@ function Gerador() {
                   {creatingDrafts ? (
                     <>
                       <Loader2 className="size-4 animate-spin" />
-                      {creatingVsl ? "Gerando roteiro VSL (~30–60s)…" : "Criando rascunhos…"}
+                      {draftProgress
+                        ? `${draftProgress.done}/${draftProgress.total} — ${creatingVsl ? "VSL…" : "criando…"}`
+                        : creatingVsl
+                          ? "Gerando roteiro VSL (~30–60s)…"
+                          : "Criando rascunhos…"}
                     </>
                   ) : selectedAngulos.size > 1 ? (
                     `Criar ${selectedAngulos.size} rascunhos`
@@ -1021,6 +1315,79 @@ function Gerador() {
           )}
         </Card>
       )}
+
+      <Dialog open={!!checklistDraft} onOpenChange={(open) => !open && setChecklistDraft(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rascunho criado — próximos passos</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Antes de subir no Meta, complete no editor:
+          </p>
+          <ul className="text-sm space-y-2">
+            <li className="flex items-center justify-between gap-2">
+              <span>Gerar narração do roteiro completo</span>
+              <Link
+                to="/app/editor"
+                search={{ criativoId: checklistDraft?.id ?? "", focus: "audio" }}
+                onClick={() => setChecklistDraft(null)}
+              >
+                <Button size="sm" variant="link" className="h-auto p-0">Ir →</Button>
+              </Link>
+            </li>
+            {checklistDraft?.needsMedia && (
+              <li className="flex items-center justify-between gap-2">
+                <span>Confirmar mídia de fundo (clipes+texto)</span>
+                <Link
+                  to="/app/editor"
+                  search={{ criativoId: checklistDraft.id, focus: "media" }}
+                  onClick={() => setChecklistDraft(null)}
+                >
+                  <Button size="sm" variant="link" className="h-auto p-0">Ir →</Button>
+                </Link>
+              </li>
+            )}
+            <li className="flex items-center justify-between gap-2">
+              <span>Rodar score e exportar MP4</span>
+              <Link
+                to="/app/editor"
+                search={{ criativoId: checklistDraft?.id ?? "", focus: "score" }}
+                onClick={() => setChecklistDraft(null)}
+              >
+                <Button size="sm" variant="link" className="h-auto p-0">Avaliar →</Button>
+              </Link>
+            </li>
+          </ul>
+          <Link
+            to="/app/editor"
+            search={{ criativoId: checklistDraft?.id ?? "" }}
+            onClick={() => setChecklistDraft(null)}
+          >
+            <Button className="w-full bg-gradient-primary border-0">Ir ao editor</Button>
+          </Link>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!partialDrafts} onOpenChange={(open) => !open && setPartialDrafts(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rascunhos parciais criados</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Alguns ângulos falharam — abra os rascunhos que foram criados:
+          </p>
+          <div className="space-y-2 max-h-60 overflow-auto py-2">
+            {partialDrafts?.map((d) => (
+              <Link key={d.id} to="/app/editor" search={{ criativoId: d.id }} onClick={() => setPartialDrafts(null)}>
+                <Button variant="outline" className="w-full justify-between">
+                  <span className="truncate">{d.nome}</span>
+                  <ArrowRight className="size-4" />
+                </Button>
+              </Link>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!createdDrafts} onOpenChange={(open) => !open && setCreatedDrafts(null)}>
         <DialogContent className="max-w-md">
