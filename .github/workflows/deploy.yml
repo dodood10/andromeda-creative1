@@ -45,7 +45,7 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - run: npm ci
+      - run: npm install
 
       - name: Build worker
         run: npm run build:worker
