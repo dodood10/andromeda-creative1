@@ -21,13 +21,13 @@ import { Badge } from "@/components/ui/badge";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Os Segredos dos Criativos de Alta Conversão" },
+      { title: "Andromeda" },
       {
         name: "description",
         content:
           "Gere ângulos, edite vídeos e escale criativos para Meta Ads com a metodologia Andromeda 2026.",
       },
-      { property: "og:title", content: "Os Segredos dos Criativos de Alta Conversão" },
+      { property: "og:title", content: "Andromeda" },
       {
         property: "og:description",
         content:
@@ -280,7 +280,7 @@ function Landing() {
             <div className="size-6 rounded-md bg-gradient-primary" />
             <span className="font-display font-semibold text-foreground">Andromeda</span>
           </div>
-          <p>© 2026 Os Segredos dos Criativos de Alta Conversão</p>
+          <p>© 2026 Andromeda</p>
         </div>
       </footer>
     </div>
