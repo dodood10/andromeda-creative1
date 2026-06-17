@@ -91,6 +91,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: "Os Segredos dos Criativos de Alta Conversão" },
+      { name: "description", content: "Andromeda Creative AI generates ad angles and video creatives based on image references and market data." },
+      { property: "og:description", content: "Andromeda Creative AI generates ad angles and video creatives based on image references and market data." },
+      { name: "twitter:description", content: "Andromeda Creative AI generates ad angles and video creatives based on image references and market data." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/2ea6ecaa-a0dc-4ac1-bdf2-f56afd341b8e/id-preview-381631ac--e7057ad5-c0e7-4d60-8c1c-a14b9666883a.lovable.app-1781658112839.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/2ea6ecaa-a0dc-4ac1-bdf2-f56afd341b8e/id-preview-381631ac--e7057ad5-c0e7-4d60-8c1c-a14b9666883a.lovable.app-1781658112839.png" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
