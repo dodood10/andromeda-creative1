@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { refineBlockWithAI } from "./anthropic-refine";
+import { trackApiUsage } from "./api-usage";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { ResultadoAngulosSchema } from "./schemas/angulos.schema";
 
@@ -37,7 +38,7 @@ Responda APENAS com JSON válido, sem markdown:
 export const gerarPerguntaCirurgica = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => PerguntaInputSchema.parse(input))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
 
@@ -70,6 +71,7 @@ Gere a pergunta cirúrgica adaptada a este produto específico (não genérica) 
 
     if (!res.ok) {
       const errText = await res.text();
+      trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: false });
       throw new Error(`Anthropic ${res.status}: ${errText}`);
     }
 
@@ -83,8 +85,12 @@ Gere a pergunta cirúrgica adaptada a este produto específico (não genérica) 
       .trim();
 
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("Resposta sem JSON: " + text.slice(0, 200));
+    if (!jsonMatch) {
+      trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: false });
+      throw new Error("Resposta sem JSON: " + text.slice(0, 200));
+    }
 
+    trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: true });
     return JSON.parse(jsonMatch[0]) as { pergunta: string; justificativa: string };
   });
 
@@ -242,7 +248,7 @@ Sempre EXATAMENTE 5 ângulos, cada um para micropersona diferente. Português do
 export const gerarAngulos = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
 
@@ -280,6 +286,7 @@ Execute o processo completo: visite a URL com web_search, pesquise o que escala 
 
     if (!res.ok) {
       const errText = await res.text();
+      trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
       throw new Error(`Anthropic ${res.status}: ${errText}`);
     }
 
@@ -297,8 +304,10 @@ Execute o processo completo: visite a URL com web_search, pesquise o que escala 
 
     const parsed = ResultadoAngulosSchema.safeParse(JSON.parse(jsonMatch[0]));
     if (!parsed.success) {
+      trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
       throw new Error("JSON inválido: " + parsed.error.message.slice(0, 200));
     }
+    trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: true });
     return parsed.data as ResultadoAngulos;
   });
 
@@ -312,18 +321,24 @@ export const refinarBloco = createServerFn({ method: "POST" })
       tomCalibracao: z.enum(["direto", "empatico", "autoritativo"]).optional(),
     }),
   )
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
 
-    const conteudo = await refineBlockWithAI(
-      apiKey,
-      data.conteudoAtual,
-      data.instrucao,
-      data.tempo,
-      data.tomCalibracao ?? "direto",
-    );
-    return { conteudo };
+    try {
+      const conteudo = await refineBlockWithAI(
+        apiKey,
+        data.conteudoAtual,
+        data.instrucao,
+        data.tempo,
+        data.tomCalibracao ?? "direto",
+      );
+      trackApiUsage({ userId: context.userId, eventType: "refinar_bloco", success: true });
+      return { conteudo };
+    } catch (e) {
+      trackApiUsage({ userId: context.userId, eventType: "refinar_bloco", success: false });
+      throw e;
+    }
   });
 
 export type ResultadoAngulos = {

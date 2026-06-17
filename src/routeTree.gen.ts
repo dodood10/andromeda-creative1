@@ -11,8 +11,11 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/app'
+import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AppVslRouteImport } from './routes/app.vsl'
 import { Route as AppProjetosRouteImport } from './routes/app.projetos'
 import { Route as AppOnboardingRouteImport } from './routes/app.onboarding'
@@ -21,6 +24,12 @@ import { Route as AppHistoricoRouteImport } from './routes/app.historico'
 import { Route as AppGeradorRouteImport } from './routes/app.gerador'
 import { Route as AppEscalaRouteImport } from './routes/app.escala'
 import { Route as AppEditorRouteImport } from './routes/app.editor'
+import { Route as AppConfiguracoesRouteImport } from './routes/app.configuracoes'
+import { Route as AdminUsuariosRouteImport } from './routes/admin.usuarios'
+import { Route as AdminOrganizacoesRouteImport } from './routes/admin.organizacoes'
+import { Route as AdminIaRouteImport } from './routes/admin.ia'
+import { Route as AdminCriativosRouteImport } from './routes/admin.criativos'
+import { Route as AdminAuditoriaRouteImport } from './routes/admin.auditoria'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -32,6 +41,16 @@ const AppRoute = AppRouteImport.update({
   path: '/app',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AcceptInviteRoute = AcceptInviteRouteImport.update({
+  id: '/accept-invite',
+  path: '/accept-invite',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -41,6 +60,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppRoute,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
 } as any)
 const AppVslRoute = AppVslRouteImport.update({
   id: '/vsl',
@@ -82,11 +106,49 @@ const AppEditorRoute = AppEditorRouteImport.update({
   path: '/editor',
   getParentRoute: () => AppRoute,
 } as any)
+const AppConfiguracoesRoute = AppConfiguracoesRouteImport.update({
+  id: '/configuracoes',
+  path: '/configuracoes',
+  getParentRoute: () => AppRoute,
+} as any)
+const AdminUsuariosRoute = AdminUsuariosRouteImport.update({
+  id: '/usuarios',
+  path: '/usuarios',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminOrganizacoesRoute = AdminOrganizacoesRouteImport.update({
+  id: '/organizacoes',
+  path: '/organizacoes',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminIaRoute = AdminIaRouteImport.update({
+  id: '/ia',
+  path: '/ia',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminCriativosRoute = AdminCriativosRouteImport.update({
+  id: '/criativos',
+  path: '/criativos',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminAuditoriaRoute = AdminAuditoriaRouteImport.update({
+  id: '/auditoria',
+  path: '/auditoria',
+  getParentRoute: () => AdminRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/accept-invite': typeof AcceptInviteRoute
+  '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/admin/auditoria': typeof AdminAuditoriaRoute
+  '/admin/criativos': typeof AdminCriativosRoute
+  '/admin/ia': typeof AdminIaRoute
+  '/admin/organizacoes': typeof AdminOrganizacoesRoute
+  '/admin/usuarios': typeof AdminUsuariosRoute
+  '/app/configuracoes': typeof AppConfiguracoesRoute
   '/app/editor': typeof AppEditorRoute
   '/app/escala': typeof AppEscalaRoute
   '/app/gerador': typeof AppGeradorRoute
@@ -95,11 +157,19 @@ export interface FileRoutesByFullPath {
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/projetos': typeof AppProjetosRoute
   '/app/vsl': typeof AppVslRoute
+  '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/accept-invite': typeof AcceptInviteRoute
   '/login': typeof LoginRoute
+  '/admin/auditoria': typeof AdminAuditoriaRoute
+  '/admin/criativos': typeof AdminCriativosRoute
+  '/admin/ia': typeof AdminIaRoute
+  '/admin/organizacoes': typeof AdminOrganizacoesRoute
+  '/admin/usuarios': typeof AdminUsuariosRoute
+  '/app/configuracoes': typeof AppConfiguracoesRoute
   '/app/editor': typeof AppEditorRoute
   '/app/escala': typeof AppEscalaRoute
   '/app/gerador': typeof AppGeradorRoute
@@ -108,13 +178,22 @@ export interface FileRoutesByTo {
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/projetos': typeof AppProjetosRoute
   '/app/vsl': typeof AppVslRoute
+  '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/accept-invite': typeof AcceptInviteRoute
+  '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/admin/auditoria': typeof AdminAuditoriaRoute
+  '/admin/criativos': typeof AdminCriativosRoute
+  '/admin/ia': typeof AdminIaRoute
+  '/admin/organizacoes': typeof AdminOrganizacoesRoute
+  '/admin/usuarios': typeof AdminUsuariosRoute
+  '/app/configuracoes': typeof AppConfiguracoesRoute
   '/app/editor': typeof AppEditorRoute
   '/app/escala': typeof AppEscalaRoute
   '/app/gerador': typeof AppGeradorRoute
@@ -123,14 +202,23 @@ export interface FileRoutesById {
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/projetos': typeof AppProjetosRoute
   '/app/vsl': typeof AppVslRoute
+  '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accept-invite'
+    | '/admin'
     | '/app'
     | '/login'
+    | '/admin/auditoria'
+    | '/admin/criativos'
+    | '/admin/ia'
+    | '/admin/organizacoes'
+    | '/admin/usuarios'
+    | '/app/configuracoes'
     | '/app/editor'
     | '/app/escala'
     | '/app/gerador'
@@ -139,11 +227,19 @@ export interface FileRouteTypes {
     | '/app/onboarding'
     | '/app/projetos'
     | '/app/vsl'
+    | '/admin/'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/accept-invite'
     | '/login'
+    | '/admin/auditoria'
+    | '/admin/criativos'
+    | '/admin/ia'
+    | '/admin/organizacoes'
+    | '/admin/usuarios'
+    | '/app/configuracoes'
     | '/app/editor'
     | '/app/escala'
     | '/app/gerador'
@@ -152,12 +248,21 @@ export interface FileRouteTypes {
     | '/app/onboarding'
     | '/app/projetos'
     | '/app/vsl'
+    | '/admin'
     | '/app'
   id:
     | '__root__'
     | '/'
+    | '/accept-invite'
+    | '/admin'
     | '/app'
     | '/login'
+    | '/admin/auditoria'
+    | '/admin/criativos'
+    | '/admin/ia'
+    | '/admin/organizacoes'
+    | '/admin/usuarios'
+    | '/app/configuracoes'
     | '/app/editor'
     | '/app/escala'
     | '/app/gerador'
@@ -166,11 +271,14 @@ export interface FileRouteTypes {
     | '/app/onboarding'
     | '/app/projetos'
     | '/app/vsl'
+    | '/admin/'
     | '/app/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AcceptInviteRoute: typeof AcceptInviteRoute
+  AdminRoute: typeof AdminRouteWithChildren
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
 }
@@ -191,6 +299,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accept-invite': {
+      id: '/accept-invite'
+      path: '/accept-invite'
+      fullPath: '/accept-invite'
+      preLoaderRoute: typeof AcceptInviteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -204,6 +326,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/app/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
     }
     '/app/vsl': {
       id: '/app/vsl'
@@ -261,10 +390,73 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppEditorRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/configuracoes': {
+      id: '/app/configuracoes'
+      path: '/configuracoes'
+      fullPath: '/app/configuracoes'
+      preLoaderRoute: typeof AppConfiguracoesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/admin/usuarios': {
+      id: '/admin/usuarios'
+      path: '/usuarios'
+      fullPath: '/admin/usuarios'
+      preLoaderRoute: typeof AdminUsuariosRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/organizacoes': {
+      id: '/admin/organizacoes'
+      path: '/organizacoes'
+      fullPath: '/admin/organizacoes'
+      preLoaderRoute: typeof AdminOrganizacoesRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/ia': {
+      id: '/admin/ia'
+      path: '/ia'
+      fullPath: '/admin/ia'
+      preLoaderRoute: typeof AdminIaRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/criativos': {
+      id: '/admin/criativos'
+      path: '/criativos'
+      fullPath: '/admin/criativos'
+      preLoaderRoute: typeof AdminCriativosRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/auditoria': {
+      id: '/admin/auditoria'
+      path: '/auditoria'
+      fullPath: '/admin/auditoria'
+      preLoaderRoute: typeof AdminAuditoriaRouteImport
+      parentRoute: typeof AdminRoute
+    }
   }
 }
 
+interface AdminRouteChildren {
+  AdminAuditoriaRoute: typeof AdminAuditoriaRoute
+  AdminCriativosRoute: typeof AdminCriativosRoute
+  AdminIaRoute: typeof AdminIaRoute
+  AdminOrganizacoesRoute: typeof AdminOrganizacoesRoute
+  AdminUsuariosRoute: typeof AdminUsuariosRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminAuditoriaRoute: AdminAuditoriaRoute,
+  AdminCriativosRoute: AdminCriativosRoute,
+  AdminIaRoute: AdminIaRoute,
+  AdminOrganizacoesRoute: AdminOrganizacoesRoute,
+  AdminUsuariosRoute: AdminUsuariosRoute,
+  AdminIndexRoute: AdminIndexRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
+
 interface AppRouteChildren {
+  AppConfiguracoesRoute: typeof AppConfiguracoesRoute
   AppEditorRoute: typeof AppEditorRoute
   AppEscalaRoute: typeof AppEscalaRoute
   AppGeradorRoute: typeof AppGeradorRoute
@@ -277,6 +469,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppConfiguracoesRoute: AppConfiguracoesRoute,
   AppEditorRoute: AppEditorRoute,
   AppEscalaRoute: AppEscalaRoute,
   AppGeradorRoute: AppGeradorRoute,
@@ -292,6 +485,8 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AcceptInviteRoute: AcceptInviteRoute,
+  AdminRoute: AdminRouteWithChildren,
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
 }

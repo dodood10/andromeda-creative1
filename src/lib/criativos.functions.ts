@@ -7,6 +7,7 @@ import { AnguloSchema, RoteiroBlocoSchema } from "./schemas/angulos.schema";
 import type { AppLink } from "./app-links";
 import { buildVslRoteiroFromAngulo } from "./vsl-roteiro";
 import { refineBlockWithAI } from "./anthropic-refine";
+import { trackApiUsage } from "./api-usage";
 
 export type CriativoRow = Tables<"criativos">;
 type CriativoStatus = Enums<"criativo_status">;
@@ -640,6 +641,14 @@ export const gerarVariacoes = createServerFn({ method: "POST" })
         angulo: `${campeao.angulo} · var ${tipo}`,
       });
     }
+
+    trackApiUsage({
+      userId,
+      organizationId: data.organizationId,
+      eventType: "gerar_variacoes",
+      tokensEstimated: data.tipos.length * 3000,
+      success: variacoesGeradas.length > 0,
+    });
 
     return { variacoes: variacoesGeradas };
   });

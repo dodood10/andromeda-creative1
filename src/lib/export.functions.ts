@@ -7,6 +7,7 @@ import {
   computeLeilaoScore,
   type SinaisAndromeda,
 } from "./score-sinais";
+import { trackApiUsage } from "./api-usage";
 
 const BUCKET = "criativos-media";
 
@@ -72,12 +73,13 @@ export const gerarAudio = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const apiKey = process.env.ELEVENLABS_API_KEY;
-    const { supabase } = context;
+    const { supabase, userId } = context;
 
     if (!apiKey) {
       return { audioUrl: null, devMode: true, message: "ELEVENLABS_API_KEY ausente — prévia em modo texto" };
     }
 
+    try {
     const res = await fetch(
       `https://api.elevenlabs.io/v1/text-to-speech/${data.voiceId}`,
       {
@@ -120,7 +122,24 @@ export const gerarAudio = createServerFn({ method: "POST" })
       .from(BUCKET)
       .createSignedUrl(path, 3600);
 
+    const { data: criativoOrg } = await supabase
+      .from("criativos")
+      .select("organization_id")
+      .eq("id", data.criativoId)
+      .single();
+
+    trackApiUsage({
+      userId,
+      organizationId: criativoOrg?.organization_id,
+      eventType: "gerar_audio",
+      success: true,
+    });
+
     return { audioUrl: signed?.signedUrl ?? null, path, devMode: false };
+    } catch (e) {
+      trackApiUsage({ userId, eventType: "gerar_audio", success: false });
+      throw e;
+    }
   });
 
 export const gerarAudioRoteiroCompleto = createServerFn({ method: "POST" })
@@ -133,7 +152,7 @@ export const gerarAudioRoteiroCompleto = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const apiKey = process.env.ELEVENLABS_API_KEY;
-    const { supabase } = context;
+    const { supabase, userId } = context;
 
     if (!apiKey) {
       return { gerados: 0, devMode: true, message: "ELEVENLABS_API_KEY ausente" };
@@ -141,7 +160,7 @@ export const gerarAudioRoteiroCompleto = createServerFn({ method: "POST" })
 
     const { data: criativo, error } = await supabase
       .from("criativos")
-      .select("roteiro")
+      .select("roteiro, organization_id")
       .eq("id", data.criativoId)
       .single();
 
@@ -180,6 +199,14 @@ export const gerarAudioRoteiroCompleto = createServerFn({ method: "POST" })
       .from("criativos")
       .update({ audio_paths: audioPaths, voice_id: data.voiceId })
       .eq("id", data.criativoId);
+
+    trackApiUsage({
+      userId,
+      organizationId: criativo.organization_id,
+      eventType: "gerar_audio",
+      tokensEstimated: gerados * 500,
+      success: gerados > 0,
+    });
 
     return { gerados, devMode: false };
   });
@@ -394,7 +421,7 @@ export const solicitarExport = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ criativoId: z.string().uuid() }))
   .handler(async ({ data, context }) => {
-    const { supabase } = context;
+    const { supabase, userId } = context;
 
     const { data: criativo, error } = await supabase
       .from("criativos")
@@ -450,6 +477,12 @@ export const solicitarExport = createServerFn({ method: "POST" })
           })
           .eq("id", data.criativoId);
 
+        trackApiUsage({
+          userId,
+          organizationId: criativo.organization_id,
+          eventType: "export",
+          success: true,
+        });
         return { status: "pronto", paths: result.paths, utm, devMode: false };
       }
 
@@ -471,6 +504,12 @@ export const solicitarExport = createServerFn({ method: "POST" })
         })
         .eq("id", data.criativoId);
 
+      trackApiUsage({
+        userId,
+        organizationId: criativo.organization_id,
+        eventType: "export",
+        success: true,
+      });
       return {
         status: "pronto",
         paths: devPaths,
@@ -479,6 +518,12 @@ export const solicitarExport = createServerFn({ method: "POST" })
         message: "FFMPEG_SERVICE_URL não configurado — placeholders enviados ao storage",
       };
     } catch (e) {
+      trackApiUsage({
+        userId,
+        organizationId: criativo.organization_id,
+        eventType: "export",
+        success: false,
+      });
       await supabase
         .from("criativos")
         .update({ export_status: "erro" })

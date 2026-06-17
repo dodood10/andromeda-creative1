@@ -157,9 +157,14 @@ function AppLayout() {
                   <ProjectSelector compact />
                 </div>
                 <div className="ml-auto flex items-center gap-3">
+                  <Link to="/app/configuracoes" className="hidden sm:flex">
+                    <Button variant="ghost" size="sm" className="h-8 px-2" title="Configurações">
+                      <Settings className="size-4" />
+                    </Button>
+                  </Link>
                   <Link to="/app/projetos" className="hidden sm:flex">
                     <Button variant="ghost" size="sm" className="h-8 px-2" title="Projetos">
-                      <Settings className="size-4" />
+                      <FolderKanban className="size-4" />
                     </Button>
                   </Link>
                   <span className="text-xs text-muted-foreground hidden sm:inline">
@@ -183,6 +188,8 @@ function AppLayout() {
 
 function AppSidebar() {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
+  const { currentOrg } = useWorkspace();
+  const isOwner = currentOrg?.role === "owner";
   const isActive = (url: string, exact?: boolean) =>
     exact ? pathname === url : pathname === url || pathname.startsWith(url + "/");
 
@@ -229,6 +236,16 @@ function AppSidebar() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              {isOwner && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === "/app/configuracoes"}>
+                    <Link to="/app/configuracoes" className="flex items-center gap-2">
+                      <Settings className="size-4" />
+                      <span>Configurações</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

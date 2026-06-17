@@ -14,6 +14,66 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_audit_log: {
+        Row: {
+          action: string
+          actor_user_id: string
+          created_at: string
+          id: string
+          metadata: Json
+          target_id: string | null
+          target_type: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Relationships: []
+      }
+      api_usage_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          organization_id: string | null
+          success: boolean
+          tokens_estimated: number | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          organization_id?: string | null
+          success?: boolean
+          tokens_estimated?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          organization_id?: string | null
+          success?: boolean
+          tokens_estimated?: number | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       criativos: {
         Row: {
           angulo: string
@@ -164,6 +224,42 @@ export type Database = {
         }
         Relationships: []
       }
+      organization_invites: {
+        Row: {
+          accepted_at: string | null
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string
+          organization_id: string
+          role: Database["public"]["Enums"]["org_member_role"]
+          token: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          created_at?: string
+          email: string
+          expires_at?: string
+          id?: string
+          invited_by: string
+          organization_id: string
+          role?: Database["public"]["Enums"]["org_member_role"]
+          token?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_by?: string
+          organization_id?: string
+          role?: Database["public"]["Enums"]["org_member_role"]
+          token?: string
+        }
+        Relationships: []
+      }
       organizations: {
         Row: { created_at: string; id: string; name: string; slug: string }
         Insert: { created_at?: string; id?: string; name: string; slug: string }
@@ -171,9 +267,9 @@ export type Database = {
         Relationships: []
       }
       profiles: {
-        Row: { created_at: string; display_name: string | null; id: string; nicho: string | null }
-        Insert: { created_at?: string; display_name?: string | null; id: string; nicho?: string | null }
-        Update: { created_at?: string; display_name?: string | null; id?: string; nicho?: string | null }
+        Row: { created_at: string; display_name: string | null; id: string; is_platform_admin: boolean; nicho: string | null }
+        Insert: { created_at?: string; display_name?: string | null; id: string; is_platform_admin?: boolean; nicho?: string | null }
+        Update: { created_at?: string; display_name?: string | null; id?: string; is_platform_admin?: boolean; nicho?: string | null }
         Relationships: []
       }
       projects: {
