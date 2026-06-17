@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { z } from "zod";
 import { useServerFn } from "@tanstack/react-start";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,11 +10,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Wand2, Sparkles, ArrowRight, Brain, Loader2, Target, Gauge,
-  HelpCircle, Clock, TrendingDown, TrendingUp, Minus, EyeOff,
+  HelpCircle, Clock, TrendingDown, TrendingUp, Minus, EyeOff, Upload, AlertTriangle,
 } from "lucide-react";
-import { toast } from "sonner";
 import {
   gerarAngulos,
   gerarPerguntaCirurgica,
@@ -26,9 +27,26 @@ import { useNavigate } from "@tanstack/react-router";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/hooks/use-auth";
 import { uploadCriativoMedia } from "@/lib/storage";
-import { Upload } from "lucide-react";
+import { toast } from "sonner";
+
+const wizardSearchSchema = z.object({
+  step: z.enum(["wizard"]).optional(),
+  formato: z.enum(["criativo_curto", "vsl_curta"]).optional(),
+});
+
+const WIZARD_STORAGE_KEY = "andromeda_wizard_state";
+
+type WizardPersisted = {
+  geracaoId: string;
+  selectedAngulos: number[];
+  wizardStep: WizardStep;
+  formatoSaida: "criativo_curto" | "vsl_curta";
+  estiloProducao: "texto_animado" | "clipes_texto";
+  backgroundMediaPath: string | null;
+};
 
 export const Route = createFileRoute("/app/gerador")({
+  validateSearch: wizardSearchSchema,
   head: () => ({
     meta: [
       { title: "Gerador de ângulos · Andromeda" },
@@ -73,14 +91,15 @@ type WizardStep = "selecao" | "formato" | "estilo" | "midia";
 
 function Gerador() {
   const navigate = useNavigate();
-  const { organizationId, projectId } = useWorkspace();
+  const { step: urlStep, formato: urlFormato } = Route.useSearch();
+  const { organizationId, projectId, currentProject } = useWorkspace();
   const askQuestion = useServerFn(gerarPerguntaCirurgica);
   const run = useServerFn(gerarAngulos);
   const persist = useServerFn(saveGeracao);
   const createDraft = useServerFn(createCriativoDraft);
   const queryClient = useQueryClient();
 
-  const [url, setUrl] = useState("https://meuproduto.com.br");
+  const [url, setUrl] = useState("");
   const [productType, setProductType] = useState("info");
   const [goal, setGoal] = useState("conv");
   const [context, setContext] = useState("");
@@ -100,10 +119,88 @@ function Gerador() {
   const [formatoSaida, setFormatoSaida] = useState<"criativo_curto" | "vsl_curta">("criativo_curto");
   const [estiloProducao, setEstiloProducao] = useState<"texto_animado" | "clipes_texto">("texto_animado");
   const [creatingDrafts, setCreatingDrafts] = useState(false);
+  const [createdDrafts, setCreatedDrafts] = useState<Array<{ id: string; nome: string }> | null>(null);
   const [backgroundMediaPath, setBackgroundMediaPath] = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const mediaRef = useRef<HTMLInputElement>(null);
+  const prevProjectRef = useRef<string | null>(null);
   const { user } = useAuth();
+
+  useEffect(() => {
+    if (currentProject?.url_default) {
+      setUrl(currentProject.url_default);
+    }
+  }, [currentProject?.url_default, projectId]);
+
+  useEffect(() => {
+    if (urlFormato) {
+      setFormatoSaida(urlFormato);
+      if (urlStep === "wizard") setEtapa("wizard");
+    }
+  }, [urlFormato, urlStep]);
+
+  useEffect(() => {
+    if (prevProjectRef.current && prevProjectRef.current !== projectId) {
+      setEtapa("input");
+      setPergunta(null);
+      setResposta("");
+      setResultado(null);
+      setGeracaoId(null);
+      setSelectedAngulos(new Set());
+      setWizardStep("selecao");
+      setBackgroundMediaPath(null);
+      localStorage.removeItem(WIZARD_STORAGE_KEY);
+      queryClient.invalidateQueries({ queryKey: ["criativos"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      if (currentProject?.url_default) setUrl(currentProject.url_default);
+      else setUrl("");
+      toast.info(`Projeto alterado para ${currentProject?.name ?? "novo projeto"}`);
+    }
+    prevProjectRef.current = projectId;
+  }, [projectId, currentProject?.name, currentProject?.url_default, queryClient]);
+
+  const persistWizard = useCallback((patch: Partial<WizardPersisted> & { geracaoId?: string }) => {
+    if (!geracaoId && !patch.geracaoId) return;
+    try {
+      const raw = localStorage.getItem(WIZARD_STORAGE_KEY);
+      const prev = raw ? (JSON.parse(raw) as WizardPersisted) : null;
+      const next: WizardPersisted = {
+        geracaoId: patch.geracaoId ?? geracaoId ?? prev?.geracaoId ?? "",
+        selectedAngulos: patch.selectedAngulos ?? prev?.selectedAngulos ?? [...selectedAngulos],
+        wizardStep: patch.wizardStep ?? wizardStep,
+        formatoSaida: patch.formatoSaida ?? formatoSaida,
+        estiloProducao: patch.estiloProducao ?? estiloProducao,
+        backgroundMediaPath: patch.backgroundMediaPath !== undefined ? patch.backgroundMediaPath : backgroundMediaPath,
+      };
+      localStorage.setItem(WIZARD_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }, [geracaoId, selectedAngulos, wizardStep, formatoSaida, estiloProducao, backgroundMediaPath]);
+
+  useEffect(() => {
+    if (urlStep === "wizard" && geracaoId) {
+      setEtapa("wizard");
+    }
+  }, [urlStep, geracaoId]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(WIZARD_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as WizardPersisted;
+      if (!saved.geracaoId) return;
+      setGeracaoId(saved.geracaoId);
+      setSelectedAngulos(new Set(saved.selectedAngulos));
+      setWizardStep(saved.wizardStep);
+      setFormatoSaida(saved.formatoSaida);
+      setEstiloProducao(saved.estiloProducao);
+      setBackgroundMediaPath(saved.backgroundMediaPath);
+      if (urlStep === "wizard") setEtapa("wizard");
+    } catch {
+      /* ignore */
+    }
+  }, [urlStep]);
 
   async function handleAskQuestion() {
     if (!url.trim()) {
@@ -138,6 +235,15 @@ function Gerador() {
     }
     setLoadingAngulos(true);
     setLoadingStep("Lendo site e pesquisando nicho...");
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    const stepTimer = window.setTimeout(() => {
+      setLoadingStep("Analisando página e concorrentes...");
+    }, 8000);
+    const stepTimer2 = window.setTimeout(() => {
+      setLoadingStep("Gerando 5 ângulos Andromeda...");
+    }, 20000);
     const start = Date.now();
     try {
       const data = await run({
@@ -166,6 +272,7 @@ function Gerador() {
           },
         });
         setGeracaoId(saved.geracaoId);
+        persistWizard({ geracaoId: saved.geracaoId, selectedAngulos: [...selectedAngulos] });
         queryClient.invalidateQueries({ queryKey: ["criativos"] });
         queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
         toast.success("Ângulos salvos");
@@ -182,6 +289,8 @@ function Gerador() {
       }
       toast.error(msg);
     } finally {
+      window.clearTimeout(stepTimer);
+      window.clearTimeout(stepTimer2);
       setLoadingAngulos(false);
       setLoadingStep("");
     }
@@ -194,7 +303,7 @@ function Gerador() {
     }
     setCreatingDrafts(true);
     try {
-      let firstId: string | null = null;
+      const created: Array<{ id: string; idx: number }> = [];
       for (const idx of selectedAngulos) {
         const { criativoId } = await createDraft({
           data: {
@@ -207,10 +316,20 @@ function Gerador() {
             backgroundMediaPath: backgroundMediaPath ?? undefined,
           },
         });
-        if (!firstId) firstId = criativoId;
+        created.push({ id: criativoId, idx });
       }
-      if (firstId) {
-        navigate({ to: "/app/editor", search: { criativoId: firstId } });
+      localStorage.removeItem(WIZARD_STORAGE_KEY);
+      queryClient.invalidateQueries({ queryKey: ["criativos"] });
+
+      const draftList = created.map((c) => ({
+        id: c.id,
+        nome: resultado?.angulos[c.idx]?.nome ?? `Ângulo ${c.idx + 1}`,
+      }));
+
+      if (created.length === 1) {
+        navigate({ to: "/app/editor", search: { criativoId: created[0].id } });
+      } else {
+        setCreatedDrafts(draftList);
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao criar rascunho");
@@ -220,7 +339,24 @@ function Gerador() {
   }
 
   return (
-    <div className="container mx-auto px-6 py-8 max-w-6xl space-y-8">
+    <div className="container mx-auto px-6 py-8 max-w-6xl space-y-8 relative">
+      {loadingAngulos && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center">
+          <Card className="glass p-8 max-w-md text-center space-y-4">
+            <Loader2 className="size-10 animate-spin text-primary-glow mx-auto" />
+            <p className="font-medium">{loadingStep}</p>
+            <p className="text-sm text-muted-foreground">Isso pode levar 30–90 segundos. Não feche a página.</p>
+          </Card>
+        </div>
+      )}
+
+      {!projectId && (
+        <div className="flex items-center gap-2 p-4 rounded-lg border border-warning/40 bg-warning/10 text-sm">
+          <AlertTriangle className="size-4 text-warning shrink-0" />
+          Selecione um projeto no header antes de gerar ângulos.
+        </div>
+      )}
+
       <div>
         <h1 className="text-3xl font-display font-bold">Gerador de ângulos</h1>
         <p className="text-muted-foreground mt-1">
@@ -372,7 +508,12 @@ function Gerador() {
               <Button
                 className="bg-gradient-primary border-0"
                 disabled={selectedAngulos.size === 0}
-                onClick={() => { setEtapa("wizard"); setWizardStep("selecao"); }}
+                onClick={() => {
+                  setEtapa("wizard");
+                  setWizardStep("selecao");
+                  navigate({ to: "/app/gerador", search: { step: "wizard" } });
+                  persistWizard({ wizardStep: "selecao", selectedAngulos: [...selectedAngulos] });
+                }}
               >
                 Continuar com selecionados <ArrowRight className="size-4 ml-1.5" />
               </Button>
@@ -382,18 +523,18 @@ function Gerador() {
                 const sat = saturacaoMeta[a.saturacao_hook?.status] ?? saturacaoMeta.neutro;
                 const SatIcon = sat.icon;
                 return (
-                  <AccordionItem key={i} value={`a${i}`} className="glass bg-gradient-card rounded-xl px-5 border-0">
-                    <AccordionTrigger className="hover:no-underline">
-                      <div className="flex items-center gap-3 text-left flex-1 pr-4">
-                        <Checkbox
-                          checked={selectedAngulos.has(i)}
-                          onCheckedChange={(checked) => {
-                            const next = new Set(selectedAngulos);
-                            if (checked) next.add(i); else next.delete(i);
-                            setSelectedAngulos(next);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                        />
+                  <AccordionItem key={i} value={`a${i}`} className="glass bg-gradient-card rounded-xl border-0 overflow-hidden">
+                    <div className="flex items-center gap-3 px-5 pt-4">
+                      <Checkbox
+                        checked={selectedAngulos.has(i)}
+                        onCheckedChange={(checked) => {
+                          const next = new Set(selectedAngulos);
+                          if (checked) next.add(i); else next.delete(i);
+                          setSelectedAngulos(next);
+                        }}
+                      />
+                      <AccordionTrigger className="hover:no-underline flex-1 py-0">
+                        <div className="flex items-center gap-3 text-left flex-1 pr-4">
                         <div className="size-9 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
                           <Sparkles className="size-4 text-primary-glow" />
                         </div>
@@ -415,7 +556,8 @@ function Gerador() {
                         </div>
                       </div>
                     </AccordionTrigger>
-                    <AccordionContent className="space-y-4 pt-3">
+                    </div>
+                    <AccordionContent className="space-y-4 pt-3 px-5 pb-4">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                         <div className="p-3 rounded bg-background/40 border border-border/50">
                           <div className="text-xs text-muted-foreground uppercase tracking-wide">Variável explorada</div>
@@ -520,12 +662,36 @@ function Gerador() {
 
       {etapa === "wizard" && (
         <Card className="glass bg-gradient-card p-6 space-y-6">
-          <h2 className="font-display text-xl font-semibold">Configurar produção</h2>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <h2 className="font-display text-xl font-semibold">Configurar produção</h2>
+            <p className="text-sm text-muted-foreground">
+              {selectedAngulos.size} ângulo(s) → {selectedAngulos.size} rascunho(s)
+            </p>
+          </div>
+          <div className="flex gap-2 text-xs">
+            {(["selecao", "formato", "estilo", "midia"] as WizardStep[]).map((s, i) => (
+              <span
+                key={s}
+                className={`px-2 py-1 rounded ${wizardStep === s ? "bg-primary/20 text-primary-glow" : "text-muted-foreground"}`}
+              >
+                {i + 1}. {s}
+              </span>
+            ))}
+          </div>
+
+          {formatoSaida === "vsl_curta" && (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+              <p className="font-medium text-primary-glow">Modo VSL curta</p>
+              <p className="text-muted-foreground mt-1">
+                O rascunho será montado em 6 blocos (hook, problema, mecanismo, prova, oferta, CTA) — até ~2 minutos.
+              </p>
+            </div>
+          )}
 
           {wizardStep === "selecao" && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">{selectedAngulos.size} ângulo(s) selecionado(s)</p>
-              <Button onClick={() => setWizardStep("formato")} disabled={selectedAngulos.size === 0}>
+              <Button onClick={() => { setWizardStep("formato"); persistWizard({ wizardStep: "formato" }); }} disabled={selectedAngulos.size === 0}>
                 Próximo: formato <ArrowRight className="size-4 ml-1" />
               </Button>
             </div>
@@ -534,7 +700,11 @@ function Gerador() {
           {wizardStep === "formato" && (
             <div className="space-y-4">
               <Label>Formato de saída</Label>
-              <Select value={formatoSaida} onValueChange={(v) => setFormatoSaida(v as typeof formatoSaida)}>
+              <Select value={formatoSaida} onValueChange={(v) => {
+                const val = v as typeof formatoSaida;
+                setFormatoSaida(val);
+                persistWizard({ formatoSaida: val });
+              }}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="criativo_curto">Criativo curto (30–60s)</SelectItem>
@@ -543,7 +713,7 @@ function Gerador() {
               </Select>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setWizardStep("selecao")}>Voltar</Button>
-                <Button onClick={() => setWizardStep("estilo")}>Próximo <ArrowRight className="size-4 ml-1" /></Button>
+                <Button onClick={() => { setWizardStep("estilo"); persistWizard({ wizardStep: "estilo" }); }}>Próximo <ArrowRight className="size-4 ml-1" /></Button>
               </div>
             </div>
           )}
@@ -551,7 +721,11 @@ function Gerador() {
           {wizardStep === "estilo" && (
             <div className="space-y-4">
               <Label>Estilo de produção</Label>
-              <Select value={estiloProducao} onValueChange={(v) => setEstiloProducao(v as typeof estiloProducao)}>
+              <Select value={estiloProducao} onValueChange={(v) => {
+                const val = v as typeof estiloProducao;
+                setEstiloProducao(val);
+                persistWizard({ estiloProducao: val });
+              }}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="texto_animado">A — Texto animado + voz</SelectItem>
@@ -560,7 +734,7 @@ function Gerador() {
               </Select>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setWizardStep("formato")}>Voltar</Button>
-                <Button onClick={() => setWizardStep("midia")}>Próximo <ArrowRight className="size-4 ml-1" /></Button>
+                <Button onClick={() => { setWizardStep("midia"); persistWizard({ wizardStep: "midia" }); }}>Próximo <ArrowRight className="size-4 ml-1" /></Button>
               </div>
             </div>
           )}
@@ -580,6 +754,7 @@ function Gerador() {
                   try {
                     const { path } = await uploadCriativoMedia(user.id, file, projectId);
                     setBackgroundMediaPath(path);
+                    persistWizard({ backgroundMediaPath: path });
                     toast.success("Mídia enviada");
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : "Erro no upload");
@@ -609,13 +784,48 @@ function Gerador() {
                   onClick={handleCreateDrafts}
                   disabled={creatingDrafts}
                 >
-                  {creatingDrafts ? <Loader2 className="size-4 animate-spin" /> : "Abrir no editor"}
+                  {creatingDrafts ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : selectedAngulos.size > 1 ? (
+                    `Criar ${selectedAngulos.size} rascunhos`
+                  ) : (
+                    "Abrir no editor"
+                  )}
                 </Button>
               </div>
             </div>
           )}
         </Card>
       )}
+
+      <Dialog open={!!createdDrafts} onOpenChange={(open) => !open && setCreatedDrafts(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{createdDrafts?.length ?? 0} rascunhos criados</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Cada ângulo virou um criativo no histórico. Abra o editor de cada um para finalizar.
+          </p>
+          <div className="space-y-2 max-h-60 overflow-auto py-2">
+            {createdDrafts?.map((d, i) => (
+              <Link
+                key={d.id}
+                to="/app/editor"
+                search={{ criativoId: d.id }}
+                onClick={() => setCreatedDrafts(null)}
+              >
+                <Button variant="outline" className="w-full justify-between">
+                  <span className="truncate">{i + 1}. {d.nome}</span>
+                  <ArrowRight className="size-4 shrink-0" />
+                </Button>
+              </Link>
+            ))}
+          </div>
+          <Link to="/app/historico" onClick={() => setCreatedDrafts(null)}>
+            <Button variant="ghost" className="w-full">Ver todos no histórico</Button>
+          </Link>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

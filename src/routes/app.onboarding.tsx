@@ -20,11 +20,12 @@ export const Route = createFileRoute("/app/onboarding")({
 
 function Onboarding() {
   const navigate = useNavigate();
-  const { refresh } = useWorkspace();
+  const { refresh, projectId } = useWorkspace();
   const saveProfile = useServerFn(updateProfile);
 
   const [displayName, setDisplayName] = useState("");
   const [nicho, setNicho] = useState("");
+  const [urlDefault, setUrlDefault] = useState("");
   const [tipoUso, setTipoUso] = useState<"solo" | "agencia">("solo");
   const [loading, setLoading] = useState(false);
 
@@ -39,11 +40,13 @@ function Onboarding() {
         data: {
           displayName: displayName.trim(),
           nicho: `${nicho.trim()} (${tipoUso})`,
+          urlDefault: urlDefault.trim() || undefined,
+          projectId: projectId ?? undefined,
         },
       });
       await refresh();
       toast.success("Perfil configurado!");
-      navigate({ to: "/app" });
+      navigate({ to: "/app/gerador" });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao salvar");
     } finally {
@@ -71,6 +74,10 @@ function Onboarding() {
             <Input value={nicho} onChange={(e) => setNicho(e.target.value)} placeholder="Ex: emagrecimento, SaaS B2B, e-commerce moda" />
           </div>
           <div className="space-y-1.5">
+            <Label>URL do produto (opcional)</Label>
+            <Input value={urlDefault} onChange={(e) => setUrlDefault(e.target.value)} placeholder="https://seuproduto.com" />
+          </div>
+          <div className="space-y-1.5">
             <Label>Tipo de uso</Label>
             <Select value={tipoUso} onValueChange={(v) => setTipoUso(v as typeof tipoUso)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -83,7 +90,7 @@ function Onboarding() {
         </div>
 
         <Button className="w-full bg-gradient-primary border-0" onClick={handleSubmit} disabled={loading}>
-          {loading ? <Loader2 className="size-4 animate-spin" /> : "Começar"}
+          {loading ? <Loader2 className="size-4 animate-spin" /> : "Ir para o gerador"}
         </Button>
       </Card>
     </div>

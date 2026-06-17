@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { refineBlockWithAI } from "./anthropic-refine";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { ResultadoAngulosSchema } from "./schemas/angulos.schema";
 
@@ -315,37 +316,14 @@ export const refinarBloco = createServerFn({ method: "POST" })
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 512,
-        system:
-          "Reescreva APENAS o bloco solicitado. Responda só com o texto do bloco, sem markdown.",
-        messages: [
-          {
-            role: "user",
-            content: `Bloco ${data.tempo}:\n"${data.conteudoAtual}"\n\nInstrução: ${data.instrucao}\nTom: ${data.tomCalibracao ?? "direto"}`,
-          },
-        ],
-      }),
-    });
-
-    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
-    const payload = (await res.json()) as {
-      content: Array<{ type: string; text?: string }>;
-    };
-    const text = payload.content
-      .filter((b) => b.type === "text" && b.text)
-      .map((b) => b.text as string)
-      .join("\n")
-      .trim();
-    return { conteudo: text };
+    const conteudo = await refineBlockWithAI(
+      apiKey,
+      data.conteudoAtual,
+      data.instrucao,
+      data.tempo,
+      data.tomCalibracao ?? "direto",
+    );
+    return { conteudo };
   });
 
 export type ResultadoAngulos = {

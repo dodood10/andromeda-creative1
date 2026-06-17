@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Card } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { createProject } from "@/lib/organizations.functions";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { toast } from "sonner";
-import { FolderKanban, Plus } from "lucide-react";
+import { FolderKanban, Plus, Check } from "lucide-react";
 
 export const Route = createFileRoute("/app/projetos")({
   head: () => ({
@@ -18,10 +18,11 @@ export const Route = createFileRoute("/app/projetos")({
 });
 
 function Projetos() {
-  const { organizations, organizationId, refresh, currentOrg } = useWorkspace();
+  const { organizations, organizationId, projectId, setWorkspace, refresh, currentOrg } = useWorkspace();
   const runCreate = useServerFn(createProject);
   const [name, setName] = useState("");
   const [nicho, setNicho] = useState("");
+  const [urlDefault, setUrlDefault] = useState("");
   const [loading, setLoading] = useState(false);
 
   const org = currentOrg ?? organizations.find((o) => o.id === organizationId);
@@ -33,13 +34,21 @@ function Projetos() {
     }
     setLoading(true);
     try {
-      await runCreate({
-        data: { organizationId, name: name.trim(), nicho: nicho || undefined },
+      const project = await runCreate({
+        data: {
+          organizationId,
+          name: name.trim(),
+          nicho: nicho || undefined,
+          urlDefault: urlDefault || undefined,
+        },
       });
-      toast.success("Projeto criado");
+      setWorkspace(organizationId, project.id);
+      toast.success("Projeto criado e selecionado");
       setName("");
       setNicho("");
+      setUrlDefault("");
       await refresh();
+      navigate({ to: "/app/gerador" });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao criar projeto");
     } finally {
@@ -69,6 +78,10 @@ function Projetos() {
             <Label>Nicho (opcional)</Label>
             <Input value={nicho} onChange={(e) => setNicho(e.target.value)} placeholder="Ex: Saúde e bem-estar" />
           </div>
+          <div className="space-y-1.5">
+            <Label>URL padrão do produto (opcional)</Label>
+            <Input value={urlDefault} onChange={(e) => setUrlDefault(e.target.value)} placeholder="https://seuproduto.com" />
+          </div>
           <Button onClick={handleCreate} disabled={loading} className="bg-gradient-primary border-0 w-fit">
             <Plus className="size-4 mr-1.5" /> Criar projeto
           </Button>
@@ -78,14 +91,36 @@ function Projetos() {
       <div className="space-y-3">
         <h2 className="font-semibold">Projetos ativos</h2>
         {org?.projects.map((p) => (
-          <Card key={p.id} className="glass p-4 flex justify-between items-center">
+          <Card
+            key={p.id}
+            className={`glass p-4 flex justify-between items-center cursor-pointer transition hover:border-primary/40 ${
+              p.id === projectId ? "border-primary/50 bg-primary/5" : ""
+            }`}
+            onClick={() => organizationId && setWorkspace(organizationId, p.id)}
+          >
             <div>
               <div className="font-medium">{p.name}</div>
               {p.nicho && <div className="text-sm text-muted-foreground">{p.nicho}</div>}
+              {p.url_default && <div className="text-xs text-muted-foreground font-mono mt-0.5">{p.url_default}</div>}
             </div>
+            {p.id === projectId ? (
+              <BadgeAtivo />
+            ) : (
+              <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); organizationId && setWorkspace(organizationId, p.id); }}>
+                Usar
+              </Button>
+            )}
           </Card>
         ))}
       </div>
     </div>
+  );
+}
+
+function BadgeAtivo() {
+  return (
+    <span className="text-xs flex items-center gap-1 text-success">
+      <Check className="size-3.5" /> Ativo
+    </span>
   );
 }

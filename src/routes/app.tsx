@@ -24,14 +24,11 @@ import {
 import {
   Sparkles,
   Wand2,
-  Video,
-  Film,
-  TrendingUp,
   History,
-  Brain,
   LogOut,
   Loader2,
   FolderKanban,
+  Settings,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { WorkspaceProvider, useWorkspace } from "@/contexts/workspace-context";
@@ -47,15 +44,11 @@ export const Route = createFileRoute("/app")({
 });
 
 type NavItem = { title: string; url: string; icon: typeof Sparkles; exact?: boolean };
-const items: NavItem[] = [
+
+const productionItems: NavItem[] = [
   { title: "Dashboard", url: "/app", icon: Sparkles, exact: true },
-  { title: "Gerador de ângulos", url: "/app/gerador", icon: Wand2 },
-  { title: "Editor de vídeo", url: "/app/editor", icon: Video },
-  { title: "VSL curta", url: "/app/vsl", icon: Film },
-  { title: "Fase de escala", url: "/app/escala", icon: TrendingUp },
-  { title: "Histórico", url: "/app/historico", icon: History },
-  { title: "Inteligência de nicho", url: "/app/inteligencia", icon: Brain },
-  { title: "Projetos", url: "/app/projetos", icon: FolderKanban },
+  { title: "Gerar ângulos", url: "/app/gerador", icon: Wand2 },
+  { title: "Meus criativos", url: "/app/historico", icon: History },
 ];
 
 function AppAuthGate({ children }: { children: React.ReactNode }) {
@@ -87,7 +80,7 @@ function AppAuthGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function ProjectSelector() {
+function ProjectSelector({ compact }: { compact?: boolean }) {
   const { organizations, organizationId, projectId, setWorkspace, loading, currentProject } =
     useWorkspace();
 
@@ -97,7 +90,7 @@ function ProjectSelector() {
   const hasMultipleOrgs = organizations.length > 1;
 
   return (
-    <div className="hidden md:flex items-center gap-2">
+    <div className={`${compact ? "flex" : "hidden md:flex"} items-center gap-2`}>
       {hasMultipleOrgs && (
         <Select
           value={organizationId}
@@ -134,9 +127,11 @@ function ProjectSelector() {
           ))}
         </SelectContent>
       </Select>
-      <span className="text-xs text-muted-foreground max-w-[120px] truncate">
-        {currentProject?.name}
-      </span>
+      {!compact && (
+        <span className="text-xs text-muted-foreground max-w-[120px] truncate hidden lg:inline">
+          {currentProject?.name}
+        </span>
+      )}
     </div>
   );
 }
@@ -158,7 +153,15 @@ function AppLayout() {
                   <span className="font-display font-semibold text-sm">Andromeda</span>
                 </Link>
                 <ProjectSelector />
+                <div className="flex md:hidden flex-1 min-w-0 max-w-[200px]">
+                  <ProjectSelector compact />
+                </div>
                 <div className="ml-auto flex items-center gap-3">
+                  <Link to="/app/projetos" className="hidden sm:flex">
+                    <Button variant="ghost" size="sm" className="h-8 px-2" title="Projetos">
+                      <Settings className="size-4" />
+                    </Button>
+                  </Link>
                   <span className="text-xs text-muted-foreground hidden sm:inline">
                     {profile?.display_name ?? "Workspace"}
                   </span>
@@ -193,10 +196,10 @@ function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Navegação</SidebarGroupLabel>
+          <SidebarGroupLabel>Produção</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {productionItems.map((item) => (
                 <SidebarMenuItem key={item.url}>
                   <SidebarMenuButton asChild isActive={isActive(item.url, item.exact)}>
                     <Link to={item.url} className="flex items-center gap-2">
@@ -206,6 +209,26 @@ function AppSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup className="md:hidden">
+          <SidebarGroupLabel>Projeto</SidebarGroupLabel>
+          <SidebarGroupContent className="px-2 pb-2">
+            <ProjectSelector compact />
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === "/app/projetos"}>
+                  <Link to="/app/projetos" className="flex items-center gap-2">
+                    <FolderKanban className="size-4" />
+                    <span>Projetos</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

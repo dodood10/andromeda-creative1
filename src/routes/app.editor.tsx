@@ -11,9 +11,9 @@ import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Download, Mic, Music, Type, Loader2, Sparkles, Upload, Image } from "lucide-react";
+import { Download, Mic, Music, Type, Loader2, Sparkles, Upload, Image, Copy, CheckCircle2, AlertTriangle, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
-import { getCriativo, getLatestCriativo, updateCriativoRoteiro } from "@/lib/criativos.functions";
+import { getCriativo, getLatestCriativo, updateCriativoRoteiro, updateCriativoStatus } from "@/lib/criativos.functions";
 import {
   avaliarCriativo,
   solicitarExport,
@@ -23,12 +23,14 @@ import {
   getExportStatus,
   getSignedExportUrls,
   getSignedAudioUrl,
+  getMediaCapabilities,
 } from "@/lib/export.functions";
 import { refinarBloco } from "@/lib/anthropic.functions";
 import { uploadCriativoMedia } from "@/lib/storage";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { useAuth } from "@/hooks/use-auth";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
+import { VSL_BLOCOS_META, vslBlockLabel, isVslRoteiro } from "@/lib/vsl-roteiro";
 
 const searchSchema = z.object({
   criativoId: z.string().uuid().optional(),
@@ -97,11 +99,13 @@ function EditorPage() {
 function Editor({ criativoId }: { criativoId: string }) {
   const { user } = useAuth();
   const { projectId } = useWorkspace();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const fetchCriativo = useServerFn(getCriativo);
   const saveRoteiro = useServerFn(updateCriativoRoteiro);
+  const patchStatus = useServerFn(updateCriativoStatus);
   const runAvaliar = useServerFn(avaliarCriativo);
   const runExport = useServerFn(solicitarExport);
   const runAudio = useServerFn(gerarAudio);
@@ -111,6 +115,12 @@ function Editor({ criativoId }: { criativoId: string }) {
   const pollExport = useServerFn(getExportStatus);
   const signUrls = useServerFn(getSignedExportUrls);
   const signAudio = useServerFn(getSignedAudioUrl);
+  const fetchCapabilities = useServerFn(getMediaCapabilities);
+
+  const { data: capabilities } = useQuery({
+    queryKey: ["media-capabilities"],
+    queryFn: () => fetchCapabilities(),
+  });
 
   const { data: criativo, isLoading, error } = useQuery({
     queryKey: ["criativo", criativoId],
@@ -130,17 +140,41 @@ function Editor({ criativoId }: { criativoId: string }) {
   const [scoreOpen, setScoreOpen] = useState(false);
   const [scoreData, setScoreData] = useState<Awaited<ReturnType<typeof runAvaliar>> | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportDevMode, setExportDevMode] = useState(false);
+  const [audioDevMode, setAudioDevMode] = useState(false);
+  const [showPostExport, setShowPostExport] = useState(false);
+  const [markingSubiu, setMarkingSubiu] = useState(false);
   const [downloadUrls, setDownloadUrls] = useState<Record<string, string>>({});
+  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
   const [uploadingBg, setUploadingBg] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (criativo?.roteiro) setRoteiro(criativo.roteiro as RoteiroBloco[]);
-    if (criativo?.voice_id) setVoiceId(criativo.voice_id);
     if (criativo?.score_json) {
       setScoreData(criativo.score_json as typeof scoreData);
+      const meta = criativo.score_json as { exportDevMode?: boolean };
+      if (meta.exportDevMode) setExportDevMode(true);
     }
   }, [criativo]);
+
+  useEffect(() => {
+    if (!capabilities) return;
+    if (!capabilities.elevenLabsConfigured) setAudioDevMode(true);
+    if (!capabilities.ffmpegConfigured && criativo?.export_status === "pronto") {
+      setExportDevMode(true);
+    }
+  }, [capabilities, criativo?.export_status]);
+
+  useEffect(() => {
+    const bgPath = criativo?.background_media_path;
+    if (!bgPath) {
+      setBackgroundUrl(null);
+      return;
+    }
+    signAudio({ data: { path: bgPath } })
+      .then((r) => setBackgroundUrl(r.url))
+      .catch(() => setBackgroundUrl(null));
+  }, [criativo?.background_media_path, signAudio]);
 
   const loadBlockAudio = useCallback(
     async (idx: number, paths: Record<string, string> | null) => {
@@ -163,6 +197,11 @@ function Editor({ criativoId }: { criativoId: string }) {
     const paths = criativo?.audio_paths as Record<string, string> | null;
     void loadBlockAudio(block, paths);
   }, [block, criativo?.audio_paths, loadBlockAudio]);
+
+  useEffect(() => {
+    if (criativo?.roteiro) setRoteiro(criativo.roteiro as RoteiroBloco[]);
+    if (criativo?.voice_id) setVoiceId(criativo.voice_id);
+  }, [criativo?.roteiro, criativo?.voice_id]);
 
   useEffect(() => {
     const paths = (criativo?.export_paths as string[]) ?? [];
@@ -218,7 +257,8 @@ function Editor({ criativoId }: { criativoId: string }) {
       if (res.audioUrl) {
         setAudioUrl(res.audioUrl);
         queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
-      } else {
+      } else if (res.devMode) {
+        setAudioDevMode(true);
         toast.info(res.message ?? "Áudio em modo dev");
       }
     } catch (e) {
@@ -233,7 +273,8 @@ function Editor({ criativoId }: { criativoId: string }) {
     }
     try {
       const res = await runAudioAll({ data: { criativoId, voiceId } });
-      toast.success(`${res.gerados} bloco(s) narrados`);
+      if (res.devMode) setAudioDevMode(true);
+      toast.success(res.devMode ? (res.message ?? "Modo dev — sem narração") : `${res.gerados} bloco(s) narrados`);
       queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro");
@@ -287,12 +328,17 @@ function Editor({ criativoId }: { criativoId: string }) {
         toast.error("Corrija os alertas antes de exportar");
         return;
       }
-      await runExport({ data: { criativoId } });
+      await runExport({ data: { criativoId } }).then((res) => {
+        if (res.devMode) setExportDevMode(true);
+      });
       const final = await pollUntilReady();
       if (final.paths.length > 0) {
         const signed = await signUrls({ data: { paths: final.paths } });
         setDownloadUrls(signed.urls);
       }
+      if ("devMode" in final && final.devMode) setExportDevMode(true);
+      setShowPostExport(true);
+      setScoreOpen(false);
       toast.success("Export concluído!");
       queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
     } catch (e) {
@@ -300,6 +346,27 @@ function Editor({ criativoId }: { criativoId: string }) {
     } finally {
       setExporting(false);
     }
+  }
+
+  async function handleMarcarSubiu() {
+    setMarkingSubiu(true);
+    try {
+      await patchStatus({ data: { id: criativoId, status: "Subiu" } });
+      queryClient.invalidateQueries({ queryKey: ["criativos"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      toast.success("Marcado como Subiu!");
+      navigate({ to: "/app/historico", search: { criativoId } });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao atualizar status");
+    } finally {
+      setMarkingSubiu(false);
+    }
+  }
+
+  function copyUtm() {
+    const utm = criativo?.utm_content ?? criativoId;
+    void navigator.clipboard.writeText(utm);
+    toast.success("utm_content copiado");
   }
 
   if (isLoading) {
@@ -323,16 +390,43 @@ function Editor({ criativoId }: { criativoId: string }) {
 
   const anguloNome = criativo.angulo;
   const estilo = criativo.estilo_producao ?? "texto_animado";
+  const isVsl = criativo.formato_saida === "vsl_curta" || isVslRoteiro(roteiro);
   const audioPaths = (criativo.audio_paths as Record<string, string>) ?? {};
   const exportPaths = (criativo.export_paths as string[]) ?? [];
 
   return (
     <div className="h-[calc(100vh-3.5rem)] flex flex-col">
+      {(exportDevMode || audioDevMode) && (
+        <div className="px-6 py-2 bg-warning/15 border-b border-warning/30 flex items-center gap-2 text-sm">
+          <AlertTriangle className="size-4 text-warning shrink-0" />
+          <span>
+            {exportDevMode && audioDevMode
+              ? "Modo desenvolvimento: export MP4 e narração são placeholders. Configure FFMPEG_SERVICE_URL e ELEVENLABS_API_KEY antes de subir no Meta."
+              : exportDevMode
+                ? "Export em modo dev: arquivos MP4 são placeholders. Configure FFMPEG_SERVICE_URL para render real."
+                : "Áudio em modo dev: narração não será gerada. Configure ELEVENLABS_API_KEY para voz real."}
+          </span>
+        </div>
+      )}
+      {(showPostExport || criativo.export_status === "pronto") && exportPaths.length > 0 && (
+        <PostExportBanner
+          utm={criativo.utm_content ?? criativoId}
+          exportPaths={exportPaths}
+          downloadUrls={downloadUrls}
+          onCopyUtm={copyUtm}
+          onMarcarSubiu={handleMarcarSubiu}
+          markingSubiu={markingSubiu}
+          onDismiss={() => setShowPostExport(false)}
+          onExpand={() => setShowPostExport(true)}
+          expanded={showPostExport}
+          exportDevMode={exportDevMode}
+        />
+      )}
       <div className="flex items-center justify-between px-6 py-3 border-b border-border/50">
         <div>
           <h1 className="font-display text-lg font-semibold">Editor · {anguloNome}</h1>
           <p className="text-xs text-muted-foreground">
-            9:16 · {estilo === "texto_animado" ? "Texto animado" : "Clipes + texto"} ·{" "}
+            {isVsl ? "VSL curta · 6 blocos" : "9:16"} · {estilo === "texto_animado" ? "Texto animado" : "Clipes + texto"} ·{" "}
             {criativo.export_status === "renderizando" ? "Renderizando..." : criativo.export_status ?? "rascunho"}
           </p>
         </div>
@@ -365,6 +459,12 @@ function Editor({ criativoId }: { criativoId: string }) {
 
       <div className="flex-1 flex overflow-hidden">
         <aside className="w-72 border-r border-border/50 p-4 space-y-4 overflow-auto">
+          {isVsl && (
+            <div className="p-3 rounded-lg bg-primary/10 border border-primary/30 text-xs space-y-1">
+              <p className="font-semibold text-primary-glow">Roteiro VSL · 2 min</p>
+              <p className="text-muted-foreground">6 blocos fixos Andromeda — edite cada etapa na ordem.</p>
+            </div>
+          )}
           <div>
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Blocos</Label>
             <div className="mt-2 space-y-1.5">
@@ -380,13 +480,19 @@ function Editor({ criativoId }: { criativoId: string }) {
                     <span className="font-mono text-primary-glow">{b.tempo}</span>
                     {audioPaths[String(i)] && <Mic className="size-3 text-success" />}
                   </div>
+                  {isVsl && (
+                    <div className="text-[10px] text-primary-glow/80 mt-0.5">{vslBlockLabel(b, i)}</div>
+                  )}
                   <div className="text-muted-foreground mt-0.5 line-clamp-2">{b.conteudo}</div>
                 </button>
               ))}
             </div>
           </div>
           <div className="space-y-2">
-            <Label>Editar bloco {roteiro[block]?.tempo}</Label>
+            <Label>Editar bloco {roteiro[block]?.tempo}{isVsl ? ` · ${vslBlockLabel(roteiro[block] ?? { tempo: "", conteudo: "" }, block)}` : ""}</Label>
+            {isVsl && VSL_BLOCOS_META[block] && (
+              <p className="text-xs text-muted-foreground">{VSL_BLOCOS_META[block].hint}</p>
+            )}
             <Textarea
               rows={4}
               value={roteiro[block]?.conteudo ?? ""}
@@ -407,9 +513,18 @@ function Editor({ criativoId }: { criativoId: string }) {
         <section className="flex-1 flex items-center justify-center p-6 bg-background/40">
           <div className="relative" style={{ width: 270, height: 480 }}>
             <div className="absolute inset-0 rounded-3xl overflow-hidden border border-border bg-gradient-to-br from-primary/30 to-accent/20">
-              <div className="absolute inset-x-0 top-0 h-[14%] bg-destructive/15 border-b border-destructive/30 pointer-events-none" />
-              <div className="absolute inset-x-0 bottom-0 h-[35%] bg-destructive/15 border-t border-destructive/30 pointer-events-none" />
-              <div className="absolute inset-x-4 top-[20%] bottom-[38%] flex items-center justify-center text-center font-display font-bold text-xl leading-tight overflow-hidden">
+              {backgroundUrl && (
+                <>
+                  {criativo.background_media_path?.match(/\.(mp4|webm|mov)$/i) ? (
+                    <video src={backgroundUrl} className="absolute inset-0 w-full h-full object-cover" muted loop autoPlay playsInline />
+                  ) : (
+                    <img src={backgroundUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                  )}
+                </>
+              )}
+              <div className="absolute inset-x-0 top-0 h-[14%] bg-destructive/15 border-b border-destructive/30 pointer-events-none z-10" />
+              <div className="absolute inset-x-0 bottom-0 h-[35%] bg-destructive/15 border-t border-destructive/30 pointer-events-none z-10" />
+              <div className="absolute inset-x-4 top-[20%] bottom-[38%] flex items-center justify-center text-center font-display font-bold text-xl leading-tight overflow-hidden z-10 drop-shadow-lg">
                 {roteiro[block]?.conteudo}
               </div>
               {audioUrl && (
@@ -490,6 +605,152 @@ function Editor({ criativoId }: { criativoId: string }) {
           ))}
         </div>
       </div>
+
+      <Dialog open={showPostExport} onOpenChange={setShowPostExport}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="size-5 text-success" /> Export concluído
+            </DialogTitle>
+          </DialogHeader>
+          <PostExportContent
+            utm={criativo.utm_content ?? criativoId}
+            exportPaths={exportPaths}
+            downloadUrls={downloadUrls}
+            onCopyUtm={copyUtm}
+            onMarcarSubiu={handleMarcarSubiu}
+            markingSubiu={markingSubiu}
+            exportDevMode={exportDevMode}
+          />
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function PostExportContent({
+  utm,
+  exportPaths,
+  downloadUrls,
+  onCopyUtm,
+  onMarcarSubiu,
+  markingSubiu,
+  exportDevMode,
+}: {
+  utm: string;
+  exportPaths: string[];
+  downloadUrls: Record<string, string>;
+  onCopyUtm: () => void;
+  onMarcarSubiu: () => void;
+  markingSubiu: boolean;
+  exportDevMode: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      {exportDevMode && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/15 border border-warning/30 text-sm">
+          <AlertTriangle className="size-4 text-warning shrink-0 mt-0.5" />
+          <span>Estes MP4 são placeholders de desenvolvimento. Não suba no Meta até configurar o serviço FFmpeg.</span>
+        </div>
+      )}
+      <div className="grid md:grid-cols-3 gap-4 text-sm">
+        <div className="space-y-2">
+          <p className="font-medium">Downloads</p>
+          {exportPaths.map((p) => (
+            <a
+              key={p}
+              href={downloadUrls[p] ?? "#"}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 text-primary-glow underline"
+            >
+              <Download className="size-3.5" />
+              {p.includes("4x5") ? "Baixar 4:5" : "Baixar 9:16"}
+            </a>
+          ))}
+        </div>
+        <div className="space-y-2">
+          <p className="font-medium">UTM para Meta</p>
+          <code className="block text-xs bg-background/60 p-2 rounded font-mono truncate">{utm}</code>
+          <Button size="sm" variant="outline" onClick={onCopyUtm}>
+            <Copy className="size-3.5 mr-1" /> Copiar utm_content
+          </Button>
+        </div>
+        <div className="space-y-2">
+          <p className="font-medium">Checklist Meta</p>
+          <ul className="text-xs text-muted-foreground space-y-1">
+            <li>• Pixel e eventos de conversão ativos</li>
+            <li>• CTA visível fora da safe zone inferior</li>
+            <li>• utm_content no anúncio para rastrear</li>
+          </ul>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button className="bg-gradient-primary border-0" onClick={onMarcarSubiu} disabled={markingSubiu}>
+          {markingSubiu ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4 mr-1.5" />}
+          Marcar como Subiu
+        </Button>
+        <Link to="/app/historico">
+          <Button variant="outline">Ir ao histórico</Button>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function PostExportBanner({
+  utm,
+  exportPaths,
+  downloadUrls,
+  onCopyUtm,
+  onMarcarSubiu,
+  markingSubiu,
+  onDismiss,
+  onExpand,
+  expanded,
+  exportDevMode,
+}: {
+  utm: string;
+  exportPaths: string[];
+  downloadUrls: Record<string, string>;
+  onCopyUtm: () => void;
+  onMarcarSubiu: () => void;
+  markingSubiu: boolean;
+  onDismiss: () => void;
+  onExpand: () => void;
+  expanded: boolean;
+  exportDevMode: boolean;
+}) {
+  if (!expanded) {
+    return (
+      <div className="px-6 py-2 bg-success/10 border-b border-success/30 flex items-center justify-between text-sm">
+        <span className="flex items-center gap-2">
+          <CheckCircle2 className="size-4 text-success" /> Export pronto — abra o checklist pós-export
+        </span>
+        <Button size="sm" variant="outline" onClick={onExpand}>
+          Ver checklist
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-6 py-4 bg-success/10 border-b border-success/30">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-display font-semibold flex items-center gap-2 text-sm">
+          <CheckCircle2 className="size-4 text-success" /> Checklist pós-export
+        </h2>
+        <Button size="sm" variant="ghost" onClick={onDismiss}>Recolher</Button>
+      </div>
+      <PostExportContent
+        utm={utm}
+        exportPaths={exportPaths}
+        downloadUrls={downloadUrls}
+        onCopyUtm={onCopyUtm}
+        onMarcarSubiu={onMarcarSubiu}
+        markingSubiu={markingSubiu}
+        exportDevMode={exportDevMode}
+      />
     </div>
   );
 }

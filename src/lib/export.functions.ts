@@ -2,6 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { RoteiroBloco } from "./schemas/angulos.schema";
+import {
+  computeHookDimensionScore,
+  computeLeilaoScore,
+  type SinaisAndromeda,
+} from "./score-sinais";
 
 const BUCKET = "criativos-media";
 
@@ -226,15 +231,13 @@ export const avaliarCriativo = createServerFn({ method: "POST" })
     const roteiro = (criativo.roteiro as RoteiroBloco[]) ?? [];
     const textoCompleto = roteiro.map((b) => b.conteudo).join(" ");
     const angulo = criativo.angulo_json as {
-      sinais_andromeda?: { hook_rate_estimado?: string };
+      sinais_andromeda?: SinaisAndromeda;
       hook?: string;
     } | null;
 
-    const hookScore = angulo?.sinais_andromeda?.hook_rate_estimado?.includes("40")
-      ? 85
-      : textoCompleto.length > 50
-        ? 72
-        : 55;
+    const sinais = angulo?.sinais_andromeda;
+    const { score: hookScore, dica: hookDica } = computeHookDimensionScore(sinais);
+    const leilaoScore = computeLeilaoScore(sinais);
 
     const complianceIssues = CLAIMS_PROIBIDOS.filter((r) => r.test(textoCompleto));
     const complianceScore =
@@ -254,10 +257,11 @@ export const avaliarCriativo = createServerFn({ method: "POST" })
       .neq("id", criativo.id);
 
     const mesmoAngulo = (similares ?? []).filter((s) => s.angulo === criativo.angulo).length;
-    const diversidadeScore = Math.max(40, 100 - mesmoAngulo * 15);
+    const diversidadeFromAngulo = Math.max(40, 100 - mesmoAngulo * 15);
+    const diversidadeScore = Math.round((diversidadeFromAngulo + leilaoScore) / 2);
 
     const dimensoes: ScoreDimensao[] = [
-      { id: "hook", label: "Hook rate esperado", score: hookScore, minimo: 70, ok: hookScore >= 70 },
+      { id: "hook", label: "Hook rate esperado", score: hookScore, minimo: 70, ok: hookScore >= 70, dica: hookDica },
       {
         id: "compliance",
         label: "Compliance Meta",
@@ -288,6 +292,12 @@ export const avaliarCriativo = createServerFn({ method: "POST" })
         score: diversidadeScore,
         minimo: 60,
         ok: diversidadeScore >= 60,
+        dica:
+          diversidadeScore < 60
+            ? sinais?.fatia_leilao
+              ? `Fatia de leilão: ${sinais.fatia_leilao} — diversifique ângulos.`
+              : "Muitos criativos com o mesmo ângulo neste projeto."
+            : undefined,
       },
     ];
 
@@ -306,17 +316,26 @@ export const getExportStatus = createServerFn({ method: "POST" })
     const { supabase } = context;
     const { data: row, error } = await supabase
       .from("criativos")
-      .select("export_status, export_paths, utm_content")
+      .select("export_status, export_paths, utm_content, score_json")
       .eq("id", data.criativoId)
       .single();
 
     if (error || !row) throw new Error("Criativo não encontrado");
+    const score = row.score_json as { exportDevMode?: boolean } | null;
     return {
       status: row.export_status ?? "rascunho",
       paths: (row.export_paths as string[]) ?? [],
       utm: row.utm_content,
+      devMode: score?.exportDevMode === true,
     };
   });
+
+export const getMediaCapabilities = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => ({
+    ffmpegConfigured: Boolean(process.env.FFMPEG_SERVICE_URL && process.env.FFMPEG_SERVICE_SECRET),
+    elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY),
+  }));
 
 export const getSignedExportUrls = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -435,6 +454,7 @@ export const solicitarExport = createServerFn({ method: "POST" })
       }
 
       const devPaths = await uploadDevPlaceholder(supabase, criativo.id);
+      const existingScore = (criativo.score_json as Record<string, unknown>) ?? {};
 
       await supabase
         .from("criativos")
@@ -442,6 +462,12 @@ export const solicitarExport = createServerFn({ method: "POST" })
           export_status: "pronto",
           export_paths: devPaths,
           storage_path: devPaths[0],
+          score_json: {
+            ...existingScore,
+            exportDevMode: true,
+            exportDevMessage:
+              "FFMPEG_SERVICE_URL não configurado — arquivos MP4 são placeholders, não use no Meta.",
+          },
         })
         .eq("id", data.criativoId);
 

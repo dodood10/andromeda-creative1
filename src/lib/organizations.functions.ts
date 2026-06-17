@@ -86,6 +86,8 @@ export const updateProfile = createServerFn({ method: "POST" })
     z.object({
       displayName: z.string().optional(),
       nicho: z.string().optional(),
+      urlDefault: z.string().optional(),
+      projectId: z.string().uuid().optional(),
     }),
   )
   .handler(async ({ data, context }) => {
@@ -99,5 +101,15 @@ export const updateProfile = createServerFn({ method: "POST" })
       .eq("id", userId);
 
     if (error) throw new Error(error.message);
+
+    if (data.projectId) {
+      const patch: Record<string, string | null> = {};
+      if (data.nicho) patch.nicho = data.nicho;
+      if (data.urlDefault) patch.url_default = data.urlDefault;
+      if (Object.keys(patch).length > 0) {
+        await supabase.from("projects").update(patch).eq("id", data.projectId);
+      }
+    }
+
     return { ok: true };
   });
