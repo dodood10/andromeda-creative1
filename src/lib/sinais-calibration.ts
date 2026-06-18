@@ -11,26 +11,6 @@ export type ProjectIntelSettings = {
   roas_medio_validado?: number;
   conversion_bias_notes?: string;
   calibration_samples_conversion?: number;
-  reference_transcriptions?: Array<{
-    id: string;
-    text: string;
-    added_at: string;
-    label?: string;
-    analysis?: {
-      hook: string;
-      angulo: string;
-      tipo_angulo: string;
-      estrutura_resumo: string;
-      formato_inferido: string;
-      nivel_conspiracao: string;
-    };
-  }>;
-  reference_combo?: {
-    structure_id?: string;
-    formato_id?: string;
-    angulo_id?: string;
-    updated_at?: string;
-  };
 };
 
 export function computeHookRateBias(sinaisCalibration: SinaisCalibration[]): number | null {
@@ -195,8 +175,7 @@ export async function loadProjectIntelSettings(
     !raw?.cpa_medio_validado &&
     !raw?.roas_medio_validado &&
     !raw?.conversion_bias_notes &&
-    !raw?.calibration_samples_conversion &&
-    !(raw?.reference_transcriptions?.length ?? 0)
+    !raw?.calibration_samples_conversion
   ) {
     return null;
   }

@@ -83,6 +83,6 @@ describe("reference combo no prompt", () => {
       structure_id: "s1",
       angulo_id: "f1",
     });
-    expect(block?.indexOf("COMBO")).toBeLessThan(block?.indexOf("REFERÊNCIAS") ?? 0);
+    expect(block?.indexOf("COMBO")).toBeLessThan(block?.indexOf("REFERÊNCIAS DE COPY") ?? 0);
   });
 });

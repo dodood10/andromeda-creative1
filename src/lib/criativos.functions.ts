@@ -34,11 +34,12 @@ import { assertUserOwnedMediaPath } from "./security-storage";
 import { assertCanImportCampeoes } from "./plan-enforcement";
 import { executeImportCriativoCampeao } from "./import-creative.functions";
 import {
-  appendProjectReferenceTranscription,
-  appendProjectReferenceTranscriptionsBatch,
-  getProjectGeneralIntelText,
-  removeProjectReferenceTranscription,
-  saveProjectReferenceCombo,
+  appendOrgReferenceTranscription,
+  appendOrgReferenceTranscriptionsBatch,
+  getGeneralIntelForProject,
+  loadOrgIntelSettings,
+  removeOrgReferenceTranscription,
+  saveOrgReferenceCombo,
 } from "./project-reference-intel";
 import { analyzeReferenceTranscription } from "./reference-transcription-analyze";
 import { TomCalibracaoSchema } from "./types/enums";
@@ -1230,7 +1231,7 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
 
     const { data: project } = await supabase
       .from("projects")
-      .select("nicho")
+      .select("nicho, organization_id")
       .eq("id", data.projectId)
       .maybeSingle();
 
@@ -1389,6 +1390,9 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
 
     const formatos = [...new Set((criativos ?? []).map((c) => c.formato_saida).filter(Boolean))];
     const intelSettings = await loadProjectIntelSettings(supabase, data.projectId);
+    const orgIntelSettings = project?.organization_id
+      ? await loadOrgIntelSettings(supabase, project.organization_id)
+      : null;
 
     const rodandoSemMetrica = rodando.filter(
       (c) => !metricsByCriativoIntel.has(c.id),
@@ -1447,7 +1451,9 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
     }
 
     const [generalContextPreview, performanceContextPreview] = await Promise.all([
-      getProjectGeneralIntelText(supabase, data.projectId),
+      project?.organization_id
+        ? getGeneralIntelForProject(supabase, data.projectId)
+        : Promise.resolve(null),
       getProjectPerformanceContext(supabase, data.projectId, { approvedOnly: true }).then(
         (ctx) => ctx?.summaryText ?? null,
       ),
@@ -1465,7 +1471,7 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         resultadosReportados: resultadosAprovados.length,
         resultadosPendentes,
         performandoPendentes,
-        referenciasTranscricao: intelSettings?.reference_transcriptions?.length ?? 0,
+        referenciasTranscricao: orgIntelSettings?.reference_transcriptions?.length ?? 0,
         hookRateMedioEstimado: hookRatesEstimados.length
           ? Math.round(hookRatesEstimados.reduce((a, b) => a + b, 0) / hookRatesEstimados.length)
           : null,
@@ -1491,7 +1497,7 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
       formatosTestados: formatos,
       contextPreview: generalContextPreview,
       performanceContextPreview,
-      referenceTranscriptions: (intelSettings?.reference_transcriptions ?? []).map((r) => ({
+      referenceTranscriptions: (orgIntelSettings?.reference_transcriptions ?? []).map((r) => ({
         id: r.id,
         preview: r.text.length > 160 ? `${r.text.slice(0, 160)}…` : r.text,
         added_at: r.added_at,
@@ -1499,7 +1505,7 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         label: r.label,
         analysis: r.analysis,
       })),
-      referenceCombo: intelSettings?.reference_combo ?? null,
+      referenceCombo: orgIntelSettings?.reference_combo ?? null,
       variationFailures: projPerf?.variationFailures ?? [],
       failedPatterns: projPerf?.failedPatterns ?? [],
       micropersonasEvitar: projPerf?.recentAnguloNames ?? [],
@@ -2085,7 +2091,7 @@ export const addProjectReferenceTranscription = createServerFn({ method: "POST" 
   .middleware([requireSupabaseAuth])
   .inputValidator(
     ReferenceTranscriptionSchema.extend({
-      projectId: z.string().uuid(),
+      organizationId: z.string().uuid(),
     }),
   )
   .handler(async ({ data, context }) => {
@@ -2099,7 +2105,7 @@ export const addProjectReferenceTranscription = createServerFn({ method: "POST" 
             text: data.transcription.trim(),
             label: data.label,
           });
-    return appendProjectReferenceTranscription(supabase, data.projectId, data.transcription, {
+    return appendOrgReferenceTranscription(supabase, data.organizationId, data.transcription, {
       label: data.label,
       analysis,
     });
@@ -2114,7 +2120,7 @@ export const addProjectReferenceTranscriptionsBatchFn = createServerFn({ method:
   .middleware([requireSupabaseAuth])
   .inputValidator(
     z.object({
-      projectId: z.string().uuid(),
+      organizationId: z.string().uuid(),
       snippets: z.array(ReferenceSnippetSchema).min(1).max(8),
       skipAnalysis: z.boolean().optional(),
     }),
@@ -2136,14 +2142,14 @@ export const addProjectReferenceTranscriptionsBatchFn = createServerFn({ method:
         return { ...snippet, analysis };
       }),
     );
-    return appendProjectReferenceTranscriptionsBatch(supabase, data.projectId, withAnalysis);
+    return appendOrgReferenceTranscriptionsBatch(supabase, data.organizationId, withAnalysis);
   });
 
 export const setProjectReferenceComboFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(
     z.object({
-      projectId: z.string().uuid(),
+      organizationId: z.string().uuid(),
       structureId: z.string().uuid().optional(),
       formatoId: z.string().uuid().optional(),
       anguloId: z.string().uuid().optional(),
@@ -2153,10 +2159,10 @@ export const setProjectReferenceComboFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     if (data.clear) {
-      await saveProjectReferenceCombo(supabase, data.projectId, null);
+      await saveOrgReferenceCombo(supabase, data.organizationId, null);
       return { ok: true };
     }
-    await saveProjectReferenceCombo(supabase, data.projectId, {
+    await saveOrgReferenceCombo(supabase, data.organizationId, {
       structure_id: data.structureId,
       formato_id: data.formatoId,
       angulo_id: data.anguloId,
@@ -2168,13 +2174,13 @@ export const removeProjectReferenceTranscriptionFn = createServerFn({ method: "P
   .middleware([requireSupabaseAuth])
   .inputValidator(
     z.object({
-      projectId: z.string().uuid(),
+      organizationId: z.string().uuid(),
       transcriptionId: z.string().uuid(),
     }),
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
-    return removeProjectReferenceTranscription(supabase, data.projectId, data.transcriptionId);
+    return removeOrgReferenceTranscription(supabase, data.organizationId, data.transcriptionId);
   });
 
 export { ProjectScopeSchema };

@@ -13,7 +13,7 @@ import {
   resolveVslTargetDurationSec,
 } from "./vsl-duration";
 import { formatCalibrationBiasInstruction, loadProjectIntelSettings } from "./sinais-calibration";
-import { getProjectGeneralIntelText } from "./project-reference-intel";
+import { getGeneralIntelForProject } from "./project-reference-intel";
 import { getProjectPerformanceContext } from "./project-performance-context";
 import { buildOfferSnapshot, formatOfferSnapshotBlock } from "./offer-snapshot";
 import { TomCalibracaoSchema } from "./types/enums";
@@ -83,7 +83,7 @@ export async function generateVslFromAngulo(params: {
 
   if (params.supabase && params.projectId) {
     const [generalIntel, settings, perfCtx] = await Promise.all([
-      getProjectGeneralIntelText(params.supabase, params.projectId),
+      getGeneralIntelForProject(params.supabase, params.projectId),
       loadProjectIntelSettings(params.supabase, params.projectId),
       getProjectPerformanceContext(params.supabase, params.projectId, { approvedOnly: true }),
     ]);

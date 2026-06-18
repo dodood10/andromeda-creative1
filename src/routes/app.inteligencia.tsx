@@ -138,7 +138,7 @@ function Inteligencia() {
               <div>
                 <p className="text-sm font-medium">Transcrições de referência</p>
                 <p className="text-xs text-muted-foreground">
-                  {resumo?.referenciasTranscricao} texto(s) alimentando o gerador neste projeto
+                  {resumo?.referenciasTranscricao} texto(s) na biblioteca da organização
                 </p>
               </div>
               <ColarTranscricaoButton />
@@ -287,29 +287,36 @@ function Inteligencia() {
             </Card>
           )}
 
-          {data.contextPreview && (
-            <Card className="glass p-6 space-y-3 border border-primary/25">
-              <h2 className="font-semibold flex items-center gap-2">
-                <Brain className="size-4 text-primary-glow" /> Inteligência geral (transcrições)
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Copy de anúncios que você colou; entra direto no gerador de ângulos.
-              </p>
-              <pre className="text-xs whitespace-pre-wrap font-mono bg-background/50 border border-border/40 rounded-lg p-4 max-h-64 overflow-y-auto text-muted-foreground">
-                {data.contextPreview}
-              </pre>
-            </Card>
-          )}
+          <Card className="glass p-6 space-y-4 border border-primary/25">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold flex items-center gap-2">
+                  <Brain className="size-4 text-primary-glow" /> Inteligência geral (transcrições)
+                </h2>
+                <p className="text-xs text-muted-foreground mt-1 max-w-2xl">
+                  Biblioteca da organização — compartilhada entre todos os projetos. Adicione várias
+                  copies de qualquer nicho; a IA usa hook, ritmo e estrutura como referência, não a
+                  promessa literal.
+                </p>
+              </div>
+              <ColarTranscricaoButton />
+            </div>
 
-          {(data.referenceTranscriptions?.length ?? 0) > 0 && (
-            <>
-              <ReferenceComboPanel
-                items={data.referenceTranscriptions ?? []}
-                activeCombo={data.referenceCombo}
-              />
-              <ReferenceTranscriptionsList items={data.referenceTranscriptions ?? []} />
-            </>
-          )}
+            {(data.referenceTranscriptions?.length ?? 0) === 0 ? (
+              <div className="rounded-lg border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">
+                Nenhuma copy na biblioteca ainda. Cole transcrições de anúncios que performaram — podem
+                ser de outros nichos ou produtos.
+              </div>
+            ) : (
+              <>
+                <ReferenceComboPanel
+                  items={data.referenceTranscriptions ?? []}
+                  activeCombo={data.referenceCombo}
+                />
+                <ReferenceTranscriptionsList items={data.referenceTranscriptions ?? []} embedded />
+              </>
+            )}
+          </Card>
 
           {data.performanceContextPreview && (
             <Card className="glass p-6 space-y-3 border border-success/25">

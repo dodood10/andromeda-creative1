@@ -5,7 +5,7 @@ import { trackApiUsage } from "./api-usage";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getProjectFormatContext, normalizeAngulo } from "./formato-recomendacao";
 import { getProjectPerformanceContext } from "./project-performance-context";
-import { getProjectGeneralIntelText } from "./project-reference-intel";
+import { getGeneralIntelForProject } from "./project-reference-intel";
 import { buildOfferSnapshot, formatOfferSnapshotBlock } from "./offer-snapshot";
 import { checkOfferCongruence } from "./congruence-check";
 import { goalToSchwartzRange, ensureAnguloCopyDiversityHint, formatSchwartzPreferenciaBlock, validateAngulosResult } from "./schwartz-angulo";
@@ -64,7 +64,7 @@ export const gerarPerguntaCirurgica = createServerFn({ method: "POST" })
     let contextBlocks = "";
     if (data.projectId) {
       const [generalIntel, perfCtx] = await Promise.all([
-        getProjectGeneralIntelText(context.supabase, data.projectId),
+        getGeneralIntelForProject(context.supabase, data.projectId),
         getProjectPerformanceContext(context.supabase, data.projectId, { approvedOnly: true }),
       ]);
       if (generalIntel) {
@@ -375,7 +375,7 @@ export const gerarAngulos = createServerFn({ method: "POST" })
     if (data.projectId) {
       const [formatCtx, generalIntel, perfCtx] = await Promise.all([
         getProjectFormatContext(context.supabase, data.projectId),
-        getProjectGeneralIntelText(context.supabase, data.projectId),
+        getGeneralIntelForProject(context.supabase, data.projectId),
         getProjectPerformanceContext(context.supabase, data.projectId),
       ]);
       if (generalIntel) {
@@ -517,7 +517,7 @@ export const refinarBloco = createServerFn({ method: "POST" })
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
 
     const generalIntel = data.projectId
-      ? await getProjectGeneralIntelText(context.supabase, data.projectId)
+      ? await getGeneralIntelForProject(context.supabase, data.projectId)
       : null;
 
     let offerBlock: string | null = null;

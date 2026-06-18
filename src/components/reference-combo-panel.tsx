@@ -37,7 +37,7 @@ type ReferenceComboPanelProps = {
 const NONE = "__none__";
 
 export function ReferenceComboPanel({ items, activeCombo }: ReferenceComboPanelProps) {
-  const { projectId } = useWorkspace();
+  const { organizationId, projectId } = useWorkspace();
   const queryClient = useQueryClient();
   const runSetCombo = useServerFn(setProjectReferenceComboFn);
 
@@ -65,13 +65,13 @@ export function ReferenceComboPanel({ items, activeCombo }: ReferenceComboPanelP
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!projectId) throw new Error("Projeto não selecionado");
+      if (!organizationId) throw new Error("Organização não selecionada");
       if (!structureId && !formatoId && !anguloId) {
-        return runSetCombo({ data: { projectId, clear: true } });
+        return runSetCombo({ data: { organizationId, clear: true } });
       }
       return runSetCombo({
         data: {
-          projectId,
+          organizationId,
           structureId: structureId || undefined,
           formatoId: formatoId || undefined,
           anguloId: anguloId || undefined,
@@ -191,8 +191,8 @@ export function ReferenceComboPanel({ items, activeCombo }: ReferenceComboPanelP
               setStructureId("");
               setFormatoId("");
               setAnguloId("");
-              if (!projectId) return;
-              void runSetCombo({ data: { projectId, clear: true } }).then(() => {
+              if (!organizationId) return;
+              void runSetCombo({ data: { organizationId, clear: true } }).then(() => {
                 toast.success("Combo removido");
                 void queryClient.invalidateQueries({ queryKey: ["inteligencia", projectId] });
               });

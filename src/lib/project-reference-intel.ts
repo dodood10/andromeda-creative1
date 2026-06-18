@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
-import type { ProjectIntelSettings } from "./sinais-calibration";
 import type { ReferenceTranscriptionAnalysis } from "./reference-transcription-analyze";
 
 export type ReferenceTranscription = {
@@ -18,18 +17,25 @@ export type ReferenceCombo = {
   updated_at?: string;
 };
 
-const MAX_ENTRIES = 20;
+export type OrgIntelSettings = {
+  reference_transcriptions?: ReferenceTranscription[];
+  reference_combo?: ReferenceCombo;
+};
+
+export const MAX_REFERENCE_ENTRIES = 30;
+export const PROMPT_REFERENCE_ENTRIES = 8;
+
 const MAX_TEXT_CHARS = 12_000;
 const MIN_TEXT_CHARS = 40;
 
 export function capReferenceTranscriptions(list: ReferenceTranscription[]): ReferenceTranscription[] {
-  return list.slice(-MAX_ENTRIES);
+  return list.slice(-MAX_REFERENCE_ENTRIES);
 }
 
 export function mergeReferenceTranscription(
-  settings: ProjectIntelSettings | null | undefined,
+  settings: OrgIntelSettings | null | undefined,
   entry: ReferenceTranscription,
-): ProjectIntelSettings {
+): OrgIntelSettings {
   const existing = settings ?? {};
   const list = capReferenceTranscriptions([...(existing.reference_transcriptions ?? []), entry]);
   return { ...existing, reference_transcriptions: list };
@@ -94,7 +100,7 @@ export function formatReferenceComboBlock(
 
 export function formatReferenceTranscriptionsBlock(
   refs: ReferenceTranscription[] | undefined,
-  maxEntries = 5,
+  maxEntries = PROMPT_REFERENCE_ENTRIES,
   maxCharsPerEntry = 600,
   combo?: ReferenceCombo,
 ): string | null {
@@ -106,7 +112,7 @@ export function formatReferenceTranscriptionsBlock(
     recent.length > 0
       ? [
           STRUCTURAL_ONLY_PREFIX,
-          "REFERÊNCIAS DE COPY QUE JÁ VENDEU (transcrições do projeto — use como padrão de hook, ritmo e CTA):",
+          "REFERÊNCIAS DE COPY (podem ser de outros nichos — use como padrão de hook, ritmo e CTA):",
           ...recent.map((r, i) => `[${i + 1}] ${formatEntryExcerpt(r, maxCharsPerEntry)}`),
           "Inspire-se no tom e na estrutura, sem copiar literalmente; gere variações inéditas.",
         ]
@@ -116,31 +122,61 @@ export function formatReferenceTranscriptionsBlock(
   return parts.length ? parts.join("\n\n") : null;
 }
 
-export async function getProjectGeneralIntelText(
+export async function loadOrgIntelSettings(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
+): Promise<OrgIntelSettings | null> {
+  const { data } = await supabase
+    .from("organizations")
+    .select("intel_settings")
+    .eq("id", organizationId)
+    .maybeSingle();
+  const raw = data?.intel_settings as OrgIntelSettings | null;
+  if (!raw) return null;
+  if (!(raw.reference_transcriptions?.length ?? 0) && !raw.reference_combo) {
+    return null;
+  }
+  return raw;
+}
+
+export async function resolveProjectOrganizationId(
   supabase: SupabaseClient<Database>,
   projectId: string,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("projects")
+    .select("organization_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data?.organization_id) throw new Error("Projeto não encontrado");
+  return data.organization_id;
+}
+
+export async function getOrgGeneralIntelText(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
 ): Promise<string | null> {
-  const settings = await loadProjectIntelSettingsRaw(supabase, projectId);
+  const settings = await loadOrgIntelSettings(supabase, organizationId);
   return formatReferenceTranscriptionsBlock(
     settings?.reference_transcriptions,
-    5,
+    PROMPT_REFERENCE_ENTRIES,
     600,
     settings?.reference_combo,
   );
 }
 
-export async function loadProjectIntelSettingsRaw(
+/** Resolve a org do projeto e monta o bloco de inteligência geral. */
+export async function getGeneralIntelForProject(
   supabase: SupabaseClient<Database>,
   projectId: string,
-): Promise<ProjectIntelSettings | null> {
-  const { data } = await supabase
-    .from("projects")
-    .select("intel_settings")
-    .eq("id", projectId)
-    .maybeSingle();
-  const raw = data?.intel_settings as ProjectIntelSettings | null;
-  return raw ?? null;
+): Promise<string | null> {
+  const organizationId = await resolveProjectOrganizationId(supabase, projectId);
+  return getOrgGeneralIntelText(supabase, organizationId);
 }
+
+/** @deprecated Use getGeneralIntelForProject */
+export const getProjectGeneralIntelText = getGeneralIntelForProject;
 
 function validateTranscriptionText(text: string): string {
   const trimmed = text.trim();
@@ -153,9 +189,9 @@ function validateTranscriptionText(text: string): string {
   return trimmed;
 }
 
-export async function appendProjectReferenceTranscription(
+export async function appendOrgReferenceTranscription(
   supabase: SupabaseClient<Database>,
-  projectId: string,
+  organizationId: string,
   text: string,
   options?: {
     label?: string;
@@ -174,7 +210,7 @@ export async function appendProjectReferenceTranscription(
     }
   }
 
-  const existing = (await loadProjectIntelSettingsRaw(supabase, projectId)) ?? {};
+  const existing = (await loadOrgIntelSettings(supabase, organizationId)) ?? {};
   const next = mergeReferenceTranscription(existing, {
     id: crypto.randomUUID(),
     text: trimmed,
@@ -184,19 +220,30 @@ export async function appendProjectReferenceTranscription(
   });
 
   const { error } = await supabase
-    .from("projects")
+    .from("organizations")
     .update({
       intel_settings: next as Record<string, unknown>,
     })
-    .eq("id", projectId);
+    .eq("id", organizationId);
 
   if (error) throw new Error(error.message);
   return { total: next.reference_transcriptions?.length ?? 0 };
 }
 
-export async function appendProjectReferenceTranscriptionsBatch(
+/** @deprecated Use appendOrgReferenceTranscription */
+export async function appendProjectReferenceTranscription(
   supabase: SupabaseClient<Database>,
   projectId: string,
+  text: string,
+  options?: Parameters<typeof appendOrgReferenceTranscription>[3],
+): Promise<{ total: number }> {
+  const organizationId = await resolveProjectOrganizationId(supabase, projectId);
+  return appendOrgReferenceTranscription(supabase, organizationId, text, options);
+}
+
+export async function appendOrgReferenceTranscriptionsBatch(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
   snippets: Array<{
     text: string;
     label?: string;
@@ -205,7 +252,7 @@ export async function appendProjectReferenceTranscriptionsBatch(
 ): Promise<{ total: number; added: number }> {
   if (!snippets.length) throw new Error("Nenhum trecho para salvar.");
 
-  let settings = (await loadProjectIntelSettingsRaw(supabase, projectId)) ?? {};
+  let settings = (await loadOrgIntelSettings(supabase, organizationId)) ?? {};
   let added = 0;
 
   for (const snippet of snippets) {
@@ -221,34 +268,44 @@ export async function appendProjectReferenceTranscriptionsBatch(
   }
 
   const { error } = await supabase
-    .from("projects")
+    .from("organizations")
     .update({
       intel_settings: settings as Record<string, unknown>,
     })
-    .eq("id", projectId);
+    .eq("id", organizationId);
 
   if (error) throw new Error(error.message);
   return { total: settings.reference_transcriptions?.length ?? 0, added };
 }
 
-export async function saveProjectReferenceCombo(
+/** @deprecated Use appendOrgReferenceTranscriptionsBatch */
+export async function appendProjectReferenceTranscriptionsBatch(
   supabase: SupabaseClient<Database>,
   projectId: string,
+  snippets: Parameters<typeof appendOrgReferenceTranscriptionsBatch>[2],
+): Promise<{ total: number; added: number }> {
+  const organizationId = await resolveProjectOrganizationId(supabase, projectId);
+  return appendOrgReferenceTranscriptionsBatch(supabase, organizationId, snippets);
+}
+
+export async function saveOrgReferenceCombo(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
   combo: ReferenceCombo | null,
 ): Promise<void> {
-  const existing = (await loadProjectIntelSettingsRaw(supabase, projectId)) ?? {};
+  const existing = (await loadOrgIntelSettings(supabase, organizationId)) ?? {};
   const refs = existing.reference_transcriptions ?? [];
 
   if (combo) {
     const ids = [combo.structure_id, combo.formato_id, combo.angulo_id].filter(Boolean);
     for (const id of ids) {
       if (!refs.some((r) => r.id === id)) {
-        throw new Error("Referência do combo não encontrada no projeto.");
+        throw new Error("Referência do combo não encontrada na biblioteca.");
       }
     }
   }
 
-  const next: ProjectIntelSettings = {
+  const next: OrgIntelSettings = {
     ...existing,
     reference_combo: combo
       ? { ...combo, updated_at: new Date().toISOString() }
@@ -256,19 +313,29 @@ export async function saveProjectReferenceCombo(
   };
 
   const { error } = await supabase
-    .from("projects")
+    .from("organizations")
     .update({ intel_settings: next as Record<string, unknown> })
-    .eq("id", projectId);
+    .eq("id", organizationId);
 
   if (error) throw new Error(error.message);
 }
 
-export async function removeProjectReferenceTranscription(
+/** @deprecated Use saveOrgReferenceCombo */
+export async function saveProjectReferenceCombo(
   supabase: SupabaseClient<Database>,
   projectId: string,
+  combo: ReferenceCombo | null,
+): Promise<void> {
+  const organizationId = await resolveProjectOrganizationId(supabase, projectId);
+  return saveOrgReferenceCombo(supabase, organizationId, combo);
+}
+
+export async function removeOrgReferenceTranscription(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
   transcriptionId: string,
 ): Promise<{ total: number }> {
-  const existing = (await loadProjectIntelSettingsRaw(supabase, projectId)) ?? {};
+  const existing = (await loadOrgIntelSettings(supabase, organizationId)) ?? {};
   const before = existing.reference_transcriptions ?? [];
   const list = before.filter((r) => r.id !== transcriptionId);
   if (list.length === before.length) {
@@ -283,7 +350,7 @@ export async function removeProjectReferenceTranscription(
       combo.angulo_id === transcriptionId);
 
   const { error } = await supabase
-    .from("projects")
+    .from("organizations")
     .update({
       intel_settings: {
         ...existing,
@@ -291,8 +358,18 @@ export async function removeProjectReferenceTranscription(
         reference_combo: comboUsesRemoved ? undefined : combo,
       } as Record<string, unknown>,
     })
-    .eq("id", projectId);
+    .eq("id", organizationId);
 
   if (error) throw new Error(error.message);
   return { total: list.length };
+}
+
+/** @deprecated Use removeOrgReferenceTranscription */
+export async function removeProjectReferenceTranscription(
+  supabase: SupabaseClient<Database>,
+  projectId: string,
+  transcriptionId: string,
+): Promise<{ total: number }> {
+  const organizationId = await resolveProjectOrganizationId(supabase, projectId);
+  return removeOrgReferenceTranscription(supabase, organizationId, transcriptionId);
 }

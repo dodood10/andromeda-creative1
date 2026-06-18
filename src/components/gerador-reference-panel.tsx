@@ -47,7 +47,7 @@ export function GeradorReferencePanel({
           <Button variant="ghost" className="w-full justify-between px-0 hover:bg-transparent">
             <span className="flex items-center gap-2 text-sm font-medium">
               <Layers className="size-4 text-primary-glow" />
-              Referências do projeto
+              Referências da organização
               {items.length > 0 && (
                 <span className="text-xs text-muted-foreground font-normal">
                   ({items.length} transcrição{items.length !== 1 ? "ões" : ""})
@@ -90,7 +90,7 @@ export function GeradorReferencePanel({
             <ReferenceComboPanel items={items} activeCombo={referenceCombo ?? null} />
           ) : (
             <p className="text-xs text-muted-foreground">
-              Cole transcrições de criativos campeões para a IA evitar repetição e copiar estruturas vencedoras.
+              Cole transcrições de anúncios campeões (qualquer nicho) — a IA usa estrutura e ritmo como referência.
             </p>
           )}
         </CollapsibleContent>

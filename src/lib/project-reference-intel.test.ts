@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  MAX_REFERENCE_ENTRIES,
   capReferenceTranscriptions,
   formatReferenceTranscriptionsBlock,
   mergeReferenceTranscription,
@@ -17,7 +18,8 @@ const sampleRef: ReferenceTranscription = {
 describe("inteligência geral vs campeão (vídeo)", () => {
   it("cenário 1: transcrição colada gera bloco de inteligência geral", () => {
     const block = formatReferenceTranscriptionsBlock([sampleRef]);
-    expect(block).toContain("REFERÊNCIAS DE COPY QUE JÁ VENDEU");
+    expect(block).toContain("REFERÊNCIAS DE COPY");
+    expect(block).toContain("podem ser de outros nichos");
     expect(block).toContain("emagrecer");
   });
 
@@ -47,13 +49,8 @@ describe("inteligência geral vs campeão (vídeo)", () => {
     expect(formatReferenceTranscriptionsBlock(undefined)).toBeNull();
   });
 
-  it("cenário 3: adicionar transcrição preserva calibração numérica existente", () => {
-    const merged = mergeReferenceTranscription(
-      { hook_rate_bias_pp: 5, calibration_samples: 3 },
-      sampleRef,
-    );
-    expect(merged.hook_rate_bias_pp).toBe(5);
-    expect(merged.calibration_samples).toBe(3);
+  it("merge adiciona transcrição à biblioteca org", () => {
+    const merged = mergeReferenceTranscription({}, sampleRef);
     expect(merged.reference_transcriptions).toHaveLength(1);
   });
 
@@ -70,13 +67,13 @@ describe("inteligência geral vs campeão (vídeo)", () => {
     expect(perfSrc).not.toContain("formatReferenceTranscriptionsBlock");
   });
 
-  it("cap mantém no máximo 20 transcrições", () => {
-    const many = Array.from({ length: 25 }, (_, i) => ({
+  it(`cap mantém no máximo ${MAX_REFERENCE_ENTRIES} transcrições`, () => {
+    const many = Array.from({ length: 35 }, (_, i) => ({
       id: `id-${i}`,
       text: `Copy campeã número ${i} com texto suficiente para validar o limite de armazenamento.`,
       added_at: new Date().toISOString(),
     }));
-    expect(capReferenceTranscriptions(many)).toHaveLength(20);
+    expect(capReferenceTranscriptions(many)).toHaveLength(MAX_REFERENCE_ENTRIES);
     expect(capReferenceTranscriptions(many)[0]?.id).toBe("id-5");
   });
 });
