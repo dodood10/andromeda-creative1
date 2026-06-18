@@ -1,10 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Tables, Enums } from "@/integrations/supabase/types";
 import type { ResultadoAngulos } from "./anthropic.functions";
 import { AnguloSchema, RoteiroBlocoSchema } from "./schemas/angulos.schema";
-import { normalizeAngulo } from "./formato-recomendacao";
+import { normalizeAngulo, getProjectFormatContext } from "./formato-recomendacao";
 import type { AppLink } from "./app-links";
 import { buildVslRoteiroFromAngulo } from "./vsl-roteiro";
 import { generateVslFromAngulo } from "./vsl.functions";
@@ -119,6 +120,7 @@ const SaveGeracaoSchema = z.object({
   criarCriativos: z.boolean().optional().default(false),
   projectId: z.string().uuid(),
   organizationId: z.string().uuid(),
+  geracaoId: z.string().uuid().optional(),
 });
 
 export const saveGeracao = createServerFn({ method: "POST" })
@@ -126,25 +128,42 @@ export const saveGeracao = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SaveGeracaoSchema.parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { resultado, criarCriativos, projectId, organizationId, ...meta } = data;
+    const { resultado, criarCriativos, projectId, organizationId, geracaoId, ...meta } = data;
 
-    const { data: geracao, error } = await supabase
-      .from("geracoes")
-      .insert({
-        user_id: userId,
-        organization_id: organizationId,
-        project_id: projectId,
-        url: meta.url,
-        product_type: meta.productType,
-        goal: meta.goal,
-        context: meta.context,
-        diagnostico: resultado.diagnostico,
-        angulos: resultado.angulos,
-      })
-      .select()
-      .single();
+    const payload = {
+      url: meta.url,
+      product_type: meta.productType,
+      goal: meta.goal,
+      context: meta.context,
+      diagnostico: resultado.diagnostico,
+      angulos: resultado.angulos,
+    };
 
-    if (error) throw new Error(error.message);
+    let geracao: { id: string };
+
+    if (geracaoId) {
+      const { data: updated, error } = await supabase
+        .from("geracoes")
+        .update(payload)
+        .eq("id", geracaoId)
+        .select("id")
+        .single();
+      if (error) throw new Error(error.message);
+      geracao = updated;
+    } else {
+      const { data: inserted, error } = await supabase
+        .from("geracoes")
+        .insert({
+          user_id: userId,
+          organization_id: organizationId,
+          project_id: projectId,
+          ...payload,
+        })
+        .select("id")
+        .single();
+      if (error) throw new Error(error.message);
+      geracao = inserted;
+    }
 
     if (criarCriativos && resultado.angulos.length > 0) {
       let produto = meta.url;
@@ -205,7 +224,7 @@ const CreateDraftSchema = z.object({
   geracaoId: z.string().uuid(),
   anguloIndex: z.number().int().min(0).max(4),
   formatoSaida: z.enum(["criativo_curto", "vsl_curta"]),
-  estiloProducao: z.enum(["texto_animado", "clipes_texto"]),
+  estiloProducao: z.enum(["texto_animado", "clipes_texto", "ugc_avatar"]),
   formatoSource: z.enum(["ia", "manual"]).optional().default("ia"),
   aspectRatioPrioritario: z.enum(["9:16", "4:5", "1:1"]).optional(),
   backgroundMediaPath: z.string().optional(),
@@ -302,7 +321,12 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
         produto,
         angulo: anguloDisplay,
         formato: aspectRatio,
-        estilo: data.estiloProducao === "texto_animado" ? "Texto" : "Clipes",
+        estilo:
+          data.estiloProducao === "texto_animado"
+            ? "Texto"
+            : data.estiloProducao === "ugc_avatar"
+              ? "UGC"
+              : "Clipes",
         formato_saida: data.formatoSaida as FormatoSaida,
         estilo_producao: data.estiloProducao as EstiloProducao,
         angulo_json: anguloJson,
@@ -715,6 +739,65 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         valor: r.valor,
         created_at: r.created_at,
       })),
+    };
+  });
+
+export const fetchProjectFormatContext = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(z.object({ projectId: z.string().uuid() }))
+  .handler(async ({ data, context }) => {
+    return getProjectFormatContext(context.supabase, data.projectId);
+  });
+
+const DEFAULT_ETA = { angulosSec: 60, vslSec: 45, draftSec: 15, exportSec: 45, brollSec: 300 };
+
+export const getGeradorEtaEstimates = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: events } = await supabaseAdmin
+      .from("funnel_events")
+      .select("event_type, duration_ms")
+      .gte("created_at", since)
+      .eq("success", true)
+      .not("duration_ms", "is", null);
+
+    const buckets: Record<string, number[]> = {};
+    for (const e of events ?? []) {
+      if (!e.duration_ms) continue;
+      const list = buckets[e.event_type] ?? [];
+      list.push(e.duration_ms);
+      buckets[e.event_type] = list;
+    }
+
+    const avg = (key: string, fallback: number) => {
+      const list = buckets[key];
+      if (!list?.length) return fallback;
+      return Math.round(list.reduce((a, b) => a + b, 0) / list.length / 1000);
+    };
+
+    const angulosFromApi = await supabaseAdmin
+      .from("api_usage_events")
+      .select("created_at")
+      .eq("event_type", "gerar_angulos")
+      .eq("success", true)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    let angulosSec = avg("angulos_gerados", DEFAULT_ETA.angulosSec);
+    if (!buckets.angulos_gerados?.length && (angulosFromApi.data?.length ?? 0) >= 3) {
+      angulosSec = 75;
+    }
+
+    return {
+      angulosSec,
+      vslSec: avg("draft_created", DEFAULT_ETA.vslSec),
+      draftSec: avg("draft_created", DEFAULT_ETA.draftSec),
+      exportSec: avg("render_done", DEFAULT_ETA.exportSec),
+      brollSec: avg("render_done", DEFAULT_ETA.brollSec),
+      sampleCount: Object.values(buckets).flat().length,
     };
   });
 

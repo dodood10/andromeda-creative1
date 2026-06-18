@@ -2,13 +2,15 @@ import { z } from "zod";
 
 export const RecomendacaoFormatoSchema = z.object({
   formato_saida: z.enum(["criativo_curto", "vsl_curta"]),
-  estilo_producao: z.enum(["texto_animado", "clipes_texto"]),
+  estilo_producao: z.enum(["texto_animado", "clipes_texto", "ugc_avatar"]),
   aspect_ratio_prioritario: z.enum(["9:16", "4:5", "1:1"]).default("9:16"),
   duracao_alvo_seg: z.number().int().min(15).max(120),
   justificativa: z.string(),
   formatos_saturados_nicho: z.array(z.string()).default([]),
   confianca: z.enum(["alta", "media", "baixa"]),
   requer_midia_usuario: z.boolean(),
+  perfil_avatar: z.string().optional(),
+  render_pipeline: z.enum(["legado_ffmpeg", "broll_ia", "ugc_provider"]).optional(),
 });
 
 export type RecomendacaoFormato = z.infer<typeof RecomendacaoFormatoSchema>;

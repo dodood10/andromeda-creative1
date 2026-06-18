@@ -208,8 +208,127 @@ async function processRender(payload) {
   return { paths: storagePaths, utm: utmContent ?? criativoId };
 }
 
+async function processRenderClipes(payload) {
+  const { criativoId, roteiro = [], audioPaths = {}, clipPaths = [], utmContent } = payload;
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    throw new Error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY obrigatórios");
+  }
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "andromeda-clips-"));
+  const blocks = Array.isArray(roteiro) ? roteiro : [];
+  const clips = Array.isArray(clipPaths) ? clipPaths : [];
+
+  const totalDuration = blocks.reduce(
+    (acc, b, i) => acc + blockDurationSec(b.tempo, i, blocks.length),
+    0,
+  );
+
+  const assPath = path.join(workDir, "subs.ass");
+  fs.writeFileSync(assPath, buildAssSubtitles(blocks, Math.max(totalDuration, 5)));
+
+  const localClips = [];
+  for (let i = 0; i < clips.length; i++) {
+    const storagePath = clips[i];
+    if (!storagePath) continue;
+    const dest = path.join(workDir, `clip-${i}.mp4`);
+    try {
+      await downloadFromStorage(supabase, storagePath, dest);
+      const dur = blockDurationSec(blocks[i]?.tempo, i, blocks.length);
+      const scaled = path.join(workDir, `clip-${i}-scaled.mp4`);
+      execSync(
+        `ffmpeg -y -i "${dest}" -t ${dur} -vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2" -c:v libx264 -pix_fmt yuv420p -an "${scaled}"`,
+        { stdio: "ignore", timeout: 120000 },
+      );
+      localClips.push(scaled);
+    } catch {
+      /* skip */
+    }
+  }
+
+  if (localClips.length === 0) {
+    throw new Error("Nenhum clipe válido para montagem");
+  }
+
+  const concatList = path.join(workDir, "clips.txt");
+  fs.writeFileSync(
+    concatList,
+    localClips.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n"),
+  );
+  const mergedVideo = path.join(workDir, "merged.mp4");
+  execSync(`ffmpeg -y -f concat -safe 0 -i "${concatList}" -c copy "${mergedVideo}"`, {
+    stdio: "ignore",
+    timeout: 120000,
+  });
+
+  const audioMap = typeof audioPaths === "object" && audioPaths ? audioPaths : {};
+  const sortedKeys = Object.keys(audioMap).sort((a, b) => Number(a) - Number(b));
+  const localAudios = [];
+  for (const key of sortedKeys) {
+    const storagePath = audioMap[key];
+    if (!storagePath) continue;
+    const dest = path.join(workDir, `audio-${key}.mp3`);
+    try {
+      await downloadFromStorage(supabase, storagePath, dest);
+      localAudios.push(dest);
+    } catch {
+      /* skip */
+    }
+  }
+  const mergedAudio = localAudios.length > 0 ? concatAudio(workDir, localAudios) : null;
+
+  const formats = [
+    { suffix: "9x16", width: 1080, height: 1920 },
+    { suffix: "4x5", width: 1080, height: 1350 },
+  ];
+
+  const assEscaped = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+  const storagePaths = [];
+
+  for (const fmt of formats) {
+    const outFile = path.join(workDir, `${criativoId}-${fmt.suffix}.mp4`);
+    const vf = `subtitles='${assEscaped}',scale=${fmt.width}:${fmt.height}:force_original_aspect_ratio=decrease,pad=${fmt.width}:${fmt.height}:(ow-iw)/2:(oh-ih)/2`;
+    const audioArg = mergedAudio ? `-i "${mergedAudio}" -shortest` : "";
+    const cmd = `ffmpeg -y -i "${mergedVideo}" ${audioArg} -vf "${vf}" -c:v libx264 -pix_fmt yuv420p -c:a aac "${outFile}"`;
+    try {
+      execSync(cmd, { stdio: "ignore", timeout: 180000 });
+    } catch {
+      execSync(
+        `ffmpeg -y -i "${mergedVideo}" -vf "${vf}" -c:v libx264 -pix_fmt yuv420p "${outFile}"`,
+        { stdio: "ignore", timeout: 120000 },
+      );
+    }
+    const storagePath = `exports/${criativoId}/${criativoId}-${fmt.suffix}.mp4`;
+    await uploadToStorage(supabase, storagePath, outFile, "video/mp4");
+    storagePaths.push(storagePath);
+  }
+
+  try {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+
+  return { paths: storagePaths, utm: utmContent ?? criativoId };
+}
+
 const server = http.createServer(async (req, res) => {
-  if (req.method !== "POST" || req.url !== "/render") {
+  const route = req.url?.split("?")[0];
+
+  if (req.method === "GET" && route === "/health") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, endpoints: ["/render", "/render-clipes"] }));
+    return;
+  }
+
+  if (req.method !== "POST") {
+    res.writeHead(404);
+    res.end("Not found");
+    return;
+  }
+
+  const route = req.url?.split("?")[0];
+  if (route !== "/render" && route !== "/render-clipes") {
     res.writeHead(404);
     res.end("Not found");
     return;
@@ -227,7 +346,10 @@ const server = http.createServer(async (req, res) => {
 
   try {
     const payload = JSON.parse(body);
-    const result = await processRender(payload);
+    const result =
+      route === "/render-clipes"
+        ? await processRenderClipes(payload)
+        : await processRender(payload);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
   } catch (e) {

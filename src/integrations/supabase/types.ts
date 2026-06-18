@@ -158,6 +158,78 @@ export type Database = {
         }
         Relationships: []
       }
+      funnel_events: {
+        Row: {
+          created_at: string
+          duration_ms: number | null
+          event_type: string
+          id: string
+          metadata: Json | null
+          organization_id: string | null
+          success: boolean
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          duration_ms?: number | null
+          event_type: string
+          id?: string
+          metadata?: Json | null
+          organization_id?: string | null
+          success?: boolean
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number | null
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+          organization_id?: string | null
+          success?: boolean
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      video_render_jobs: {
+        Row: {
+          created_at: string
+          criativo_id: string
+          error: string | null
+          external_job_id: string | null
+          id: string
+          progress: Json | null
+          provider: string
+          result_paths: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          criativo_id: string
+          error?: string | null
+          external_job_id?: string | null
+          id?: string
+          progress?: Json | null
+          provider: string
+          result_paths?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          criativo_id?: string
+          error?: string | null
+          external_job_id?: string | null
+          id?: string
+          progress?: Json | null
+          provider?: string
+          result_paths?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       geracoes: {
         Row: {
           angulos: Json
@@ -341,7 +413,7 @@ export type Database = {
     }
     Enums: {
       criativo_status: "Gerado" | "Subiu" | "Rodando" | "Performando" | "Pausado"
-      estilo_producao: "texto_animado" | "clipes_texto"
+      estilo_producao: "texto_animado" | "clipes_texto" | "ugc_avatar"
       export_status: "rascunho" | "renderizando" | "pronto" | "erro"
       formato_saida: "criativo_curto" | "vsl_curta"
       org_member_role: "owner" | "editor" | "viewer"
@@ -474,7 +546,7 @@ export const Constants = {
   public: {
     Enums: {
       criativo_status: ["Gerado", "Subiu", "Rodando", "Performando", "Pausado"],
-      estilo_producao: ["texto_animado", "clipes_texto"],
+      estilo_producao: ["texto_animado", "clipes_texto", "ugc_avatar"],
       export_status: ["rascunho", "renderizando", "pronto", "erro"],
       formato_saida: ["criativo_curto", "vsl_curta"],
       org_member_role: ["owner", "editor", "viewer"],

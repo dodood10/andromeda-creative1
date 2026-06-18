@@ -13,17 +13,18 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Download, Mic, Music, Type, Loader2, Sparkles, Upload, Image, Copy, CheckCircle2, AlertTriangle, ExternalLink, ChevronDown, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { getCriativo, getLatestCriativo, updateCriativoRoteiro, updateCriativoStatus } from "@/lib/criativos.functions";
+import { getCriativo, getLatestCriativo, updateCriativoRoteiro, updateCriativoStatus, getGeradorEtaEstimates } from "@/lib/criativos.functions";
 import {
   avaliarCriativo,
   solicitarExport,
   gerarAudio,
   gerarAudioRoteiroCompleto,
   listVozes,
-  getExportStatus,
   getSignedExportUrls,
   getSignedAudioUrl,
   getMediaCapabilities,
+  getRenderJobStatus,
+  getExportStatus,
 } from "@/lib/export.functions";
 import { refinarBloco } from "@/lib/anthropic.functions";
 import { uploadCriativoMedia } from "@/lib/storage";
@@ -33,6 +34,16 @@ import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
 import { VSL_BLOCOS_META, vslBlockLabel, isVslRoteiro, type VslAnguloJsonExtras } from "@/lib/vsl-roteiro";
 import { gerarVslCurta } from "@/lib/vsl.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
+
+function formatEtaRange(sec: number): string {
+  const minMin = Math.max(1, Math.round((sec * 0.7) / 60));
+  const maxMin = Math.max(minMin, Math.round((sec * 1.5) / 60));
+  return minMin === maxMin ? `~${minMin} min` : `${minMin}–${maxMin} min`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 const searchSchema = z.object({
@@ -118,14 +129,22 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
   const runRefinar = useServerFn(refinarBloco);
   const runGerarVsl = useServerFn(gerarVslCurta);
   const fetchVozes = useServerFn(listVozes);
-  const pollExport = useServerFn(getExportStatus);
+  const pollRenderJob = useServerFn(getRenderJobStatus);
+  const fetchExportStatus = useServerFn(getExportStatus);
   const signUrls = useServerFn(getSignedExportUrls);
   const signAudio = useServerFn(getSignedAudioUrl);
   const fetchCapabilities = useServerFn(getMediaCapabilities);
+  const fetchEta = useServerFn(getGeradorEtaEstimates);
 
   const { data: capabilities } = useQuery({
     queryKey: ["media-capabilities"],
     queryFn: () => fetchCapabilities(),
+  });
+
+  const { data: etaEstimates } = useQuery({
+    queryKey: ["gerador-eta"],
+    queryFn: () => fetchEta(),
+    staleTime: 60_000,
   });
 
   const { data: criativo, isLoading, error } = useQuery({
@@ -146,6 +165,7 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
   const [scoreOpen, setScoreOpen] = useState(false);
   const [scoreData, setScoreData] = useState<Awaited<ReturnType<typeof runAvaliar>> | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [renderProgress, setRenderProgress] = useState<string | null>(null);
   const [exportDevMode, setExportDevMode] = useState(false);
   const [audioDevMode, setAudioDevMode] = useState(false);
   const [showPostExport, setShowPostExport] = useState(false);
@@ -352,18 +372,23 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
     }
   }, [criativo, focus, criativoId]);
 
-  async function pollUntilReady() {
-    for (let i = 0; i < 60; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      const status = await pollExport({ data: { criativoId } });
-      if (status.status === "pronto") return status;
-      if (status.status === "erro") throw new Error("Render falhou");
-    }
-    throw new Error("Timeout no render");
-  }
-
   async function handleExport() {
     setExporting(true);
+    setRenderProgress("Iniciando render…");
+    const pollTimer = setInterval(() => {
+      void pollRenderJob({ data: { criativoId } }).then((jobRes) => {
+        const progress = jobRes.job?.progress as {
+          message?: string;
+          current?: number;
+          total?: number;
+        } | undefined;
+        if (progress?.message) setRenderProgress(progress.message);
+        else if (progress?.current && progress?.total) {
+          setRenderProgress(`Gerando cena ${progress.current}/${progress.total}…`);
+        }
+      });
+    }, 5000);
+
     try {
       const score = scoreData ?? (await runAvaliar({ data: { criativoId } }));
       if (!score.podeExportar) {
@@ -372,23 +397,46 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
         toast.error("Corrija os alertas antes de exportar");
         return;
       }
-      await runExport({ data: { criativoId } }).then((res) => {
-        if (res.devMode) setExportDevMode(true);
-      });
-      const final = await pollUntilReady();
-      if (final.paths.length > 0) {
-        const signed = await signUrls({ data: { paths: final.paths } });
-        setDownloadUrls(signed.urls);
+
+      const kickoff = await runExport({ data: { criativoId } });
+
+      if (kickoff.status === "renderizando") {
+        const deadline = Date.now() + 20 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await sleep(3000);
+          const [jobRes, exportRes] = await Promise.all([
+            pollRenderJob({ data: { criativoId } }),
+            fetchExportStatus({ data: { criativoId } }),
+          ]);
+
+          const progress = jobRes.job?.progress as { message?: string } | undefined;
+          if (progress?.message) setRenderProgress(progress.message);
+
+          if (exportRes.status === "pronto") {
+            if (exportRes.devMode) setExportDevMode(true);
+            if (exportRes.paths.length > 0) {
+              const signed = await signUrls({ data: { paths: exportRes.paths } });
+              setDownloadUrls(signed.urls);
+            }
+            setShowPostExport(true);
+            setScoreOpen(false);
+            toast.success("Export concluído!");
+            trackFunnelEvent({ userId: user?.id, organizationId, event: "export_pronto", success: true });
+            queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
+            return;
+          }
+
+          if (exportRes.status === "erro" || jobRes.job?.status === "failed") {
+            throw new Error(jobRes.job?.error ?? "Render falhou");
+          }
+        }
+        throw new Error("Tempo limite do export — tente novamente em alguns minutos");
       }
-      if ("devMode" in final && final.devMode) setExportDevMode(true);
-      setShowPostExport(true);
-      setScoreOpen(false);
-      toast.success("Export concluído!");
-      trackFunnelEvent({ userId: user?.id, organizationId, event: "export_pronto", success: true });
-      queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro no export");
     } finally {
+      clearInterval(pollTimer);
+      setRenderProgress(null);
       setExporting(false);
     }
   }
@@ -435,6 +483,20 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
 
   const anguloNome = criativo.angulo;
   const estilo = criativo.estilo_producao ?? "texto_animado";
+  const scoreMeta = criativo.score_json as {
+    ugc_recommended?: boolean;
+    ugc_message?: string;
+    ugc_provider?: string;
+    exportDevMode?: boolean;
+  } | null;
+  const showUgcFallbackBanner =
+    scoreMeta?.ugc_recommended ||
+    (estilo === "ugc_avatar" && !capabilities?.agentMediaConfigured);
+  const exportEtaSec =
+    estilo === "clipes_texto" || estilo === "ugc_avatar"
+      ? (etaEstimates?.brollSec ?? 300)
+      : (etaEstimates?.exportSec ?? 45);
+  const exportEtaLabel = formatEtaRange(exportEtaSec);
   const isVsl = criativo.formato_saida === "vsl_curta" || isVslRoteiro(roteiro);
   const vslExtras = (criativo.angulo_json as VslAnguloJsonExtras | null) ?? {};
   const vslDevMode = !!vslExtras.vsl_dev_mode;
@@ -444,6 +506,15 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
 
   return (
     <div className="h-[calc(100vh-3.5rem)] flex flex-col">
+      {showUgcFallbackBanner && (
+        <div className="px-6 py-2 bg-primary/10 border-b border-primary/20 flex items-center gap-2 text-sm">
+          <Sparkles className="size-4 text-primary-glow shrink-0" />
+          <span>
+            {scoreMeta?.ugc_message ??
+              "IA recomendou UGC depoimento. Render com clipes/texto até configurar AGENT_MEDIA_API_KEY."}
+          </span>
+        </div>
+      )}
       {(exportDevMode || audioDevMode || vslDevMode) && (
         <div className="px-6 py-2 bg-warning/15 border-b border-warning/30 flex items-center gap-2 text-sm">
           <AlertTriangle className="size-4 text-warning shrink-0" />
@@ -484,6 +555,9 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
         </div>
         <div className="flex gap-2 items-center">
           {exporting && <Loader2 className="size-4 animate-spin text-primary-glow" />}
+          {renderProgress && (
+            <span className="text-xs text-muted-foreground">{renderProgress}</span>
+          )}
           {isVsl && (
             <Button
               variant="outline"
@@ -519,6 +593,7 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
               exporting={exporting}
               downloadUrls={downloadUrls}
               exportPaths={exportPaths}
+              exportEtaLabel={exportEtaLabel}
             />
           </Dialog>
         </div>
@@ -896,6 +971,7 @@ function ExportDialog({
   exporting,
   downloadUrls,
   exportPaths,
+  exportEtaLabel,
 }: {
   score: { dimensoes: Array<{ label: string; score: number; ok: boolean; dica?: string }>; podeExportar: boolean } | null;
   onExport: () => void;
@@ -903,6 +979,7 @@ function ExportDialog({
   exporting: boolean;
   downloadUrls: Record<string, string>;
   exportPaths: string[];
+  exportEtaLabel?: string;
 }) {
   return (
     <DialogContent>
@@ -948,7 +1025,11 @@ function ExportDialog({
           onClick={onExport}
           disabled={exporting || (score ? !score.podeExportar : true)}
         >
-          {exporting ? <Loader2 className="size-4 animate-spin" /> : "Exportar 9:16 + 4:5"}
+          {exporting ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            `Exportar 9:16 + 4:5${exportEtaLabel ? ` (${exportEtaLabel})` : ""}`
+          )}
         </Button>
       </div>
     </DialogContent>

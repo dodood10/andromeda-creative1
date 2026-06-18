@@ -78,7 +78,7 @@ function AdminCriativos() {
   const reprocessMutation = useMutation({
     mutationFn: (criativoId: string) => runReprocess({ data: { criativoId } }),
     onSuccess: () => {
-      toast.success("Export reprocessado");
+      toast.success("Reprocessamento iniciado — aguarde alguns minutos");
       queryClient.invalidateQueries({ queryKey: ["admin-criativos"] });
       queryClient.invalidateQueries({ queryKey: ["admin-criativo-detail"] });
     },

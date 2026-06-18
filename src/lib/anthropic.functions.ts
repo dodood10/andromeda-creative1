@@ -236,13 +236,15 @@ Responda APENAS com JSON válido. Sem markdown. Sem texto antes ou depois. Sem c
       },
       "recomendacao_formato": {
         "formato_saida": "criativo_curto" | "vsl_curta",
-        "estilo_producao": "texto_animado" | "clipes_texto",
+        "estilo_producao": "texto_animado" | "clipes_texto" | "ugc_avatar",
         "aspect_ratio_prioritario": "9:16" | "4:5" | "1:1",
         "duracao_alvo_seg": "number — 15 a 120",
         "justificativa": "string — por que este formato para ESTE ângulo com base na pesquisa",
         "formatos_saturados_nicho": ["string — formatos visuais saturados no nicho"],
         "confianca": "alta" | "media" | "baixa",
-        "requer_midia_usuario": "boolean — true se estilo_producao for clipes_texto"
+        "requer_midia_usuario": "boolean — true se clipes_texto ou ugc_avatar com produto em cena",
+        "perfil_avatar": "string opcional — ex: mulher_35_empatica, derivado da micropersona quando ugc_avatar",
+        "render_pipeline": "legado_ffmpeg | broll_ia | ugc_provider — pipeline técnico sugerido"
       }
     }
   ]
@@ -260,10 +262,12 @@ recomendacao_formato — OBRIGATÓRIO em cada ângulo:
 - Deve alinhar com hook_visual, saturacao_hook e variavel_explorada do MESMO ângulo.
 - Schwartz 4-5, mecanismo complexo, alto ticket → tendência vsl_curta.
 - Hook sub_explorado, teste rápido de leilão → tendência criativo_curto.
-- hook_visual pede B-roll/cenas → clipes_texto + requer_midia_usuario: true.
-- Nicho saturado em UGC talking head → texto_animado OU clipes_texto conforme hook_visual.
+- hook_visual pede B-roll/cenas/produto/lifestyle → clipes_texto + requer_midia_usuario: true + render_pipeline: broll_ia.
+- hook_visual pede pessoa falando/selfie/depoimento/creator na câmera → ugc_avatar + perfil_avatar da micropersona + render_pipeline: ugc_provider.
+- Nicho saturado em UGC talking head → EVITE ugc_avatar; use texto_animado OU clipes_texto conforme hook_visual.
+- Teste rápido barato, hook textual sem rosto → texto_animado + render_pipeline: legado_ffmpeg.
 - Reels/Stories dominante → aspect_ratio_prioritario 9:16; feed quadrado em nicho específico → 4:5 ou 1:1.
-- requer_midia_usuario DEVE ser true quando estilo_producao for clipes_texto.
+- requer_midia_usuario DEVE ser true quando estilo_producao for clipes_texto ou ugc_avatar com produto em cena.
 - Se CONTEXTO DO PROJETO indicar formatos não testados, priorize diversidade quando coerente com o ângulo.
 
 Sempre EXATAMENTE 5 ângulos, cada um para micropersona diferente. Português do Brasil.`;

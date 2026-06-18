@@ -4,6 +4,8 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { requirePlatformAdmin } from "@/integrations/supabase/admin-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { logAdminAction } from "@/lib/admin-audit";
+import { scheduleBackgroundRender } from "@/lib/render/background-task";
+import { runBackgroundRenderForCriativoId } from "@/lib/render/process-render-job";
 
 const adminMiddleware = [requireSupabaseAuth, requirePlatformAdmin] as const;
 
@@ -39,6 +41,33 @@ function periodStart(period: z.infer<typeof PeriodSchema>): string | null {
   return d.toISOString();
 }
 
+const GERADOR_FUNNEL_STEPS = [
+  "angulos_gerados",
+  "wizard_step",
+  "draft_created",
+  "editor_opened",
+  "render_started",
+  "render_done",
+  "render_failed",
+  "export_pronto",
+] as const;
+
+async function loadGeradorFunnelCounts(since: string | null) {
+  let q = supabaseAdmin.from("funnel_events").select("event_type");
+  if (since) q = q.gte("created_at", since);
+  const { data, error } = await q;
+  const counts = Object.fromEntries(GERADOR_FUNNEL_STEPS.map((s) => [s, 0])) as Record<
+    (typeof GERADOR_FUNNEL_STEPS)[number],
+    number
+  >;
+  if (error) return counts;
+  for (const row of data ?? []) {
+    const t = row.event_type as (typeof GERADOR_FUNNEL_STEPS)[number];
+    if (t in counts) counts[t]++;
+  }
+  return counts;
+}
+
 export const checkAdminAccess = createServerFn({ method: "GET" })
   .middleware([...adminMiddleware])
   .handler(async ({ context }) => {
@@ -69,7 +98,7 @@ export const getAdminOverview = createServerFn({ method: "POST" })
       supabaseAdmin.from("geracoes").select("id, user_id, created_at"),
       supabaseAdmin
         .from("criativos")
-        .select("id, status, export_status, user_id, created_at, angulo, organization_id"),
+        .select("id, status, export_status, user_id, created_at, angulo, organization_id, estilo_producao"),
       supabaseAdmin.from("resultados_reportados").select("id, created_at"),
       supabaseAdmin.from("organizations").select("id, name, created_at"),
       supabaseAdmin
@@ -94,6 +123,7 @@ export const getAdminOverview = createServerFn({ method: "POST" })
         created_at: string;
         angulo: string;
         organization_id: string | null;
+        estilo_producao: string | null;
       }> | null,
     );
     const resultados = filterSince(
@@ -149,6 +179,21 @@ export const getAdminOverview = createServerFn({ method: "POST" })
     }>;
     const exportsForChart = allCriativos.filter((c) => c.export_status === "pronto");
 
+    const pipelineStats: Record<
+      string,
+      { total: number; pronto: number; erro: number; renderizando: number }
+    > = {};
+    for (const c of criativos) {
+      const estilo = c.estilo_producao ?? "texto_animado";
+      if (!pipelineStats[estilo]) {
+        pipelineStats[estilo] = { total: 0, pronto: 0, erro: 0, renderizando: 0 };
+      }
+      pipelineStats[estilo].total++;
+      if (c.export_status === "pronto") pipelineStats[estilo].pronto++;
+      if (c.export_status === "erro") pipelineStats[estilo].erro++;
+      if (c.export_status === "renderizando") pipelineStats[estilo].renderizando++;
+    }
+
     await logAdminAction({
       actorUserId: context.userId,
       action: "admin.view_overview",
@@ -172,6 +217,9 @@ export const getAdminOverview = createServerFn({ method: "POST" })
         usersComCriativo: usersComCriativo.size,
         usersComExport: usersComExport.size,
         statusCounts,
+        rascunhosSemExport: criativos.filter((c) => c.export_status !== "pronto" && c.status !== "Pausado").length,
+        geradorFunnel: await loadGeradorFunnelCounts(since),
+        pipelineStats,
       },
       topOrgs,
       exportErrors: exportErroRes.data ?? [],
@@ -635,7 +683,7 @@ export const adminReprocessExport = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { data: criativo, error } = await supabaseAdmin
       .from("criativos")
-      .select("*")
+      .select("id")
       .eq("id", data.criativoId)
       .single();
 
@@ -646,60 +694,18 @@ export const adminReprocessExport = createServerFn({ method: "POST" })
       .update({ export_status: "renderizando" })
       .eq("id", data.criativoId);
 
-    const ffmpegUrl = process.env.FFMPEG_SERVICE_URL;
-    const ffmpegSecret = process.env.FFMPEG_SERVICE_SECRET;
-    const roteiro = criativo.roteiro;
-    const utm = criativo.utm_content ?? criativo.id;
+    scheduleBackgroundRender(() =>
+      runBackgroundRenderForCriativoId(data.criativoId, context.userId),
+    );
 
-    try {
-      if (ffmpegUrl && ffmpegSecret) {
-        const res = await fetch(`${ffmpegUrl}/render`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${ffmpegSecret}`,
-          },
-          body: JSON.stringify({
-            criativoId: criativo.id,
-            roteiro,
-            audioPaths: criativo.audio_paths,
-            backgroundMediaPath: criativo.background_media_path,
-            utmContent: utm,
-          }),
-        });
-        if (!res.ok) throw new Error(`FFmpeg service: ${res.status}`);
-        const result = (await res.json()) as { paths: string[] };
-        await supabaseAdmin
-          .from("criativos")
-          .update({
-            export_status: "pronto",
-            export_paths: result.paths,
-            storage_path: result.paths[0] ?? null,
-          })
-          .eq("id", data.criativoId);
-      } else {
-        await supabaseAdmin
-          .from("criativos")
-          .update({ export_status: "erro" })
-          .eq("id", data.criativoId);
-        throw new Error("FFMPEG_SERVICE_URL não configurado");
-      }
+    await logAdminAction({
+      actorUserId: context.userId,
+      action: "admin.reprocess_export",
+      targetType: "criativo",
+      targetId: data.criativoId,
+    });
 
-      await logAdminAction({
-        actorUserId: context.userId,
-        action: "admin.reprocess_export",
-        targetType: "criativo",
-        targetId: data.criativoId,
-      });
-
-      return { ok: true, status: "pronto" };
-    } catch (e) {
-      await supabaseAdmin
-        .from("criativos")
-        .update({ export_status: "erro" })
-        .eq("id", data.criativoId);
-      throw e;
-    }
+    return { ok: true, status: "renderizando" as const };
   });
 
 export const setUserSuspended = createServerFn({ method: "POST" })

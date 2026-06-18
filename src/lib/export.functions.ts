@@ -8,6 +8,16 @@ import {
   type SinaisAndromeda,
 } from "./score-sinais";
 import { trackApiUsage } from "./api-usage";
+import { trackFunnelEvent } from "./funnel-events";
+import { getLatestRenderJob } from "./render/render-jobs";
+import { scheduleBackgroundRender } from "./render/background-task";
+import {
+  createPendingRenderJob,
+  failCriativoRenderJob,
+  processCriativoRenderJob,
+  type CriativoRenderRow,
+} from "./render/process-render-job";
+import type { EstiloProducao } from "./formato-recomendacao";
 
 const BUCKET = "criativos-media";
 
@@ -362,7 +372,28 @@ export const getMediaCapabilities = createServerFn({ method: "GET" })
   .handler(async () => ({
     ffmpegConfigured: Boolean(process.env.FFMPEG_SERVICE_URL && process.env.FFMPEG_SERVICE_SECRET),
     elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY),
+    nanoBananaConfigured: Boolean(process.env.NANOBANANA_API_KEY),
+    pexelsConfigured: Boolean(process.env.PEXELS_API_KEY),
+    agentMediaConfigured: Boolean(process.env.AGENT_MEDIA_API_KEY),
   }));
+
+export const getRenderJobStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(z.object({ criativoId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const job = await getLatestRenderJob(data.criativoId);
+    if (!job) return { job: null as const };
+
+    return {
+      job: {
+        id: job.id,
+        status: job.status,
+        provider: job.provider,
+        progress: (job.progress as Record<string, unknown>) ?? {},
+        error: job.error,
+      },
+    };
+  });
 
 export const getSignedExportUrls = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -393,29 +424,6 @@ export const getSignedAudioUrl = createServerFn({ method: "POST" })
     return { url: signed?.signedUrl ?? null };
   });
 
-/** Minimal valid MP4 (ftyp+moov) for dev placeholder exports */
-const MINIMAL_MP4 = Buffer.from(
-  "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAABBtZGF0AAAC",
-  "base64",
-);
-
-async function uploadDevPlaceholder(
-  supabase: ReturnType<typeof import("@supabase/supabase-js").createClient>,
-  criativoId: string,
-) {
-  const paths = [
-    `exports/${criativoId}/${criativoId}-9x16.mp4`,
-    `exports/${criativoId}/${criativoId}-4x5.mp4`,
-  ];
-
-  for (const p of paths) {
-    await supabase.storage.from(BUCKET).upload(p, MINIMAL_MP4, {
-      contentType: "video/mp4",
-      upsert: true,
-    });
-  }
-  return paths;
-}
 
 export const solicitarExport = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -441,93 +449,55 @@ export const solicitarExport = createServerFn({ method: "POST" })
       .update({ export_status: "renderizando" })
       .eq("id", data.criativoId);
 
-    const roteiro = criativo.roteiro as RoteiroBloco[];
-    const utm = criativo.utm_content ?? criativo.id;
-    const ffmpegUrl = process.env.FFMPEG_SERVICE_URL;
-    const ffmpegSecret = process.env.FFMPEG_SERVICE_SECRET;
+    const estilo = (criativo.estilo_producao ?? "texto_animado") as EstiloProducao;
+    const renderStart = Date.now();
 
-    try {
-      if (ffmpegUrl && ffmpegSecret) {
-        const res = await fetch(`${ffmpegUrl}/render`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${ffmpegSecret}`,
-          },
-          body: JSON.stringify({
-            criativoId: criativo.id,
-            roteiro,
-            audioPaths: criativo.audio_paths,
-            backgroundMediaPath: criativo.background_media_path,
-            utmContent: utm,
-          }),
+    trackFunnelEvent({
+      userId,
+      organizationId: criativo.organization_id,
+      event: "render_started",
+      metadata: { estilo, criativoId: criativo.id },
+    });
+
+    const jobId = await createPendingRenderJob(criativo.id);
+    const criativoRow: CriativoRenderRow = {
+      id: criativo.id,
+      roteiro: criativo.roteiro as RoteiroBloco[],
+      audio_paths: criativo.audio_paths,
+      background_media_path: criativo.background_media_path,
+      utm_content: criativo.utm_content,
+      estilo_producao: estilo,
+      angulo_json: criativo.angulo_json,
+      produto: criativo.produto,
+      score_json: criativo.score_json,
+      organization_id: criativo.organization_id,
+      voice_id: criativo.voice_id,
+    };
+
+    scheduleBackgroundRender(async () => {
+      try {
+        await processCriativoRenderJob({
+          supabase,
+          criativo: criativoRow,
+          userId,
+          jobId,
+          renderStart,
         });
-
-        if (!res.ok) {
-          throw new Error(`FFmpeg service: ${res.status}`);
-        }
-
-        const result = (await res.json()) as { paths: string[] };
-        await supabase
-          .from("criativos")
-          .update({
-            export_status: "pronto",
-            export_paths: result.paths,
-            storage_path: result.paths[0] ?? null,
-          })
-          .eq("id", data.criativoId);
-
-        trackApiUsage({
+      } catch (e) {
+        await failCriativoRenderJob({
+          supabase,
+          criativoId: criativo.id,
           userId,
           organizationId: criativo.organization_id,
-          eventType: "export",
-          success: true,
+          estilo,
+          error: e,
         });
-        return { status: "pronto", paths: result.paths, utm, devMode: false };
       }
+    });
 
-      const devPaths = await uploadDevPlaceholder(supabase, criativo.id);
-      const existingScore = (criativo.score_json as Record<string, unknown>) ?? {};
-
-      await supabase
-        .from("criativos")
-        .update({
-          export_status: "pronto",
-          export_paths: devPaths,
-          storage_path: devPaths[0],
-          score_json: {
-            ...existingScore,
-            exportDevMode: true,
-            exportDevMessage:
-              "FFMPEG_SERVICE_URL não configurado — arquivos MP4 são placeholders, não use no Meta.",
-          },
-        })
-        .eq("id", data.criativoId);
-
-      trackApiUsage({
-        userId,
-        organizationId: criativo.organization_id,
-        eventType: "export",
-        success: true,
-      });
-      return {
-        status: "pronto",
-        paths: devPaths,
-        utm,
-        devMode: true,
-        message: "FFMPEG_SERVICE_URL não configurado — placeholders enviados ao storage",
-      };
-    } catch (e) {
-      trackApiUsage({
-        userId,
-        organizationId: criativo.organization_id,
-        eventType: "export",
-        success: false,
-      });
-      await supabase
-        .from("criativos")
-        .update({ export_status: "erro" })
-        .eq("id", data.criativoId);
-      throw e;
-    }
+    return {
+      status: "renderizando" as const,
+      jobId,
+      utm: criativo.utm_content ?? criativo.id,
+    };
   });

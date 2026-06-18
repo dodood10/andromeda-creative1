@@ -6,7 +6,7 @@ import {
 } from "./schemas/angulos.schema";
 
 export type FormatoSaida = "criativo_curto" | "vsl_curta";
-export type EstiloProducao = "texto_animado" | "clipes_texto";
+export type EstiloProducao = "texto_animado" | "clipes_texto" | "ugc_avatar";
 
 export type FormatoOverride = {
   formatoSaida: FormatoSaida;
@@ -80,7 +80,15 @@ export function formatoSaidaLabel(v: FormatoSaida): string {
 }
 
 export function estiloProducaoLabel(v: EstiloProducao): string {
-  return v === "clipes_texto" ? "Clipes + texto" : "Texto animado + voz";
+  if (v === "clipes_texto") return "Clipes + texto";
+  if (v === "ugc_avatar") return "UGC depoimento (IA)";
+  return "Texto animado + voz";
+}
+
+export function estiloProducaoBadge(v: EstiloProducao): string {
+  if (v === "clipes_texto") return "Clipes IA";
+  if (v === "ugc_avatar") return "UGC recomendado";
+  return "Texto animado";
 }
 
 export function formatoBadgeLabel(override: FormatoOverride, duracao?: number): string {
@@ -136,12 +144,13 @@ export async function getProjectFormatContext(
     vsl_curta: criativos.filter((c) => c.formato_saida === "vsl_curta").length,
     texto_animado: criativos.filter((c) => c.estilo_producao === "texto_animado").length,
     clipes_texto: criativos.filter((c) => c.estilo_producao === "clipes_texto").length,
+    ugc_avatar: criativos.filter((c) => c.estilo_producao === "ugc_avatar").length,
   };
 
   const parts = [
     `${criativos.length} criativo(s) no projeto`,
     `${counts.criativo_curto}x criativo_curto, ${counts.vsl_curta}x vsl_curta`,
-    `${counts.texto_animado}x texto_animado, ${counts.clipes_texto}x clipes_texto`,
+    `${counts.texto_animado}x texto_animado, ${counts.clipes_texto}x clipes_texto, ${counts.ugc_avatar}x ugc_avatar`,
     `${performando} performando, ${rodando} rodando`,
   ];
 
@@ -154,6 +163,9 @@ export async function getProjectFormatContext(
   }
   if (!estilosSet.has("clipes_texto") && criativos.length >= 2) {
     diversidade.push("ainda não testou clipes_texto");
+  }
+  if (!estilosSet.has("ugc_avatar") && criativos.length >= 2) {
+    diversidade.push("ainda não testou ugc_avatar");
   }
 
   const summaryText = [
@@ -188,7 +200,7 @@ export function needsMediaUpload(
     const rec = normalizeAngulo(angulos[idx] ?? {}).recomendacao_formato;
     const applied = formatoPorAngulo[idx];
     const estilo = applied?.estiloProducao ?? rec.estilo_producao;
-    if (estilo === "clipes_texto" || rec.requer_midia_usuario) {
+    if (estilo === "clipes_texto" || estilo === "ugc_avatar" || rec.requer_midia_usuario) {
       needs.push(idx);
     }
   }

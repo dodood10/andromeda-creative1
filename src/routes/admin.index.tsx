@@ -77,8 +77,45 @@ function AdminOverview() {
                   {status}: {count}
                 </Badge>
               ))}
+              <Badge variant="outline" className="text-xs border-warning/40 text-warning">
+                Rascunhos sem export: {data.funnel.rascunhosSemExport}
+              </Badge>
             </div>
           </Card>
+
+          {data.funnel.geradorFunnel && (
+            <Card className="glass p-6 space-y-4">
+              <h2 className="font-semibold">Funil do gerador (eventos)</h2>
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 text-sm">
+                <FunnelStep label="Ângulos gerados" value={data.funnel.geradorFunnel.angulos_gerados} />
+                <FunnelStep label="Wizard" value={data.funnel.geradorFunnel.wizard_step} />
+                <FunnelStep label="Rascunhos" value={data.funnel.geradorFunnel.draft_created} />
+                <FunnelStep label="Editor aberto" value={data.funnel.geradorFunnel.editor_opened} />
+                <FunnelStep label="Render iniciado" value={data.funnel.geradorFunnel.render_started ?? 0} />
+                <FunnelStep label="Render ok" value={data.funnel.geradorFunnel.render_done ?? 0} />
+                <FunnelStep label="Render falhou" value={data.funnel.geradorFunnel.render_failed ?? 0} />
+                <FunnelStep label="Export pronto" value={data.funnel.geradorFunnel.export_pronto} />
+              </div>
+            </Card>
+          )}
+
+          {data.funnel.pipelineStats && Object.keys(data.funnel.pipelineStats).length > 0 && (
+            <Card className="glass p-6 space-y-4">
+              <h2 className="font-semibold">Exports por estilo de produção</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+                {Object.entries(data.funnel.pipelineStats).map(([estilo, stats]) => (
+                  <div key={estilo} className="rounded-lg border border-border/40 p-3 space-y-1">
+                    <p className="font-medium">{estilo}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {stats.pronto}/{stats.total} prontos
+                      {stats.erro > 0 ? ` · ${stats.erro} erro(s)` : ""}
+                      {stats.renderizando > 0 ? ` · ${stats.renderizando} em andamento` : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card className="glass p-6 space-y-3">

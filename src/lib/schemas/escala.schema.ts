@@ -58,7 +58,7 @@ export const EscalaVariacaoOutputSchema = z.object({
       hook_visual: z.string().optional(),
     }),
   ),
-  estilo_producao: z.enum(["texto_animado", "clipes_texto"]).optional(),
+  estilo_producao: z.enum(["texto_animado", "clipes_texto", "ugc_avatar"]).optional(),
   sinais_esperados: z
     .object({
       hook_rate_estimado: z.string().optional(),

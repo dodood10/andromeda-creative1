@@ -31,6 +31,7 @@ import {
   Settings,
   Pencil,
   BarChart3,
+  TrendingUp,
   Video,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
@@ -53,6 +54,7 @@ const productionItems: NavItem[] = [
   { title: "Gerar ângulos", url: "/app/gerador", icon: Wand2 },
   { title: "Editor", url: "/app/editor", icon: Pencil },
   { title: "Meus criativos", url: "/app/historico", icon: History },
+  { title: "Escala", url: "/app/escala", icon: TrendingUp },
   { title: "Inteligência", url: "/app/inteligencia", icon: BarChart3 },
   { title: "VSL curta", url: "/app/vsl", icon: Video },
 ];

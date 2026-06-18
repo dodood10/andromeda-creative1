@@ -1,4 +1,37 @@
 import type { ResultadoAngulos } from "./anthropic.functions";
+import {
+  buildFormatoPorAngulo,
+  type FormatoOverride,
+  type FormatoSaida,
+  type EstiloProducao,
+  type ProjectFormatContext,
+} from "./formato-recomendacao";
+
+/** Executa tarefas com concorrência limitada. */
+export async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let next = 0;
+
+  async function worker() {
+    while (next < tasks.length) {
+      const idx = next++;
+      try {
+        const value = await tasks[idx]();
+        results[idx] = { status: "fulfilled", value };
+      } catch (reason) {
+        results[idx] = { status: "rejected", reason };
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, tasks.length) }, () => worker()),
+  );
+  return results;
+}
 
 const CONFIANCA_RANK: Record<string, number> = { alta: 3, media: 2, baixa: 1 };
 
@@ -71,9 +104,46 @@ export function angleIntelBadge(
   topPerformers: Array<{ angulo: string }>,
 ): string | null {
   const match = topPerformers.find(
-    (p) => p.angulo === anguloNome || anguloNome.startsWith(p.angulo),
+    (p) => p.angulo === anguloNome || anguloNome.startsWith(p.angulo) || p.angulo.startsWith(anguloNome),
   );
-  if (match) return "Similar a campeão performando";
+  if (match) {
+    const nome = match.angulo.length > 36 ? `${match.angulo.slice(0, 33)}…` : match.angulo;
+    return `Similar ao campeão: ${nome}`;
+  }
   if (topPerformers.length > 0) return "Ângulo novo — diversifica leilão";
   return null;
+}
+
+/** Monta formatos diversificados para pacote A/B com base no histórico do projeto. */
+export function buildAbTestFormatoMap(
+  angulos: ResultadoAngulos["angulos"],
+  indices: number[],
+  ctx: ProjectFormatContext | null,
+): Record<number, FormatoOverride> {
+  const map = buildFormatoPorAngulo(angulos, indices);
+  if (!ctx || indices.length === 0) return map;
+
+  const formatoQueue: FormatoSaida[] = [];
+  if (!ctx.formatosTestados.includes("vsl_curta")) formatoQueue.push("vsl_curta");
+  if (!ctx.formatosTestados.includes("criativo_curto")) formatoQueue.push("criativo_curto");
+  formatoQueue.push("vsl_curta", "criativo_curto");
+
+  const estiloQueue: EstiloProducao[] = [];
+  if (!ctx.estilosTestados.includes("ugc_avatar")) estiloQueue.push("ugc_avatar");
+  if (!ctx.estilosTestados.includes("clipes_texto")) estiloQueue.push("clipes_texto");
+  if (!ctx.estilosTestados.includes("texto_animado")) estiloQueue.push("texto_animado");
+  estiloQueue.push("texto_animado", "clipes_texto", "ugc_avatar");
+
+  indices.forEach((idx, i) => {
+    const base = map[idx];
+    if (!base) return;
+    map[idx] = {
+      ...base,
+      formatoSaida: formatoQueue[i % formatoQueue.length],
+      estiloProducao: estiloQueue[i % estiloQueue.length],
+      source: "manual",
+    };
+  });
+
+  return map;
 }

@@ -15,20 +15,23 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   Wand2, Sparkles, ArrowRight, Brain, Loader2, Target, Gauge,
   HelpCircle, Clock, TrendingDown, TrendingUp, Minus, EyeOff, Upload, AlertTriangle,
-  Film, LayoutTemplate, RefreshCw, Layers,
+  Film, LayoutTemplate, RefreshCw, Layers, ChevronDown,
 } from "lucide-react";
 import {
   gerarAngulos,
   gerarPerguntaCirurgica,
   type ResultadoAngulos,
 } from "@/lib/anthropic.functions";
-import { saveGeracao, createCriativoDraft, getGeracaoResultado, getInteligenciaNicho } from "@/lib/criativos.functions";
+import { saveGeracao, createCriativoDraft, getGeracaoResultado, getInteligenciaNicho, fetchProjectFormatContext, getGeradorEtaEstimates } from "@/lib/criativos.functions";
 import {
   pickRecommendedAngulos,
   pickAbTestPackage,
   formatAnthropicError,
   angleIntelBadge,
+  buildAbTestFormatoMap,
+  runWithConcurrency,
 } from "@/lib/gerador-helpers";
+import { searchPexelsMedia, downloadPexelsToStorage } from "@/lib/stock-media.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "@/contexts/workspace-context";
@@ -39,6 +42,7 @@ import { uploadCriativoMedia } from "@/lib/storage";
 import { toast } from "sonner";
 import {
   buildFormatoPorAngulo,
+  estiloProducaoBadge,
   estiloProducaoLabel,
   formatoBadgeLabel,
   formatoSaidaLabel,
@@ -46,6 +50,7 @@ import {
   overrideFromRecomendacao,
   type FormatoOverride,
 } from "@/lib/formato-recomendacao";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 const wizardSearchSchema = z.object({
   step: z.enum(["wizard"]).optional(),
@@ -147,15 +152,36 @@ function Gerador() {
   const [draftProgress, setDraftProgress] = useState<{ done: number; total: number } | null>(null);
   const [pendingFormato, setPendingFormato] = useState<"criativo_curto" | "vsl_curta" | null>(null);
   const [partialDrafts, setPartialDrafts] = useState<Array<{ id: string; nome: string }> | null>(null);
-  const [checklistDraft, setChecklistDraft] = useState<{ id: string; nome: string; needsMedia: boolean } | null>(null);
-  const [createdDrafts, setCreatedDrafts] = useState<Array<{ id: string; nome: string }> | null>(null);
+  const [batchChecklist, setBatchChecklist] = useState<Array<{ id: string; nome: string; needsMedia: boolean }> | null>(null);
   const [backgroundMediaPath, setBackgroundMediaPath] = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [pexelsQuery, setPexelsQuery] = useState("");
+  const [pexelsLoading, setPexelsLoading] = useState(false);
+  const [pexelsResults, setPexelsResults] = useState<Array<{
+    id: string; type: "image" | "video"; previewUrl: string; downloadUrl: string; attribution: string;
+  }>>([]);
   const mediaRef = useRef<HTMLInputElement>(null);
   const prevProjectRef = useRef<string | null>(null);
   const { user } = useAuth();
 
   const fetchIntel = useServerFn(getInteligenciaNicho);
+  const fetchFormatCtx = useServerFn(fetchProjectFormatContext);
+  const fetchEta = useServerFn(getGeradorEtaEstimates);
+  const runPexelsSearch = useServerFn(searchPexelsMedia);
+  const runPexelsDownload = useServerFn(downloadPexelsToStorage);
+
+  const { data: eta } = useQuery({
+    queryKey: ["gerador-eta"],
+    queryFn: () => fetchEta(),
+    staleTime: 300_000,
+  });
+
+  const { data: formatCtx } = useQuery({
+    queryKey: ["project-format-ctx", projectId],
+    queryFn: () => fetchFormatCtx({ data: { projectId: projectId! } }),
+    enabled: !!projectId && !!resultado,
+    staleTime: 120_000,
+  });
 
   const { data: intelNicho } = useQuery({
     queryKey: ["inteligencia-nicho", projectId],
@@ -199,7 +225,11 @@ function Gerador() {
       setPendingFormato(urlFormato);
       setEtapa("input");
       navigate({ to: "/app/gerador", search: {}, replace: true });
-      toast.info("Gere seus ângulos primeiro — o formato VSL será aplicado na produção.");
+      toast.info(
+        urlFormato === "vsl_curta"
+          ? "Briefing pronto para VSL curta — gere seus ângulos e o formato será aplicado na produção."
+          : "Gere seus ângulos primeiro — o formato será aplicado na produção.",
+      );
     }
   }, [urlFormato, urlStep, geracaoId, resultado, loadingGeracao, navigate]);
 
@@ -325,7 +355,7 @@ function Gerador() {
     }
   }
 
-  async function runGerarAngulos(skipPergunta = false) {
+  async function runGerarAngulos(skipPergunta = false, updateGeracaoId?: string | null) {
     if (!url.trim()) {
       toast.error("Informe a URL do site");
       return;
@@ -338,9 +368,11 @@ function Gerador() {
       toast.error("Selecione um projeto no header");
       return;
     }
+    const etaSec = eta?.angulosSec ?? 60;
     setLoadingAngulos(true);
-    setLoadingStep("Consultando IA (pode levar 30–90s)...");
+    setLoadingStep(`Consultando IA (estimativa ~${etaSec}s)…`);
     const start = Date.now();
+    const existingId = updateGeracaoId ?? geracaoId;
     try {
       const data = await run({
         data: {
@@ -361,13 +393,14 @@ function Gerador() {
             criarCriativos: false,
             projectId,
             organizationId,
+            geracaoId: existingId ?? undefined,
           },
         });
       } catch (persistErr) {
         setUnsavedResultado(data);
         const msg = persistErr instanceof Error ? persistErr.message : "Erro ao salvar geração";
         toast.error(formatAnthropicError(msg), {
-          action: { label: "Tentar salvar", onClick: () => void retrySaveGeracao(data) },
+          action: { label: "Tentar salvar", onClick: () => void retrySaveGeracao(data, existingId) },
         });
         return;
       }
@@ -379,12 +412,12 @@ function Gerador() {
       persistWizard({ geracaoId: saved.geracaoId, selectedAngulos: [...selectedAngulos] });
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-      trackFunnelEvent({ userId: user?.id, organizationId, event: "angulos_gerados", success: true });
-      trackFunnelEvent({ userId: user?.id, organizationId, event: "wizard_step", success: true });
+      const durationMs = Date.now() - start;
+      trackFunnelEvent({ userId: user?.id, organizationId, event: "angulos_gerados", success: true, durationMs });
+      trackFunnelEvent({ userId: user?.id, organizationId, event: "wizard_step", success: true, durationMs });
 
-      const elapsed = Date.now() - start;
-      if (elapsed > 60000) toast.warning("Geração levou mais de 60 segundos");
-      toast.success("Ângulos salvos");
+      if (durationMs > 90000) toast.warning("Geração levou mais de 90 segundos");
+      toast.success(existingId ? "Ângulos atualizados" : "Ângulos salvos");
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error ? e.message : "Erro ao gerar ângulos";
@@ -399,7 +432,7 @@ function Gerador() {
     }
   }
 
-  async function retrySaveGeracao(data: ResultadoAngulos) {
+  async function retrySaveGeracao(data: ResultadoAngulos, existingId?: string | null) {
     if (!organizationId || !projectId) {
       toast.error("Selecione um projeto no header");
       return;
@@ -412,6 +445,7 @@ function Gerador() {
           criarCriativos: false,
           projectId,
           organizationId,
+          geracaoId: existingId ?? geracaoId ?? undefined,
         },
       });
       setUnsavedResultado(null);
@@ -442,7 +476,23 @@ function Gerador() {
       return;
     }
     setSelectedAngulos(new Set());
-    await runGerarAngulos(!!context.trim());
+    await runGerarAngulos(!!context.trim(), geracaoId);
+  }
+
+  async function applyMediaFallback(mediaIndices: number[]): Promise<Record<number, FormatoOverride> | null> {
+    const useFallback = window.confirm(
+      "Sem mídia de fundo, clipes+texto tende a performar mal no Meta.\n\nUsar texto animado como fallback para esses ângulos?",
+    );
+    if (!useFallback) return null;
+    const next = { ...formatoPorAngulo };
+    for (const idx of mediaIndices) {
+      if (next[idx]) {
+        next[idx] = { ...next[idx], estiloProducao: "texto_animado", source: "manual" };
+      }
+    }
+    setFormatoPorAngulo(next);
+    toast.warning("Formato alterado para texto animado nos ângulos sem mídia.");
+    return next;
   }
 
   async function handleCreateDrafts() {
@@ -451,49 +501,58 @@ function Gerador() {
       return;
     }
 
+    let fmtMap = formatoPorAngulo;
     const mediaIndices = resultado
-      ? needsMediaUpload(resultado.angulos, selectedAngulos, formatoPorAngulo)
+      ? needsMediaUpload(resultado.angulos, selectedAngulos, fmtMap)
       : [];
     if (mediaIndices.length > 0 && !backgroundMediaPath) {
-      toast.error("Envie mídia de fundo — obrigatório para criativos em formato clipes+texto");
-      setWizardStep("midia");
-      return;
+      const fallback = await applyMediaFallback(mediaIndices);
+      if (!fallback) {
+        toast.error("Envie mídia de fundo ou aceite o fallback para texto animado");
+        setWizardStep("midia");
+        return;
+      }
+      fmtMap = fallback;
     }
 
     setCreatingDrafts(true);
     const indices = [...selectedAngulos].sort((a, b) => a - b);
-    const hasVsl = indices.some((idx) => formatoPorAngulo[idx]?.formatoSaida === "vsl_curta");
+    const vslTotal = indices.filter((idx) => fmtMap[idx]?.formatoSaida === "vsl_curta").length;
+    const hasVsl = vslTotal > 0;
     if (hasVsl) setCreatingVsl(true);
     setDraftProgress({ done: 0, total: indices.length });
+    const draftStart = Date.now();
 
     const created: Array<{ id: string; idx: number }> = [];
     const failed: number[] = [];
+    let vslDone = 0;
 
     try {
-      const results = await Promise.allSettled(
-        indices.map(async (idx) => {
-          const fmt = formatoPorAngulo[idx];
-          if (!fmt) throw new Error(`Configure o formato do ângulo ${idx + 1}`);
-          const { criativoId, vslDevMode } = await createDraft({
-            data: {
-              geracaoId,
-              anguloIndex: idx,
-              formatoSaida: fmt.formatoSaida,
-              estiloProducao: fmt.estiloProducao,
-              formatoSource: fmt.source,
-              aspectRatioPrioritario: fmt.aspectRatioPrioritario,
-              projectId,
-              organizationId,
-              backgroundMediaPath: backgroundMediaPath ?? undefined,
-            },
-          });
-          if (fmt.formatoSaida === "vsl_curta" && vslDevMode) {
-            toast.info(`Ângulo ${idx + 1}: roteiro VSL em modo offline (sem API key)`);
-          }
-          setDraftProgress((p) => (p ? { ...p, done: p.done + 1 } : null));
-          return { id: criativoId, idx };
-        }),
-      );
+      const tasks = indices.map((idx) => async () => {
+        const fmt = fmtMap[idx];
+        if (!fmt) throw new Error(`Configure o formato do ângulo ${idx + 1}`);
+        const { criativoId, vslDevMode } = await createDraft({
+          data: {
+            geracaoId,
+            anguloIndex: idx,
+            formatoSaida: fmt.formatoSaida,
+            estiloProducao: fmt.estiloProducao,
+            formatoSource: fmt.source,
+            aspectRatioPrioritario: fmt.aspectRatioPrioritario,
+            projectId,
+            organizationId,
+            backgroundMediaPath: backgroundMediaPath ?? undefined,
+          },
+        });
+        if (fmt.formatoSaida === "vsl_curta") {
+          vslDone += 1;
+          if (vslDevMode) toast.info(`Ângulo ${idx + 1}: roteiro VSL em modo offline (sem API key)`);
+        }
+        setDraftProgress((p) => (p ? { ...p, done: p.done + 1 } : null));
+        return { id: criativoId, idx };
+      });
+
+      const results = await runWithConcurrency(tasks, 2);
 
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
@@ -508,29 +567,30 @@ function Gerador() {
 
       localStorage.removeItem(WIZARD_STORAGE_KEY);
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
-      trackFunnelEvent({ userId: user?.id, organizationId, event: "draft_created", success: true });
+      trackFunnelEvent({
+        userId: user?.id,
+        organizationId,
+        event: "draft_created",
+        success: true,
+        durationMs: Date.now() - draftStart,
+        metadata: { count: created.length, vslCount: vslDone },
+      });
 
       const draftList = created.map((c) => ({
         id: c.id,
         nome: resultado?.angulos[c.idx]?.nome ?? `Ângulo ${c.idx + 1}`,
+        needsMedia:
+          fmtMap[c.idx]?.estiloProducao === "clipes_texto" ||
+          fmtMap[c.idx]?.estiloProducao === "ugc_avatar",
       }));
 
       if (failed.length > 0) {
-        setPartialDrafts(draftList);
+        setPartialDrafts(draftList.map(({ id, nome }) => ({ id, nome })));
         toast.warning(`${created.length} criado(s), ${failed.length} falhou(aram)`);
         return;
       }
 
-      if (created.length === 1) {
-        const needsMedia = mediaIndices.length > 0;
-        setChecklistDraft({
-          id: created[0].id,
-          nome: draftList[0].nome,
-          needsMedia,
-        });
-      } else {
-        setCreatedDrafts(draftList);
-      }
+      setBatchChecklist(draftList);
     } catch (e) {
       if (created.length > 0) {
         setPartialDrafts(
@@ -555,7 +615,28 @@ function Gerador() {
           <Card className="glass p-8 max-w-md text-center space-y-4">
             <Loader2 className="size-10 animate-spin text-primary-glow mx-auto" />
             <p className="font-medium">{loadingStep}</p>
-            <p className="text-sm text-muted-foreground">Isso pode levar 30–90 segundos. Não feche a página.</p>
+            <p className="text-sm text-muted-foreground">
+              Estimativa baseada no histórico: ~{eta?.angulosSec ?? 60}s. Não feche a página.
+            </p>
+          </Card>
+        </div>
+      )}
+
+      {creatingDrafts && (
+        <div className="fixed inset-0 z-50 bg-background/85 backdrop-blur flex items-center justify-center">
+          <Card className="glass p-8 max-w-md text-center space-y-4">
+            <Loader2 className="size-10 animate-spin text-primary-glow mx-auto" />
+            <p className="font-medium">
+              {draftProgress
+                ? `${draftProgress.done}/${draftProgress.total} rascunho(s) criado(s)`
+                : "Criando rascunhos…"}
+            </p>
+            {creatingVsl && draftProgress && (
+              <p className="text-sm text-primary-glow">
+                VSL em andamento — ~{eta?.vslSec ?? 45}s cada (máx. 2 em paralelo)
+              </p>
+            )}
+            <p className="text-sm text-muted-foreground">Aguarde — não navegue até concluir.</p>
           </Card>
         </div>
       )}
@@ -776,7 +857,15 @@ function Gerador() {
                   onClick={() => {
                     const picks = pickAbTestPackage(resultado);
                     setSelectedAngulos(new Set(picks));
-                    toast.success("Pacote A/B: 3 ângulos selecionados");
+                    const map = buildAbTestFormatoMap(resultado.angulos, picks, formatCtx ?? null);
+                    const globalFmt = pendingFormato ?? urlFormato;
+                    if (globalFmt) {
+                      for (const idx of picks) {
+                        if (map[idx]) map[idx] = { ...map[idx], formatoSaida: globalFmt, source: "manual" };
+                      }
+                    }
+                    setFormatoPorAngulo(map);
+                    toast.success("Pacote A/B: 3 ângulos com formatos diversificados");
                   }}
                 >
                   <Layers className="size-3.5 mr-1" /> Pacote A/B (3)
@@ -906,6 +995,11 @@ function Gerador() {
                           {fmtBadge && (
                             <Badge variant="outline" className="text-[10px] bg-accent/10 border-accent/30">
                               <Film className="size-3 mr-1" /> {fmtBadge}
+                            </Badge>
+                          )}
+                          {rec && (
+                            <Badge variant="secondary" className="text-[10px]">
+                              {estiloProducaoBadge(rec.estilo_producao)}
                             </Badge>
                           )}
                           <Badge variant="outline" className={tipoColor[a.tipo] ?? ""}>{a.tipo}</Badge>
@@ -1089,7 +1183,7 @@ function Gerador() {
           {wizardStep === "producao" && resultado && (
             <div className="space-y-4">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <Label>Formato por ângulo (recomendação da IA)</Label>
+                <Label>Formato definido pela IA por ângulo</Label>
                 <div className="flex gap-2 flex-wrap">
                   <Button
                     variant="outline"
@@ -1132,16 +1226,40 @@ function Gerador() {
                   return (
                     <div key={idx} className="p-4 rounded-lg border border-border/50 bg-background/30 space-y-3">
                       <div className="flex items-start justify-between gap-2 flex-wrap">
-                        <div>
+                        <div className="space-y-2 flex-1">
                           <p className="font-medium text-sm">{angulo.nome}</p>
+                          {rec && (
+                            <div className="flex flex-wrap gap-1.5">
+                              <Badge variant="outline" className="text-[10px]">
+                                {formatoSaidaLabel(fmt.formatoSaida)}
+                              </Badge>
+                              <Badge variant="secondary" className="text-[10px]">
+                                {estiloProducaoBadge(rec.estilo_producao)}
+                              </Badge>
+                              <Badge variant="outline" className="text-[10px]">
+                                {fmt.aspectRatioPrioritario}
+                              </Badge>
+                              {rec.confianca && (
+                                <Badge variant="outline" className="text-[10px] capitalize">
+                                  confiança {rec.confianca}
+                                </Badge>
+                              )}
+                            </div>
+                          )}
                           {rec && fmt.source === "ia" && (
-                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{rec.justificativa}</p>
+                            <p className="text-xs text-muted-foreground line-clamp-3">{rec.justificativa}</p>
                           )}
                           {fmt.source === "manual" && (
-                            <Badge variant="outline" className="mt-1 text-[10px]">Alterado manualmente</Badge>
+                            <Badge variant="outline" className="text-[10px]">Alterado manualmente</Badge>
                           )}
                         </div>
                       </div>
+                      <Collapsible>
+                        <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                          <ChevronDown className="size-3.5" />
+                          Avançado — sobrescrever IA
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="pt-3">
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div className="space-y-1.5">
                           <Label className="text-xs">Formato</Label>
@@ -1186,6 +1304,7 @@ function Gerador() {
                             <SelectContent>
                               <SelectItem value="texto_animado">{estiloProducaoLabel("texto_animado")}</SelectItem>
                               <SelectItem value="clipes_texto">{estiloProducaoLabel("clipes_texto")}</SelectItem>
+                              <SelectItem value="ugc_avatar">{estiloProducaoLabel("ugc_avatar")}</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -1213,6 +1332,8 @@ function Gerador() {
                           </Select>
                         </div>
                       </div>
+                        </CollapsibleContent>
+                      </Collapsible>
                       {fmt.formatoSaida === "vsl_curta" && (
                         <p className="text-xs text-muted-foreground">
                           VSL curta: 6 blocos (hook, problema, mecanismo, prova, oferta, CTA) — até ~2 min.
@@ -1286,8 +1407,75 @@ function Gerador() {
                 <p className="text-xs text-muted-foreground truncate">{backgroundMediaPath}</p>
               )}
               <p className="text-sm text-muted-foreground">
-                Banco de mídia da plataforma (Pexels/Unsplash): em breve. Você também pode enviar no editor.
+                Ou busque mídia gratuita no Pexels (retrato 9:16):
               </p>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Ex: fitness, escritório, natureza"
+                  value={pexelsQuery}
+                  onChange={(e) => setPexelsQuery(e.target.value)}
+                />
+                <Button
+                  variant="outline"
+                  disabled={pexelsLoading || pexelsQuery.trim().length < 2}
+                  onClick={async () => {
+                    setPexelsLoading(true);
+                    try {
+                      const res = await runPexelsSearch({
+                        data: { query: pexelsQuery.trim(), orientation: "portrait", perPage: 6 },
+                      });
+                      if (!res.configured) {
+                        toast.info("Configure PEXELS_API_KEY no servidor para buscar mídia");
+                        return;
+                      }
+                      setPexelsResults([...res.photos, ...res.videos].filter((x) => x.downloadUrl));
+                      if (res.photos.length === 0 && res.videos.length === 0) {
+                        toast.info("Nenhum resultado — tente outro termo");
+                      }
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Erro na busca Pexels");
+                    } finally {
+                      setPexelsLoading(false);
+                    }
+                  }}
+                >
+                  {pexelsLoading ? <Loader2 className="size-4 animate-spin" /> : "Buscar"}
+                </Button>
+              </div>
+              {pexelsResults.length > 0 && (
+                <div className="grid grid-cols-3 gap-2 max-h-48 overflow-auto">
+                  {pexelsResults.map((item) => (
+                    <button
+                      key={`${item.type}-${item.id}`}
+                      type="button"
+                      className="relative rounded-lg overflow-hidden border border-border/50 hover:border-primary/50 aspect-[9/16]"
+                      onClick={async () => {
+                        if (!projectId) return;
+                        setUploadingMedia(true);
+                        try {
+                          const ext = item.type === "video" ? "mp4" : "jpg";
+                          const { path } = await runPexelsDownload({
+                            data: {
+                              downloadUrl: item.downloadUrl,
+                              projectId,
+                              filename: `pexels-${item.id}.${ext}`,
+                            },
+                          });
+                          setBackgroundMediaPath(path);
+                          persistWizard({ backgroundMediaPath: path });
+                          toast.success(`Mídia Pexels (${item.attribution}) aplicada`);
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Erro ao importar Pexels");
+                        } finally {
+                          setUploadingMedia(false);
+                        }
+                      }}
+                    >
+                      <img src={item.previewUrl} alt={item.attribution} className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setWizardStep("producao")}>Voltar</Button>
                 <Button
@@ -1316,54 +1504,48 @@ function Gerador() {
         </Card>
       )}
 
-      <Dialog open={!!checklistDraft} onOpenChange={(open) => !open && setChecklistDraft(null)}>
-        <DialogContent className="max-w-md">
+      <Dialog open={!!batchChecklist} onOpenChange={(open) => !open && setBatchChecklist(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-auto">
           <DialogHeader>
-            <DialogTitle>Rascunho criado — próximos passos</DialogTitle>
+            <DialogTitle>{batchChecklist?.length ?? 0} rascunho(s) — próximos passos</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Antes de subir no Meta, complete no editor:
+            Antes de subir no Meta, complete cada criativo no editor:
           </p>
-          <ul className="text-sm space-y-2">
-            <li className="flex items-center justify-between gap-2">
-              <span>Gerar narração do roteiro completo</span>
-              <Link
-                to="/app/editor"
-                search={{ criativoId: checklistDraft?.id ?? "", focus: "audio" }}
-                onClick={() => setChecklistDraft(null)}
-              >
-                <Button size="sm" variant="link" className="h-auto p-0">Ir →</Button>
-              </Link>
-            </li>
-            {checklistDraft?.needsMedia && (
-              <li className="flex items-center justify-between gap-2">
-                <span>Confirmar mídia de fundo (clipes+texto)</span>
-                <Link
-                  to="/app/editor"
-                  search={{ criativoId: checklistDraft.id, focus: "media" }}
-                  onClick={() => setChecklistDraft(null)}
-                >
-                  <Button size="sm" variant="link" className="h-auto p-0">Ir →</Button>
+          <div className="space-y-4 py-2">
+            {batchChecklist?.map((d, i) => (
+              <div key={d.id} className="rounded-lg border border-border/50 p-3 space-y-2">
+                <p className="font-medium text-sm">{i + 1}. {d.nome}</p>
+                <ul className="text-xs space-y-1.5 text-muted-foreground">
+                  <li className="flex justify-between gap-2">
+                    <span>Narração completa</span>
+                    <Link to="/app/editor" search={{ criativoId: d.id, focus: "audio" }} onClick={() => setBatchChecklist(null)}>
+                      <Button size="sm" variant="link" className="h-auto p-0 text-xs">Ir →</Button>
+                    </Link>
+                  </li>
+                  {d.needsMedia && (
+                    <li className="flex justify-between gap-2">
+                      <span>Mídia de fundo</span>
+                      <Link to="/app/editor" search={{ criativoId: d.id, focus: "media" }} onClick={() => setBatchChecklist(null)}>
+                        <Button size="sm" variant="link" className="h-auto p-0 text-xs">Ir →</Button>
+                      </Link>
+                    </li>
+                  )}
+                  <li className="flex justify-between gap-2">
+                    <span>Score e export MP4</span>
+                    <Link to="/app/editor" search={{ criativoId: d.id, focus: "score" }} onClick={() => setBatchChecklist(null)}>
+                      <Button size="sm" variant="link" className="h-auto p-0 text-xs">Avaliar →</Button>
+                    </Link>
+                  </li>
+                </ul>
+                <Link to="/app/editor" search={{ criativoId: d.id }} onClick={() => setBatchChecklist(null)}>
+                  <Button size="sm" variant="outline" className="w-full">Abrir no editor</Button>
                 </Link>
-              </li>
-            )}
-            <li className="flex items-center justify-between gap-2">
-              <span>Rodar score e exportar MP4</span>
-              <Link
-                to="/app/editor"
-                search={{ criativoId: checklistDraft?.id ?? "", focus: "score" }}
-                onClick={() => setChecklistDraft(null)}
-              >
-                <Button size="sm" variant="link" className="h-auto p-0">Avaliar →</Button>
-              </Link>
-            </li>
-          </ul>
-          <Link
-            to="/app/editor"
-            search={{ criativoId: checklistDraft?.id ?? "" }}
-            onClick={() => setChecklistDraft(null)}
-          >
-            <Button className="w-full bg-gradient-primary border-0">Ir ao editor</Button>
+              </div>
+            ))}
+          </div>
+          <Link to="/app/historico" onClick={() => setBatchChecklist(null)}>
+            <Button variant="ghost" className="w-full">Ver todos no histórico</Button>
           </Link>
         </DialogContent>
       </Dialog>
@@ -1386,35 +1568,6 @@ function Gerador() {
               </Link>
             ))}
           </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!createdDrafts} onOpenChange={(open) => !open && setCreatedDrafts(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{createdDrafts?.length ?? 0} rascunhos criados</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Cada ângulo virou um criativo no histórico. Abra o editor de cada um para finalizar.
-          </p>
-          <div className="space-y-2 max-h-60 overflow-auto py-2">
-            {createdDrafts?.map((d, i) => (
-              <Link
-                key={d.id}
-                to="/app/editor"
-                search={{ criativoId: d.id }}
-                onClick={() => setCreatedDrafts(null)}
-              >
-                <Button variant="outline" className="w-full justify-between">
-                  <span className="truncate">{i + 1}. {d.nome}</span>
-                  <ArrowRight className="size-4 shrink-0" />
-                </Button>
-              </Link>
-            ))}
-          </div>
-          <Link to="/app/historico" onClick={() => setCreatedDrafts(null)}>
-            <Button variant="ghost" className="w-full">Ver todos no histórico</Button>
-          </Link>
         </DialogContent>
       </Dialog>
     </div>

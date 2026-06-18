@@ -629,6 +629,13 @@ function CriativoRowItem({
         <Link to="/app/editor" search={{ criativoId: row.id }}>
           <Button size="sm" variant="ghost">Editor</Button>
         </Link>
+        {row.export_status !== "pronto" && row.status !== "Pausado" && (
+          <Link to="/app/editor" search={{ criativoId: row.id, focus: "score" }}>
+            <Button size="sm" variant="outline" className="border-warning/40 text-warning">
+              Exportar
+            </Button>
+          </Link>
+        )}
         {row.status === "Performando" && (
           <Link to="/app/escala" search={{ criativoId: row.id }}>
             <Button size="sm" className="bg-gradient-primary border-0">
