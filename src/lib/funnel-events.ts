@@ -7,6 +7,7 @@ export type FunnelEventType =
   | "draft_created"
   | "editor_opened"
   | "export_pronto"
+  | "marcou_subiu"
   | "render_started"
   | "render_done"
   | "render_failed"
@@ -18,6 +19,7 @@ const FUNNEL_AS_API: Record<FunnelEventType, ApiUsageEventType> = {
   draft_created: "gerar_angulos",
   editor_opened: "export",
   export_pronto: "export",
+  marcou_subiu: "export",
   render_started: "export",
   render_done: "export",
   render_failed: "export",

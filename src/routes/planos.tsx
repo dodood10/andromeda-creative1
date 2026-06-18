@@ -1,5 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -71,16 +70,7 @@ const TIERS = [
 ];
 
 function PlanosPage() {
-  const navigate = useNavigate();
   const { session, loading } = useAuth();
-
-  useEffect(() => {
-    if (!loading && session) {
-      navigate({ to: "/app/plano", replace: true });
-    }
-  }, [loading, session, navigate]);
-
-  if (!loading && session) return null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -90,13 +80,29 @@ function PlanosPage() {
             <div className="size-7 rounded-md bg-gradient-primary shadow-glow" />
             <span className="font-display font-semibold">Andromeda</span>
           </Link>
-          <Link to="/login" search={{ redirect: "/app" }}>
-            <Button variant="outline" size="sm">Entrar</Button>
-          </Link>
+          {session ? (
+            <Link to="/app/plano">
+              <Button variant="outline" size="sm">Meu plano e uso</Button>
+            </Link>
+          ) : (
+            <Link to="/login" search={{ redirect: "/app" }}>
+              <Button variant="outline" size="sm">Entrar</Button>
+            </Link>
+          )}
         </div>
       </header>
 
       <div className="container mx-auto px-6 py-16 max-w-5xl space-y-12">
+        {!loading && session && (
+          <Card className="glass p-4 border border-primary/30 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Você está logado. Compare os planos abaixo ou veja seu uso mensal.
+            </p>
+            <Link to="/app/plano">
+              <Button size="sm" variant="outline">Ver uso do workspace</Button>
+            </Link>
+          </Card>
+        )}
         <div className="text-center max-w-2xl mx-auto">
           <Badge variant="outline" className="mb-4 border-primary/40 text-primary-glow">
             <Sparkles className="size-3 mr-1" /> Monetização em rollout

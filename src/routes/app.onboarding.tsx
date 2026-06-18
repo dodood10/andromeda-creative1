@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Card } from "@/components/ui/card";
@@ -14,6 +14,16 @@ import { useWorkspace } from "@/contexts/workspace-context";
 import { useAuth } from "@/hooks/use-auth";
 import { trackMetaLead, trackMetaOnboardingStep } from "@/lib/meta-pixel";
 import { validateHttpUrl } from "@/lib/security-url";
+import { ColarTranscricaoButton } from "@/components/colar-transcricao-dialog";
+import { ImportBibliotecaButton } from "@/components/import-biblioteca-dialog";
+
+const ACTIVATION_STEPS = [
+  "Perfil do projeto",
+  "Gerar 5 ângulos",
+  "Criar rascunho no editor",
+  "Exportar MP4",
+  "Marcar Subiu no pipeline",
+] as const;
 
 export const Route = createFileRoute("/app/onboarding")({
   head: () => ({
@@ -33,21 +43,24 @@ function Onboarding() {
     (user?.user_metadata?.display_name as string | undefined) ??
     "";
 
+  const [step, setStep] = useState<"profile" | "references">("profile");
   const [displayName, setDisplayName] = useState(metaName);
   const [nicho, setNicho] = useState("");
   const [urlDefault, setUrlDefault] = useState("");
   const [tipoUso, setTipoUso] = useState<"solo" | "agencia">("solo");
   const [loading, setLoading] = useState(false);
+  const [savedUrl, setSavedUrl] = useState<string | undefined>();
 
   useEffect(() => {
     if (metaName && !displayName) setDisplayName(metaName);
   }, [metaName, displayName]);
 
   const needsName = !metaName.trim();
-  const stepProgress = needsName ? 33 : 66;
   const submitDisabled = loading || wsLoading || !projectId;
+  const stepIndex = step === "profile" ? 1 : 2;
+  const progressValue = step === "profile" ? 20 : 40;
 
-  async function handleSubmit() {
+  async function handleSubmitProfile() {
     const name = (needsName ? displayName : metaName).trim();
     if (!name || !nicho.trim()) {
       toast.error("Preencha nicho" + (needsName ? " e nome" : ""));
@@ -89,13 +102,9 @@ function Onboarding() {
         return;
       }
 
-      trackMetaLead("onboarding_complete");
       trackMetaOnboardingStep("profile_saved");
-      toast.success("Perfil configurado! Próximo passo: gerar seus ângulos.");
-
-      const search: Record<string, string> = { ttfe: "1" };
-      if (normalizedUrl) search.url = normalizedUrl;
-      navigate({ to: "/app/gerador", search });
+      setSavedUrl(normalizedUrl);
+      setStep("references");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao salvar");
     } finally {
@@ -103,84 +112,119 @@ function Onboarding() {
     }
   }
 
+  function goToGerador() {
+    trackMetaLead("onboarding_complete");
+    trackMetaOnboardingStep("references_done");
+    toast.success("Perfil configurado! Próximo passo: gerar seus ângulos.");
+
+    const search: Record<string, string> = { ttfe: "1" };
+    if (savedUrl) search.url = savedUrl;
+    navigate({ to: "/app/gerador", search });
+  }
+
   return (
     <div className="container max-w-lg mx-auto py-12 px-6">
       <div className="mb-6 space-y-2">
-        <p className="text-xs text-muted-foreground uppercase tracking-wide">Primeiros passos · 1 de 4</p>
-        <Progress value={stepProgress} className="h-1.5" />
+        <p className="text-xs text-muted-foreground uppercase tracking-wide">
+          Passo {stepIndex} de 5 · {step === "profile" ? "Perfil" : "Referências (opcional)"}
+        </p>
+        <Progress value={progressValue} className="h-1.5" />
+        <p className="text-xs text-muted-foreground">
+          Jornada: {ACTIVATION_STEPS.join(" → ")}
+        </p>
       </div>
-      <Card className="glass bg-gradient-card p-8 space-y-6">
-        <div>
-          <h1 className="text-2xl font-display font-bold">Bem-vindo ao Andromeda</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Em menos de 10 minutos você terá ângulos, rascunho e caminho até o primeiro MP4.
-          </p>
-        </div>
 
-        <div className="space-y-4">
-          {needsName && (
+      {step === "profile" ? (
+        <Card className="glass bg-gradient-card p-8 space-y-6">
+          <div>
+            <h1 className="text-2xl font-display font-bold">Bem-vindo ao Andromeda</h1>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Em menos de 10 minutos: ângulos, rascunho no editor e caminho até o primeiro MP4.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {needsName && (
+              <div className="space-y-1.5">
+                <Label>Seu nome</Label>
+                <Input
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="Como quer ser chamado"
+                />
+              </div>
+            )}
             <div className="space-y-1.5">
-              <Label>Seu nome</Label>
+              <Label>Nicho principal</Label>
               <Input
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Como quer ser chamado"
+                value={nicho}
+                onChange={(e) => setNicho(e.target.value)}
+                placeholder="Ex: emagrecimento, SaaS B2B, e-commerce moda"
               />
             </div>
-          )}
-          <div className="space-y-1.5">
-            <Label>Nicho principal</Label>
-            <Input
-              value={nicho}
-              onChange={(e) => setNicho(e.target.value)}
-              placeholder="Ex: emagrecimento, SaaS B2B, e-commerce moda"
-            />
+            <div className="space-y-1.5">
+              <Label>URL do produto (opcional)</Label>
+              <Input
+                value={urlDefault}
+                onChange={(e) => setUrlDefault(e.target.value)}
+                placeholder="https://seuproduto.com"
+              />
+              <p className="text-xs text-muted-foreground">Será pré-preenchida no gerador de ângulos.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Tipo de uso</Label>
+              <Select value={tipoUso} onValueChange={(v) => setTipoUso(v as typeof tipoUso)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="solo">Solo / infoprodutor</SelectItem>
+                  <SelectItem value="agencia">Agência / gestor</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label>URL do produto (opcional)</Label>
-            <Input
-              value={urlDefault}
-              onChange={(e) => setUrlDefault(e.target.value)}
-              placeholder="https://seuproduto.com"
-            />
-            <p className="text-xs text-muted-foreground">Será pré-preenchida no gerador de ângulos.</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Tipo de uso</Label>
-            <Select value={tipoUso} onValueChange={(v) => setTipoUso(v as typeof tipoUso)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="solo">Solo / infoprodutor</SelectItem>
-                <SelectItem value="agencia">Agência / gestor</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
 
-        <Button
-          className="w-full bg-gradient-primary border-0"
-          onClick={handleSubmit}
-          disabled={submitDisabled}
-        >
-          {loading || wsLoading ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            "Continuar para o gerador"
+          <Button
+            className="w-full bg-gradient-primary border-0"
+            onClick={handleSubmitProfile}
+            disabled={submitDisabled}
+          >
+            {loading || wsLoading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              "Continuar"
+            )}
+          </Button>
+          {wsLoading && (
+            <p className="text-xs text-center text-muted-foreground">Preparando seu workspace…</p>
           )}
-        </Button>
-        {wsLoading && (
-          <p className="text-xs text-center text-muted-foreground">Preparando seu workspace…</p>
-        )}
-        <p className="text-xs text-center text-muted-foreground">
-          Plano grátis inclui 3 gerações e 1 export por mês. O fluxo rápido usa 1 geração.
-        </p>
-        <p className="text-xs text-center text-muted-foreground">
-          Já tem conta?{" "}
-          <Link to="/login" className="text-primary-glow hover:underline">
-            Entrar
-          </Link>
-        </p>
-      </Card>
+          <p className="text-xs text-center text-muted-foreground">
+            Plano grátis inclui 3 gerações e 1 export por mês. O fluxo rápido usa 1 geração.
+          </p>
+        </Card>
+      ) : (
+        <Card className="glass bg-gradient-card p-8 space-y-6">
+          <div>
+            <h1 className="text-2xl font-display font-bold">Alimente a inteligência (opcional)</h1>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Cole a transcrição de um criativo campeão ou importe MP4s que já converteram — a IA usa isso nas próximas gerações. Você pode pular.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <ColarTranscricaoButton variant="outline" size="default" />
+            <ImportBibliotecaButton variant="outline" size="default" />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Button className="w-full bg-gradient-primary border-0" onClick={goToGerador}>
+              Continuar para o gerador
+            </Button>
+            <Button variant="ghost" className="w-full text-muted-foreground" onClick={goToGerador}>
+              Pular por agora
+            </Button>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

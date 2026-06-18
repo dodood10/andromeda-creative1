@@ -66,8 +66,8 @@ const areas = [
   },
   {
     icon: Film,
-    title: "VSL curta",
-    desc: "Roteiro de 2 minutos em 6 blocos fixos. Hook duplo até CTA com valor.",
+    title: "VSL curta no gerador",
+    desc: "Roteiro de 2 minutos em 6 blocos fixos — ative o formato VSL no gerador de ângulos.",
   },
   {
     icon: TrendingUp,
@@ -76,8 +76,8 @@ const areas = [
   },
   {
     icon: History,
-    title: "Histórico",
-    desc: "Tudo que você gerou, com status, observações e exportação em ZIP.",
+    title: "Pipeline",
+    desc: "Kanban Gerado → Subiu → Rodando → Performando. Export ZIP e import CSV Meta.",
   },
   {
     icon: Brain,
@@ -122,6 +122,11 @@ function Landing() {
             >
               {mobileOpen ? <X className="size-5" /> : <Menu className="size-5" />}
             </button>
+            <Link to="/login" search={{ redirect: "/app" }} className="hidden md:inline-flex">
+              <Button variant="ghost" size="sm" className="min-h-11">
+                Entrar
+              </Button>
+            </Link>
             <Link to="/login" search={{ redirect: "/app/onboarding" }}>
               <Button className="bg-gradient-primary shadow-glow hover:opacity-90 border-0 min-h-11">
                 Criar conta grátis

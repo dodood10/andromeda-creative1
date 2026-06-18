@@ -33,10 +33,14 @@ import {
   TrendingUp,
   Plus,
   CreditCard,
+  Shield,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { useAuth } from "@/hooks/use-auth";
 import { WorkspaceProvider, useWorkspace } from "@/contexts/workspace-context";
 import { EditorNavLink } from "@/components/editor-nav-link";
+import { getDashboardStats } from "@/lib/criativos.functions";
 import { safeLoginRedirect } from "@/lib/utils";
 
 export const Route = createFileRoute("/app")({
@@ -51,13 +55,22 @@ export const Route = createFileRoute("/app")({
 
 type NavItem = { title: string; url: string; icon: typeof Sparkles; exact?: boolean };
 
-const navGroups: Array<{ label: string; items: NavItem[] }> = [
+const navGroups: Array<{ label: string; items: NavItem[]; showEditor?: boolean }> = [
   {
-    label: "Funil",
+    label: "Criar",
+    items: [{ title: "Criar ângulos", url: "/app/gerador", icon: Wand2 }],
+    showEditor: true,
+  },
+  {
+    label: "Operar",
     items: [
       { title: "Dashboard", url: "/app", icon: Sparkles, exact: true },
-      { title: "Criar ângulos", url: "/app/gerador", icon: Wand2 },
-      { title: "Histórico", url: "/app/historico", icon: History },
+      { title: "Pipeline", url: "/app/historico", icon: History },
+    ],
+  },
+  {
+    label: "Aprender",
+    items: [
       { title: "Inteligência", url: "/app/inteligencia", icon: BarChart3 },
       { title: "Escala", url: "/app/escala", icon: TrendingUp },
     ],
@@ -227,6 +240,11 @@ function AppShell() {
                   <FolderKanban className="size-4" />
                 </Button>
               </Link>
+              <Link to="/app/plano" className="flex sm:hidden">
+                <Button variant="ghost" size="sm" className="h-8 px-2" title="Plano e uso">
+                  <CreditCard className="size-4" />
+                </Button>
+              </Link>
               <span className="text-xs text-muted-foreground hidden sm:inline">
                 {profile?.display_name ?? "Workspace"}
               </span>
@@ -260,8 +278,23 @@ function AppShell() {
 
 function AppSidebar({ isOwner }: { isOwner: boolean }) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
+  const { profile } = useAuth();
+  const { projectId } = useWorkspace();
+  const fetchStats = useServerFn(getDashboardStats);
   const isActive = (url: string, exact?: boolean) =>
     exact ? pathname === url : pathname === url || pathname.startsWith(url + "/");
+
+  const { data: dashStats } = useQuery({
+    queryKey: ["dashboard-stats-nav", projectId],
+    queryFn: () => fetchStats({ data: { projectId: projectId! } }),
+    enabled: !!projectId,
+    staleTime: 60_000,
+  });
+
+  const showEscala =
+    (dashStats?.counts?.Performando ?? 0) > 0 || !!dashStats?.firstPerformandoId;
+  const pendingExports = dashStats?.semExport ?? 0;
+  const isPlatformAdmin = !!(profile as { is_platform_admin?: boolean } | null)?.is_platform_admin;
 
   return (
     <Sidebar collapsible="icon">
@@ -277,7 +310,9 @@ function AppSidebar({ isOwner }: { isOwner: boolean }) {
             <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {group.items.map((item) => (
+                {group.items
+                  .filter((item) => item.url !== "/app/escala" || showEscala)
+                  .map((item) => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton asChild isActive={isActive(item.url, item.exact)}>
                       <Link to={item.url} className="flex items-center gap-2">
@@ -287,8 +322,11 @@ function AppSidebar({ isOwner }: { isOwner: boolean }) {
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
-                {group.label === "Funil" && (
-                  <EditorNavLink isActive={isActive("/app/editor")} />
+                {group.showEditor && (
+                  <EditorNavLink
+                    isActive={isActive("/app/editor")}
+                    pendingExports={pendingExports}
+                  />
                 )}
               </SidebarMenu>
             </SidebarGroupContent>
@@ -326,6 +364,16 @@ function AppSidebar({ isOwner }: { isOwner: boolean }) {
                     <Link to="/app/configuracoes" className="flex items-center gap-2">
                       <Settings className="size-4" />
                       <span>Configurações</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {isPlatformAdmin && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname.startsWith("/admin")}>
+                    <Link to="/admin" className="flex items-center gap-2">
+                      <Shield className="size-4" />
+                      <span>Admin</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

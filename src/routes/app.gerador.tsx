@@ -40,6 +40,7 @@ import {
   formatAnthropicError,
   angleIntelBadge,
   explainAnguloRank,
+  scoreAnguloVsChampions,
   buildAbTestFormatoMap,
   runWithConcurrency,
   type ChampionRankingContext,
@@ -53,6 +54,8 @@ import {
   trackMetaRascunhoCriado,
   trackMetaAddToCart,
 } from "@/lib/meta-pixel";
+import { saveDraftQueue } from "@/lib/draft-queue";
+import { GeradorReferencePanel } from "@/components/gerador-reference-panel";
 import { validateHttpUrl, HttpUrlSchema } from "@/lib/security-url";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "@/contexts/workspace-context";
@@ -76,14 +79,14 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 const wizardSearchSchema = z.object({
-  step: z.enum(["wizard", "export"]).optional(),
+  step: z.enum(["wizard", "editor", "export"]).optional(),
   formato: z.enum(["criativo_curto", "vsl_curta"]).optional(),
   url: z.string().optional(),
   ttfe: z.enum(["1"]).optional(),
 });
 
 const WIZARD_STORAGE_KEY = "andromeda_wizard_state";
-const EXPORT_STEP_STORAGE_KEY = "andromeda_export_step";
+const LEGACY_EXPORT_STORAGE_KEY = "andromeda_export_step";
 
 type ExportDraftItem = {
   id: string;
@@ -97,7 +100,6 @@ type WizardPersisted = {
   wizardStep: WizardStep;
   formatoPorAngulo: Record<number, FormatoOverride>;
   backgroundMediaPath: string | null;
-  exportDrafts?: ExportDraftItem[];
 };
 
 export const Route = createFileRoute("/app/gerador")({
@@ -147,7 +149,7 @@ const confiancaColor: Record<string, string> = {
   baixa: "bg-muted/40 text-muted-foreground border-border",
 };
 
-type Etapa = "input" | "respondendo" | "resultado" | "wizard" | "export";
+type Etapa = "input" | "respondendo" | "resultado" | "wizard" | "editor";
 type WizardStep = "producao" | "midia";
 
 function Gerador() {
@@ -186,7 +188,6 @@ function Gerador() {
   const [pendingFormato, setPendingFormato] = useState<"criativo_curto" | "vsl_curta" | null>(null);
   const [partialDrafts, setPartialDrafts] = useState<Array<{ id: string; nome: string }> | null>(null);
   const [batchChecklist, setBatchChecklist] = useState<Array<{ id: string; nome: string; needsMedia: boolean }> | null>(null);
-  const [exportDrafts, setExportDrafts] = useState<ExportDraftItem[]>([]);
   const [backgroundMediaPath, setBackgroundMediaPath] = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [pexelsQuery, setPexelsQuery] = useState("");
@@ -195,6 +196,7 @@ function Gerador() {
     id: string; type: "image" | "video"; previewUrl: string; downloadUrl: string; attribution: string;
   }>>([]);
   const [modoRapido, setModoRapido] = useState(false);
+  const [refNudgeDismissed, setRefNudgeDismissed] = useState(true);
   const [loadingOverlayDismissed, setLoadingOverlayDismissed] = useState(false);
   const mediaRef = useRef<HTMLInputElement>(null);
   const prevProjectRef = useRef<string | null>(null);
@@ -238,13 +240,28 @@ function Gerador() {
   const { data: intelNicho } = useQuery({
     queryKey: ["inteligencia-nicho", projectId],
     queryFn: () => fetchIntel({ data: { projectId: projectId! } }),
-    enabled: !!projectId && !!resultado,
+    enabled: !!projectId,
     staleTime: 120_000,
   });
 
   const championCtx: ChampionRankingContext | null = intelNicho?.championsForRanking?.length
     ? { champions: intelNicho.championsForRanking }
     : null;
+
+  useEffect(() => {
+    if (!projectId) return;
+    setRefNudgeDismissed(localStorage.getItem(`andromeda_ref_nudge_${projectId}`) === "1");
+  }, [projectId]);
+
+  function dismissRefNudge() {
+    if (projectId) localStorage.setItem(`andromeda_ref_nudge_${projectId}`, "1");
+    setRefNudgeDismissed(true);
+  }
+
+  const showRefNudge =
+    !refNudgeDismissed &&
+    (intelNicho?.referenceTranscriptions?.length ?? 0) === 0 &&
+    (etapa === "input" || etapa === "respondendo");
 
   const { data: geracaoRestored, isLoading: loadingGeracao, isError: geracaoRestoreError } = useQuery({
     queryKey: ["geracao-resultado", geracaoId],
@@ -404,27 +421,35 @@ function Gerador() {
         setFormatoPorAngulo(legacyMap);
       }
       setBackgroundMediaPath(saved.backgroundMediaPath);
-      if (saved.exportDrafts?.length) setExportDrafts(saved.exportDrafts);
       if (urlStep === "wizard") setEtapa("wizard");
-      if (urlStep === "export") {
-        setEtapa("export");
-        if (saved.exportDrafts?.length) setExportDrafts(saved.exportDrafts);
-        else {
-          try {
-            const exportRaw = localStorage.getItem(EXPORT_STEP_STORAGE_KEY);
-            if (exportRaw) {
-              const parsed = JSON.parse(exportRaw) as { exportDrafts?: ExportDraftItem[] };
-              if (parsed.exportDrafts?.length) setExportDrafts(parsed.exportDrafts);
-            }
-          } catch {
-            /* ignore */
-          }
-        }
-      }
     } catch {
       /* ignore */
     }
   }, [urlStep]);
+
+  useEffect(() => {
+    if (urlStep !== "export") return;
+    try {
+      const exportRaw = localStorage.getItem(LEGACY_EXPORT_STORAGE_KEY);
+      const parsed = exportRaw
+        ? (JSON.parse(exportRaw) as { exportDrafts?: ExportDraftItem[] })
+        : null;
+      const ids = parsed?.exportDrafts?.map((d) => d.id).filter(Boolean) ?? [];
+      localStorage.removeItem(LEGACY_EXPORT_STORAGE_KEY);
+      if (ids.length > 0) {
+        saveDraftQueue(ids);
+        navigate({
+          to: "/app/editor",
+          search: { criativoId: ids[0], focus: "audio" },
+          replace: true,
+        });
+        return;
+      }
+    } catch {
+      localStorage.removeItem(LEGACY_EXPORT_STORAGE_KEY);
+    }
+    navigate({ to: "/app/gerador", search: { step: "wizard" }, replace: true });
+  }, [urlStep, navigate]);
 
   async function handleAskQuestion() {
     if (!url.trim()) {
@@ -663,7 +688,7 @@ function Gerador() {
     setLoadingStep("Criando rascunho do melhor ângulo…");
 
     try {
-      const { criativoId } = await createDraft({
+      const { criativoId, hookAudioGenerated } = await createDraft({
         data: {
           geracaoId: gId,
           anguloIndex: idx,
@@ -677,11 +702,16 @@ function Gerador() {
         },
       });
 
+      saveDraftQueue([criativoId]);
       localStorage.removeItem(WIZARD_STORAGE_KEY);
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
       trackMetaRascunhoCriado(1);
       trackMetaAddToCart(angulosData.angulos[idx]?.nome ?? `angulo-${idx}`);
-      toast.success("Rascunho criado — abrindo o editor");
+      toast.success(
+        hookAudioGenerated
+          ? "Rascunho criado com hook narrado — abrindo o editor"
+          : "Rascunho criado — abrindo o editor",
+      );
       navigate({ to: "/app/editor", search: { criativoId, focus: "audio" } });
       return true;
     } catch (e) {
@@ -805,21 +835,27 @@ function Gerador() {
         toast.warning(`${created.length} criado(s), ${failed.length} falhou(aram)`);
       }
 
-      localStorage.setItem(
-        EXPORT_STEP_STORAGE_KEY,
-        JSON.stringify({ geracaoId, exportDrafts: draftList }),
-      );
-      persistWizard({ exportDrafts: draftList });
+      localStorage.removeItem(LEGACY_EXPORT_STORAGE_KEY);
 
       trackMetaRascunhoCriado(created.length);
+      const queueIds = draftList.map((d) => d.id);
+      saveDraftQueue(queueIds);
+
       toast.success(
         created.length === 1
-          ? "Rascunho criado — complete o export no próximo passo"
-          : `${created.length} rascunhos criados — siga o funil de export`,
+          ? "Rascunho criado — voz sugerida e hook pré-gerado quando disponível"
+          : `${created.length} rascunhos criados — fila iniciada no editor`,
       );
-      setExportDrafts(draftList);
-      setEtapa("export");
-      navigate({ to: "/app/gerador", search: { step: "export" }, replace: true });
+
+      if (created.length > 1) {
+        setBatchChecklist(draftList);
+      }
+
+      navigate({
+        to: "/app/editor",
+        search: { criativoId: created[0].id, focus: "audio" },
+        replace: true,
+      });
     } catch (e) {
       if (created.length > 0) {
         setPartialDrafts(
@@ -846,7 +882,18 @@ function Gerador() {
           { label: "Dashboard", to: "/app" },
           { label: "Gerador", to: "/app/gerador" },
           ...(etapa !== "input"
-            ? [{ label: etapa === "wizard" ? "Produção" : etapa === "export" ? "Export" : etapa }]
+            ? [
+                {
+                  label:
+                    etapa === "wizard"
+                      ? "Produção"
+                      : etapa === "editor"
+                        ? "Editor"
+                        : etapa === "resultado"
+                          ? "Ângulos"
+                          : etapa,
+                },
+              ]
             : []),
         ]}
       />
@@ -899,15 +946,44 @@ function Gerador() {
       )}
 
       {planUsage && planUsage.tier === "free" && (
-        <div className="flex items-center justify-between gap-2 p-3 rounded-lg border border-border/50 bg-muted/20 text-sm">
+        <div className="flex items-center justify-between gap-2 p-3 rounded-lg border border-border/50 bg-muted/20 text-sm flex-wrap">
           <span>
             Uso este mês: <strong>{planUsage.geracoesMes}/{planUsage.limits.geracoesMes === Infinity ? "∞" : planUsage.limits.geracoesMes}</strong> gerações
             {" · "}
             <strong>{planUsage.exportsMes}/{planUsage.limits.exportsMes === Infinity ? "∞" : planUsage.limits.exportsMes}</strong> exports
+            {" · "}
+            <strong>{planUsage.importsMes ?? 0}/{planUsage.limits.importsMes === Infinity ? "∞" : planUsage.limits.importsMes}</strong> imports
           </span>
           <Link to="/app/plano" className="text-primary-glow text-xs hover:underline shrink-0">
             Ver plano
           </Link>
+        </div>
+      )}
+
+      {planUsage && planUsage.canGerar && planUsage.limits.geracoesMes !== Infinity && planUsage.limits.geracoesMes - planUsage.geracoesMes <= 1 && (
+        <div className="text-xs text-warning px-3 py-2 rounded-lg border border-warning/30 bg-warning/10">
+          Resta {planUsage.limits.geracoesMes - planUsage.geracoesMes} geração este mês no plano grátis.
+        </div>
+      )}
+
+      {planUsage && !planUsage.canExport && (
+        <div className="text-xs text-warning px-3 py-2 rounded-lg border border-warning/30 bg-warning/10">
+          Limite de exports atingido ({planUsage.exportsMes}/{planUsage.limits.exportsMes}) — upgrade para continuar exportando.
+        </div>
+      )}
+
+      {planUsage && planUsage.limits.importsMes !== Infinity && !planUsage.canImport && (
+        <div className="text-xs text-warning px-3 py-2 rounded-lg border border-warning/30 bg-warning/10">
+          Limite de imports de campeões atingido ({planUsage.importsMes}/{planUsage.limits.importsMes}/mês).
+        </div>
+      )}
+
+      {planUsage &&
+        planUsage.canImport &&
+        planUsage.limits.importsMes !== Infinity &&
+        planUsage.limits.importsMes - (planUsage.importsMes ?? 0) <= 2 && (
+        <div className="text-xs text-muted-foreground px-3 py-2 rounded-lg border border-border/50">
+          Restam {planUsage.limits.importsMes - (planUsage.importsMes ?? 0)} import(s) de campeão este mês.
         </div>
       )}
 
@@ -1006,6 +1082,38 @@ function Gerador() {
             </p>
           </div>
         </div>
+
+        {showRefNudge && (
+          <Card className="mt-4 p-4 border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              <strong className="text-foreground">Opcional:</strong> cole uma transcrição ou importe um vídeo campeão
+              — a IA usa só estrutura e ritmo, não copia promessas de outro nicho.
+            </p>
+            <div className="flex gap-2 shrink-0">
+              <Button size="sm" variant="outline" onClick={dismissRefNudge}>
+                Pular
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        <GeradorReferencePanel
+          referenceTranscriptions={intelNicho?.referenceTranscriptions}
+          referenceCombo={intelNicho?.referenceCombo}
+          calibrationChip={
+            intelNicho?.intelSettings &&
+            ((intelNicho.intelSettings.calibration_samples ?? 0) > 0 ||
+              (intelNicho.intelSettings.calibration_samples_conversion ?? 0) > 0)
+              ? {
+                  samples: intelNicho.intelSettings.calibration_samples ?? 0,
+                  hookBiasPp: intelNicho.intelSettings.hook_rate_bias_pp,
+                  conversionSamples: intelNicho.intelSettings.calibration_samples_conversion,
+                  cpaMedio: intelNicho.intelSettings.cpa_medio_validado,
+                  roasMedio: intelNicho.intelSettings.roas_medio_validado,
+                }
+              : null
+          }
+        />
 
         <div className="mt-5 flex flex-wrap gap-2 justify-end">
           {modoRapido ? (
@@ -1246,6 +1354,20 @@ function Gerador() {
                     <TableHead>Formato IA</TableHead>
                     <TableHead>Saturação</TableHead>
                     <TableHead>Congruência</TableHead>
+                    <TableHead>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex items-center gap-1 cursor-help">
+                              Campeão <HelpCircle className="size-3" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            Score de proximidade com criativos performando validados — quanto maior, mais alinhado ao que já converteu no projeto.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1253,6 +1375,10 @@ function Gerador() {
                     const rec = a.recomendacao_formato;
                     const sat = saturacaoMeta[a.saturacao_hook?.status] ?? saturacaoMeta.neutro;
                     const SatIcon = sat.icon;
+                    const rankResult =
+                      championCtx?.champions.length
+                        ? scoreAnguloVsChampions(a, championCtx.champions)
+                        : null;
                     return (
                       <TableRow
                         key={i}
@@ -1334,6 +1460,35 @@ function Gerador() {
                             >
                               {a.congruencia_oferta.score}%
                             </Badge>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {rankResult && rankResult.badges.length > 0 ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[10px] cursor-help ${
+                                      rankResult.score >= 55
+                                        ? "bg-success/10 border-success/30"
+                                        : rankResult.score < 40
+                                          ? "bg-accent/10 border-accent/30"
+                                          : ""
+                                    }`}
+                                  >
+                                    {rankResult.score}
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  {rankResult.badges.join(" · ")}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : championCtx?.champions.length ? (
+                            <span className="text-xs text-muted-foreground">Novo</span>
                           ) : (
                             "—"
                           )}
@@ -1977,76 +2132,6 @@ function Gerador() {
         </Card>
       )}
 
-      {etapa === "export" && exportDrafts.length > 0 && (
-        <Card className="glass p-6 space-y-6 border border-primary/30">
-          <div>
-            <h2 className="font-display text-xl font-semibold">Export — último passo do funil</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Complete áudio, score e MP4 no editor. Depois marque como Subiu no histórico.
-            </p>
-            {planUsage && (
-              <p className="text-xs text-muted-foreground mt-2">
-                Cota de export: {planUsage.exportsMes}/
-                {planUsage.limits.exportsMes === Infinity ? "∞" : planUsage.limits.exportsMes} este mês
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-4">
-            {exportDrafts.map((d, i) => (
-              <div key={d.id} className="rounded-lg border border-border/50 p-4 space-y-3">
-                <p className="font-medium text-sm">
-                  {i + 1}. {d.nome}
-                </p>
-                <ol className="text-xs space-y-2 text-muted-foreground list-decimal list-inside">
-                  <li>Gerar narração (áudio TTS)</li>
-                  {d.needsMedia && <li>Enviar mídia de fundo / clipes</li>}
-                  <li>Avaliar score Andromeda e exportar MP4</li>
-                  <li>Subir no Meta e marcar status no histórico</li>
-                </ol>
-                <div className="flex flex-wrap gap-2">
-                  <Link to="/app/editor" search={{ criativoId: d.id, focus: "audio" }}>
-                    <Button size="sm" variant="outline">
-                      <Mic className="size-3.5 mr-1" /> Áudio
-                    </Button>
-                  </Link>
-                  {d.needsMedia && (
-                    <Link to="/app/editor" search={{ criativoId: d.id, focus: "media" }}>
-                      <Button size="sm" variant="outline">Mídia</Button>
-                    </Link>
-                  )}
-                  <Link to="/app/editor" search={{ criativoId: d.id, focus: "score" }}>
-                    <Button size="sm" className="bg-gradient-primary border-0">
-                      <Download className="size-3.5 mr-1" /> Exportar MP4
-                    </Button>
-                  </Link>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap gap-2 pt-2 border-t border-border/50">
-            <Link to="/app/editor" search={{ criativoId: exportDrafts[0].id, focus: "audio" }}>
-              <Button className="bg-gradient-primary border-0">
-                Abrir primeiro no editor <ArrowRight className="size-4 ml-1" />
-              </Button>
-            </Link>
-            <Link to="/app/historico">
-              <Button variant="outline">Ver no histórico</Button>
-            </Link>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                localStorage.removeItem(EXPORT_STEP_STORAGE_KEY);
-                setEtapa("resultado");
-                navigate({ to: "/app/gerador", replace: true });
-              }}
-            >
-              Gerar mais ângulos
-            </Button>
-          </div>
-        </Card>
-      )}
 
       <Dialog open={!!batchChecklist} onOpenChange={(open) => !open && setBatchChecklist(null)}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-auto">
@@ -2088,8 +2173,18 @@ function Gerador() {
               </div>
             ))}
           </div>
+          <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm space-y-2">
+            <p className="font-medium">Depois de subir no Meta (flywheel)</p>
+            <p className="text-xs text-muted-foreground">
+              Em ~3 dias, importe o CSV do Ads Manager com coluna <code className="font-mono">utm_content</code> no
+              histórico — métricas validadas calibram hook rate e CPA na próxima geração.
+            </p>
+            <Link to="/app/historico" onClick={() => setBatchChecklist(null)}>
+              <Button size="sm" variant="outline">Ver pipeline + importar CSV</Button>
+            </Link>
+          </div>
           <Link to="/app/historico" onClick={() => setBatchChecklist(null)}>
-            <Button variant="ghost" className="w-full">Ver todos no histórico</Button>
+            <Button variant="ghost" className="w-full">Ver todos no pipeline</Button>
           </Link>
         </DialogContent>
       </Dialog>

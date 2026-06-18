@@ -61,6 +61,7 @@ const GERADOR_FUNNEL_STEPS = [
   "render_done",
   "render_failed",
   "export_pronto",
+  "marcou_subiu",
 ] as const;
 
 async function loadGeradorFunnelCounts(since: string | null) {
@@ -77,6 +78,193 @@ async function loadGeradorFunnelCounts(since: string | null) {
     if (t in counts) counts[t]++;
   }
   return counts;
+}
+
+function median(nums: number[]): number | null {
+  if (nums.length === 0) return null;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+async function loadProductSuccessKpis() {
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+
+  const [
+    profilesRes,
+    exportEventsRes,
+    subiuEventsRes,
+    geracaoEventsRes,
+    membersRes,
+    subsRes,
+    criativosRes,
+    resultadosRes,
+    projectsRes,
+  ] = await Promise.all([
+    supabaseAdmin.from("profiles").select("id, created_at"),
+    supabaseAdmin
+      .from("funnel_events")
+      .select("user_id, created_at, metadata")
+      .eq("event_type", "export_pronto")
+      .eq("success", true),
+    supabaseAdmin
+      .from("funnel_events")
+      .select("user_id, created_at, metadata")
+      .eq("event_type", "marcou_subiu")
+      .eq("success", true),
+    supabaseAdmin
+      .from("funnel_events")
+      .select("user_id, created_at")
+      .eq("event_type", "angulos_gerados")
+      .eq("success", true),
+    supabaseAdmin.from("organization_members").select("user_id, organization_id"),
+    supabaseAdmin.from("subscriptions").select("organization_id, status, tier"),
+    supabaseAdmin.from("criativos").select("id, user_id, project_id, export_status"),
+    supabaseAdmin.from("resultados_reportados").select("criativo_id, intel_review_status"),
+    supabaseAdmin.from("projects").select("id"),
+  ]);
+
+  const firstExportByUser = new Map<string, string>();
+  for (const e of exportEventsRes.data ?? []) {
+    if (!e.user_id) continue;
+    const prev = firstExportByUser.get(e.user_id);
+    if (!prev || e.created_at < prev) firstExportByUser.set(e.user_id, e.created_at);
+  }
+
+  const onboardingToExportHours: number[] = [];
+  for (const p of profilesRes.data ?? []) {
+    const exp = firstExportByUser.get(p.id);
+    if (exp) {
+      onboardingToExportHours.push(
+        (new Date(exp).getTime() - new Date(p.created_at).getTime()) / 3_600_000,
+      );
+    }
+  }
+
+  const orgByUser = new Map<string, string>();
+  for (const m of membersRes.data ?? []) {
+    if (!orgByUser.has(m.user_id)) orgByUser.set(m.user_id, m.organization_id);
+  }
+  const paidOrgs = new Set(
+    (subsRes.data ?? [])
+      .filter((s) => s.status === "active" && s.tier !== "free")
+      .map((s) => s.organization_id),
+  );
+
+  let freeUsers = 0;
+  let freeWithExport = 0;
+  for (const p of profilesRes.data ?? []) {
+    const org = orgByUser.get(p.id);
+    const isFree = !org || !paidOrgs.has(org);
+    if (!isFree) continue;
+    freeUsers++;
+    if (firstExportByUser.has(p.id)) freeWithExport++;
+  }
+
+  const exportByCriativo = new Map<string, string>();
+  for (const e of exportEventsRes.data ?? []) {
+    const meta = e.metadata as { criativoId?: string } | null;
+    const cid = meta?.criativoId;
+    if (!cid) continue;
+    const prev = exportByCriativo.get(cid);
+    if (!prev || e.created_at < prev) exportByCriativo.set(cid, e.created_at);
+  }
+
+  const subiuByCriativo = new Map<string, string>();
+  for (const e of subiuEventsRes.data ?? []) {
+    const meta = e.metadata as { criativoId?: string } | null;
+    const cid = meta?.criativoId;
+    if (!cid) continue;
+    const prev = subiuByCriativo.get(cid);
+    if (!prev || e.created_at < prev) subiuByCriativo.set(cid, e.created_at);
+  }
+
+  let trackedExports = 0;
+  let exportsSubiuWithin7d = 0;
+  for (const [cid, exportAt] of exportByCriativo) {
+    trackedExports++;
+    const subiuAt = subiuByCriativo.get(cid);
+    if (!subiuAt) continue;
+    const diff = new Date(subiuAt).getTime() - new Date(exportAt).getTime();
+    if (diff >= 0 && diff <= sevenDaysMs) exportsSubiuWithin7d++;
+  }
+
+  const criativoProject = new Map<string, string>();
+  for (const c of criativosRes.data ?? []) {
+    if (c.project_id) criativoProject.set(c.id, c.project_id);
+  }
+  const projectsWithValidated = new Set<string>();
+  for (const r of resultadosRes.data ?? []) {
+    if (r.intel_review_status !== "approved") continue;
+    const pid = criativoProject.get(r.criativo_id);
+    if (pid) projectsWithValidated.add(pid);
+  }
+  const totalProjects = projectsRes.data?.length ?? 0;
+
+  let usersWithExport = 0;
+  let usersReturnedGerador14d = 0;
+  for (const [userId, exportAt] of firstExportByUser) {
+    usersWithExport++;
+    const expTime = new Date(exportAt).getTime();
+    const returned = (geracaoEventsRes.data ?? []).some(
+      (g) =>
+        g.user_id === userId &&
+        new Date(g.created_at).getTime() >= expTime &&
+        new Date(g.created_at).getTime() <= expTime + fourteenDaysMs,
+    );
+    if (returned) usersReturnedGerador14d++;
+  }
+
+  const firstSubiuByUser = new Map<string, string>();
+  for (const e of subiuEventsRes.data ?? []) {
+    if (!e.user_id) continue;
+    const prev = firstSubiuByUser.get(e.user_id);
+    if (!prev || e.created_at < prev) firstSubiuByUser.set(e.user_id, e.created_at);
+  }
+
+  const funnelStuckUsers: Array<{ userId: string; exportAt: string; daysStuck: number }> = [];
+  for (const [userId, exportAt] of firstExportByUser) {
+    const subiuAt = firstSubiuByUser.get(userId);
+    const exportTime = new Date(exportAt).getTime();
+    if (subiuAt) {
+      const diff = new Date(subiuAt).getTime() - exportTime;
+      if (diff >= 0 && diff <= sevenDaysMs) continue;
+    }
+    const daysStuck = Math.floor((Date.now() - exportTime) / (24 * 60 * 60 * 1000));
+    if (daysStuck >= 1) {
+      funnelStuckUsers.push({ userId, exportAt, daysStuck });
+    }
+  }
+  funnelStuckUsers.sort((a, b) => b.daysStuck - a.daysStuck);
+
+  return {
+    medianOnboardingToExportHours: median(onboardingToExportHours),
+    usersOnboardedToExport: onboardingToExportHours.length,
+    freeExportRatePct:
+      freeUsers > 0 ? Math.round((freeWithExport / freeUsers) * 100) : null,
+    freeUsers,
+    freeWithExport,
+    exportSubiu7dRatePct:
+      trackedExports > 0 ? Math.round((exportsSubiuWithin7d / trackedExports) * 100) : null,
+    trackedExports,
+    exportsSubiuWithin7d,
+    projectsValidatedRatePct:
+      totalProjects > 0
+        ? Math.round((projectsWithValidated.size / totalProjects) * 100)
+        : null,
+    projectsWithValidated: projectsWithValidated.size,
+    totalProjects,
+    geradorReturn14dRatePct:
+      usersWithExport > 0
+        ? Math.round((usersReturnedGerador14d / usersWithExport) * 100)
+        : null,
+    usersWithExport,
+    usersReturnedGerador14d,
+    funnelStuckUsers: funnelStuckUsers.slice(0, 12),
+  };
 }
 
 export const checkAdminAccess = createServerFn({ method: "GET" })
@@ -152,6 +340,8 @@ export const getAdminOverview = createServerFn({ method: "POST" })
     const usersComGeracao = new Set<string>();
     const usersComCriativo = new Set<string>();
     const usersComExport = new Set<string>();
+    const usersMarcouSubiu = new Set<string>();
+    const exportSemSubiuByUser: Record<string, number> = {};
 
     for (const g of geracoes) usersComGeracao.add(g.user_id);
     for (const c of criativos) {
@@ -162,6 +352,12 @@ export const getAdminOverview = createServerFn({ method: "POST" })
       if (c.export_status === "pronto") {
         exportsProntos++;
         usersComExport.add(c.user_id);
+        if (c.status === "Gerado") {
+          exportSemSubiuByUser[c.user_id] = (exportSemSubiuByUser[c.user_id] ?? 0) + 1;
+        }
+      }
+      if (c.status === "Subiu" || c.status === "Rodando" || c.status === "Performando") {
+        usersMarcouSubiu.add(c.user_id);
       }
     }
 
@@ -205,6 +401,15 @@ export const getAdminOverview = createServerFn({ method: "POST" })
       if (c.export_status === "renderizando") pipelineStats[estilo].renderizando++;
     }
 
+    const retentionCohort = Object.entries(exportSemSubiuByUser)
+      .map(([userId, stuckExports]) => ({ userId, stuckExports }))
+      .sort((a, b) => b.stuckExports - a.stuckExports)
+      .slice(0, 12);
+
+    const usersExportSemSubiu = Object.keys(exportSemSubiuByUser).length;
+
+    const productKpis = await loadProductSuccessKpis();
+
     await logAdminAction({
       actorUserId: context.userId,
       action: "admin.view_overview",
@@ -227,11 +432,16 @@ export const getAdminOverview = createServerFn({ method: "POST" })
         usersComGeracao: usersComGeracao.size,
         usersComCriativo: usersComCriativo.size,
         usersComExport: usersComExport.size,
+        usersMarcouSubiu: usersMarcouSubiu.size,
+        usersExportSemSubiu,
+        retentionCohort,
         statusCounts,
         rascunhosSemExport: criativos.filter((c) => c.export_status !== "pronto" && c.status !== "Pausado").length,
         geradorFunnel: await loadGeradorFunnelCounts(since),
         pipelineStats,
+        funnelStuckUsers: productKpis.funnelStuckUsers,
       },
+      productKpis,
       topOrgs,
       exportErrors: exportErroRes.data ?? [],
       recentProfiles: [...profiles]
@@ -1065,6 +1275,18 @@ export const reviewPerformandoClaim = createServerFn({ method: "POST" })
       metadata: { notes: data.notes },
     });
 
+    if (data.status === "approved") {
+      const { data: criativo } = await supabaseAdmin
+        .from("criativos")
+        .select("project_id")
+        .eq("id", data.criativoId)
+        .maybeSingle();
+      if (criativo?.project_id) {
+        const { refreshCalibrationForProject } = await import("./criativos.functions");
+        await refreshCalibrationForProject(supabaseAdmin, criativo.project_id).catch(() => undefined);
+      }
+    }
+
     return { ok: true };
   });
 
@@ -1093,6 +1315,19 @@ export const reviewResultadoReport = createServerFn({ method: "POST" })
       targetId: data.resultadoId,
       metadata: { notes: data.notes },
     });
+
+    if (data.status === "approved") {
+      const { data: resultado } = await supabaseAdmin
+        .from("resultados_reportados")
+        .select("criativos(project_id)")
+        .eq("id", data.resultadoId)
+        .maybeSingle();
+      const projectId = (resultado?.criativos as { project_id?: string } | null)?.project_id;
+      if (projectId) {
+        const { refreshCalibrationForProject } = await import("./criativos.functions");
+        await refreshCalibrationForProject(supabaseAdmin, projectId).catch(() => undefined);
+      }
+    }
 
     return { ok: true };
   });

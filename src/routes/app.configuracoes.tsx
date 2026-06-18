@@ -13,6 +13,7 @@ import { Loader2, Settings, Users, FolderKanban, Copy, Trash2, UserMinus } from 
 import { toast } from "sonner";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { getWorkspaceSettings, updateOrganization, inviteOrganizationMember, listOrganizationInvites, cancelOrganizationInvite, updateMemberRole, removeOrganizationMember } from "@/lib/organizations.functions";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 export const Route = createFileRoute("/app/configuracoes")({
   head: () => ({
@@ -138,6 +139,7 @@ function Configuracoes() {
 
   return (
     <div className="container mx-auto px-6 py-8 max-w-3xl space-y-8">
+      <AppBreadcrumbs items={[{ label: "Dashboard", to: "/app" }, { label: "Configurações" }]} />
       <div>
         <h1 className="text-2xl font-display font-bold flex items-center gap-2">
           <Settings className="size-6" /> Configurações

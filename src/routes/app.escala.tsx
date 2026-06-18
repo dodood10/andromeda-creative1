@@ -229,7 +229,8 @@ function Escala() {
       <EscalaLimitModal open={escalaLimitOpen} onOpenChange={setEscalaLimitOpen} />
       <AppBreadcrumbs
         items={[
-          { label: "Projeto", to: "/app" },
+          { label: "Dashboard", to: "/app" },
+          { label: "Inteligência", to: "/app/inteligencia" },
           { label: "Escala" },
         ]}
       />
@@ -281,14 +282,14 @@ function Escala() {
           ) : (
             <>
               <p className="text-sm text-muted-foreground">
-                Nenhum campeão ainda. Exporte criativos, suba no Meta e marque como Performando no histórico.
+                Nenhum campeão ainda. Exporte criativos, suba no Meta e marque como Performando no pipeline.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Link to="/app/historico" search={{ export: "pendente" }}>
                   <Button variant="outline" className="min-h-11">Ver pendentes de export</Button>
                 </Link>
                 <Link to="/app/historico" search={{ status: "Performando" }}>
-                  <Button className="min-h-11 bg-gradient-primary border-0">Abrir histórico</Button>
+                  <Button className="min-h-11 bg-gradient-primary border-0">Abrir pipeline</Button>
                 </Link>
               </div>
             </>
@@ -349,7 +350,7 @@ function Escala() {
                 ) : (
                   <>
                     <Badge className="bg-muted/20 text-muted-foreground border-border mb-2">Sem criativo selecionado</Badge>
-                    <h2 className="font-display text-xl font-semibold">Selecione um campeão no histórico</h2>
+                    <h2 className="font-display text-xl font-semibold">Selecione um campeão no pipeline</h2>
                   </>
                 )}
               </div>

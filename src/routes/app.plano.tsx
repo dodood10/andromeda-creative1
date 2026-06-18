@@ -55,6 +55,14 @@ function PlanoPage() {
     limits.exportsMes === Infinity
       ? 0
       : Math.min(100, Math.round(((usage?.exportsMes ?? 0) / limits.exportsMes) * 100));
+  const impPct =
+    limits.importsMes === Infinity
+      ? 0
+      : Math.min(100, Math.round(((usage?.importsMes ?? 0) / limits.importsMes) * 100));
+  const projPct =
+    limits.projetos === Infinity
+      ? 0
+      : Math.min(100, Math.round(((usage?.projetosCount ?? 0) / limits.projetos) * 100));
 
   return (
     <div className="container mx-auto px-6 py-8 max-w-3xl space-y-8">
@@ -103,6 +111,24 @@ function PlanoPage() {
                 </div>
                 {limits.exportsMes !== Infinity && <Progress value={expPct} className="h-2" />}
               </div>
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Imports campeão este mês</span>
+                  <span>
+                    {usage?.importsMes ?? 0} / {formatLimit(limits.importsMes)}
+                  </span>
+                </div>
+                {limits.importsMes !== Infinity && <Progress value={impPct} className="h-2" />}
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Projetos no workspace</span>
+                  <span>
+                    {usage?.projetosCount ?? 0} / {formatLimit(limits.projetos)}
+                  </span>
+                </div>
+                {limits.projetos !== Infinity && <Progress value={projPct} className="h-2" />}
+              </div>
             </div>
           </Card>
 
@@ -132,7 +158,7 @@ function PlanoPage() {
           )}
 
           <Link to="/planos" className="text-sm text-primary-glow hover:underline inline-block">
-            Comparar todos os planos (página pública)
+            Comparar todos os planos
           </Link>
         </>
       )}

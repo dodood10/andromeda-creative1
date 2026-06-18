@@ -414,7 +414,7 @@ Execute o processo completo: visite a URL com web_search, pesquise o que escala 
             hook: angulo.hook,
             cta: angulo.cta,
             roteiroResumo: angulo.estrutura.map((b) => b.conteudo).join(" ").slice(0, 1500),
-            apiKey: undefined,
+            apiKey: process.env.ANTHROPIC_API_KEY,
           });
           return {
             ...angulo,

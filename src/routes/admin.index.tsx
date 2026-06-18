@@ -70,7 +70,13 @@ function AdminOverview() {
               <FunnelStep label="Geraram ângulos" value={data.funnel.usersComGeracao} />
               <FunnelStep label="Criaram rascunho" value={data.funnel.usersComCriativo} />
               <FunnelStep label="Exportaram" value={data.funnel.usersComExport} />
+              <FunnelStep label="Marcaram Subiu" value={data.funnel.usersMarcouSubiu} />
             </div>
+            {data.funnel.usersExportSemSubiu > 0 && (
+              <p className="text-sm text-warning">
+                {data.funnel.usersExportSemSubiu} usuário(s) com export pronto ainda em status Gerado — cohort de retenção.
+              </p>
+            )}
             <div className="flex flex-wrap gap-2 pt-2">
               {Object.entries(data.funnel.statusCounts).map(([status, count]) => (
                 <Badge key={status} variant="outline" className="text-xs">
@@ -82,6 +88,82 @@ function AdminOverview() {
               </Badge>
             </div>
           </Card>
+
+          {data.productKpis && (
+            <Card className="glass p-6 space-y-4">
+              <h2 className="font-semibold">Métricas de sucesso do produto</h2>
+              <p className="text-sm text-muted-foreground">
+                KPIs do plano de ativação — calculados a partir de perfis, projetos e funnel_events.
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                <KpiStat
+                  label="Mediana onboarding → export"
+                  value={
+                    data.productKpis.medianOnboardingToExportHours != null
+                      ? `${data.productKpis.medianOnboardingToExportHours.toFixed(1)}h`
+                      : "—"
+                  }
+                  sub={`${data.productKpis.usersOnboardedToExport} usuário(s) com export`}
+                />
+                <KpiStat
+                  label="Free que exportaram 1x"
+                  value={
+                    data.productKpis.freeExportRatePct != null
+                      ? `${data.productKpis.freeExportRatePct}%`
+                      : "—"
+                  }
+                  sub={`${data.productKpis.freeWithExport}/${data.productKpis.freeUsers} free`}
+                />
+                <KpiStat
+                  label="Export → Subiu em 7d"
+                  value={
+                    data.productKpis.exportSubiu7dRatePct != null
+                      ? `${data.productKpis.exportSubiu7dRatePct}%`
+                      : "—"
+                  }
+                  sub={`${data.productKpis.exportsSubiuWithin7d}/${data.productKpis.trackedExports} com criativoId`}
+                />
+                <KpiStat
+                  label="Projetos com métrica validada"
+                  value={
+                    data.productKpis.projectsValidatedRatePct != null
+                      ? `${data.productKpis.projectsValidatedRatePct}%`
+                      : "—"
+                  }
+                  sub={`${data.productKpis.projectsWithValidated}/${data.productKpis.totalProjects}`}
+                />
+                <KpiStat
+                  label="Retorno ao gerador em 14d"
+                  value={
+                    data.productKpis.geradorReturn14dRatePct != null
+                      ? `${data.productKpis.geradorReturn14dRatePct}%`
+                      : "—"
+                  }
+                  sub={`${data.productKpis.usersReturnedGerador14d}/${data.productKpis.usersWithExport} pós-export`}
+                />
+              </div>
+            </Card>
+          )}
+
+          {data.funnel.funnelStuckUsers && data.funnel.funnelStuckUsers.length > 0 && (
+            <Card className="glass p-6 space-y-4">
+              <h2 className="font-semibold">Cohort temporal: export sem Subiu (eventos)</h2>
+              <p className="text-sm text-muted-foreground">
+                Usuários com evento export_pronto sem marcou_subiu em 7 dias — via funnel_events.
+              </p>
+              <div className="space-y-2 max-h-48 overflow-auto">
+                {data.funnel.funnelStuckUsers.map((row) => (
+                  <div
+                    key={row.userId}
+                    className="flex justify-between text-sm border-b border-border/30 pb-2 last:border-0 gap-4"
+                  >
+                    <span className="font-mono text-xs truncate max-w-[280px]">{row.userId}</span>
+                    <span className="text-muted-foreground shrink-0">{row.daysStuck}d preso</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {data.funnel.geradorFunnel && (
             <Card className="glass p-6 space-y-4">
@@ -95,6 +177,27 @@ function AdminOverview() {
                 <FunnelStep label="Render ok" value={data.funnel.geradorFunnel.render_done ?? 0} />
                 <FunnelStep label="Render falhou" value={data.funnel.geradorFunnel.render_failed ?? 0} />
                 <FunnelStep label="Export pronto" value={data.funnel.geradorFunnel.export_pronto} />
+                <FunnelStep label="Marcou Subiu" value={data.funnel.geradorFunnel.marcou_subiu ?? 0} />
+              </div>
+            </Card>
+          )}
+
+          {data.funnel.retentionCohort && data.funnel.retentionCohort.length > 0 && (
+            <Card className="glass p-6 space-y-4">
+              <h2 className="font-semibold">Cohort: export sem Subiu</h2>
+              <p className="text-sm text-muted-foreground">
+                Usuários com MP4 pronto que não avançaram o status no pipeline — priorize outreach ou UX.
+              </p>
+              <div className="space-y-2 max-h-48 overflow-auto">
+                {data.funnel.retentionCohort.map((row) => (
+                  <div
+                    key={row.userId}
+                    className="flex justify-between text-sm border-b border-border/30 pb-2 last:border-0"
+                  >
+                    <span className="font-mono text-xs truncate max-w-[280px]">{row.userId}</span>
+                    <span className="text-muted-foreground">{row.stuckExports} criativo(s)</span>
+                  </div>
+                ))}
               </div>
             </Card>
           )}
@@ -182,6 +285,16 @@ function FunnelStep({ label, value }: FunnelStepProps) {
     <div className="rounded-lg bg-background/40 border border-border/40 p-4 text-center">
       <p className="text-2xl font-bold">{value}</p>
       <p className="text-xs text-muted-foreground mt-1">{label}</p>
+    </div>
+  );
+}
+
+function KpiStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-lg border border-border/40 p-4 space-y-1">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-xl font-bold">{value}</p>
+      {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
     </div>
   );
 }

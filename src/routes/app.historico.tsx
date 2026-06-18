@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -30,6 +30,7 @@ import {
   listResultados,
   importMetricasCsv,
   getIntelReviewStatus,
+  getDashboardStats,
   type CriativoRow,
 } from "@/lib/criativos.functions";
 import { getSignedExportUrls } from "@/lib/export.functions";
@@ -39,7 +40,8 @@ import { trackMetaMarcarSubiu, trackMetaPerformando } from "@/lib/meta-pixel";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { MetaUploadGuide } from "@/components/meta-upload-guide";
 import { ImportBibliotecaButton } from "@/components/import-biblioteca-dialog";
-import { PlanoTesteMetaDialog } from "@/components/plano-teste-meta-dialog";
+import { PostExportHubDialog } from "@/components/post-export-hub";
+import { useAuth } from "@/hooks/use-auth";
 import {
   Tooltip,
   TooltipContent,
@@ -67,8 +69,8 @@ export const Route = createFileRoute("/app/historico")({
   validateSearch: searchSchema,
   head: () => ({
     meta: [
-      { title: "Meus criativos · Andromeda" },
-      { name: "description", content: "Todos os criativos com status, resultados e exportação em lote." },
+      { title: "Pipeline · Andromeda" },
+      { name: "description", content: "Kanban de criativos: Gerado → Subiu → Rodando → Performando." },
     ],
   }),
   component: Historico,
@@ -128,7 +130,9 @@ function PendingValidationBadge({ priority }: { priority?: ReviewPriority }) {
 
 function Historico() {
   const { status: urlStatus, criativoId: urlCriativoId, export: urlExport } = Route.useSearch();
-  const { projectId, loading: wsLoading } = useWorkspace();
+  const { projectId, organizationId, loading: wsLoading } = useWorkspace();
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const fetchCriativos = useServerFn(listCriativos);
   const fetchResultados = useServerFn(listResultados);
   const patchStatus = useServerFn(updateCriativoStatus);
@@ -137,6 +141,7 @@ function Historico() {
   const runImportCsv = useServerFn(importMetricasCsv);
   const signExports = useServerFn(getSignedExportUrls);
   const fetchReviewStatus = useServerFn(getIntelReviewStatus);
+  const fetchDashboardStats = useServerFn(getDashboardStats);
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
@@ -187,6 +192,13 @@ function Historico() {
     queryKey: ["intel-review-status", projectId],
     queryFn: () => fetchReviewStatus({ data: { projectId: projectId! } }),
     enabled: !!projectId,
+  });
+
+  const { data: dashStats } = useQuery({
+    queryKey: ["dashboard-stats", projectId],
+    queryFn: () => fetchDashboardStats({ data: { projectId: projectId! } }),
+    enabled: !!projectId,
+    staleTime: 60_000,
   });
 
   const priorityByCriativo = reviewStatus?.priorityByCriativoId ?? {};
@@ -366,10 +378,35 @@ function Historico() {
 
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-7xl space-y-6">
-      <AppBreadcrumbs items={[{ label: "Projeto", to: "/app" }, { label: "Meus criativos" }]} />
+      <AppBreadcrumbs items={[{ label: "Dashboard", to: "/app" }, { label: "Pipeline" }]} />
+
+      {dashStats?.showCsvReminder && (
+        <Card className="glass p-4 border border-primary/30 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            <strong className="text-foreground">Flywheel de dados:</strong> export há 3+ dias sem CSV importado.
+            Cole o relatório do Ads Manager com <code className="font-mono text-xs">utm_content</code> — métricas
+            validadas alimentam a próxima geração automaticamente.
+          </p>
+          <Button size="sm" className="bg-gradient-primary border-0 shrink-0" onClick={() => setCsvOpen(true)}>
+            <Upload className="size-3.5 mr-1.5" /> Importar agora
+          </Button>
+        </Card>
+      )}
+
+      {dashStats?.rodandoMetricsReminderCount ? (
+        <Card className="glass p-4 border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            <strong className="text-foreground">{dashStats.rodandoMetricsReminderCount} criativo(s)</strong> em Rodando há 7+ dias sem métricas reportadas.
+          </p>
+          <Button size="sm" variant="outline" onClick={() => setStatusFilter("Rodando")}>
+            Ver e reportar
+          </Button>
+        </Card>
+      ) : null}
+
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-3xl font-display font-bold">Meus criativos</h1>
+          <h1 className="text-3xl font-display font-bold">Pipeline</h1>
           <p className="text-muted-foreground mt-1">
             {filtered.length} criativos · pipeline Gerado → Subiu → Rodando → Performando
           </p>
@@ -602,6 +639,10 @@ function Historico() {
                   onViewResultados={() => setViewResultados({ id: r.id, angulo: r.angulo })}
                   onPreview={() => handlePreview(r)}
                   previewLoading={previewLoading === r.id}
+                  organizationId={organizationId}
+                  userId={user?.id}
+                  onStatusUpdated={() => queryClient.invalidateQueries({ queryKey: ["criativos", projectId] })}
+                  onNextDraft={(id) => navigate({ to: "/app/editor", search: { criativoId: id, focus: "audio" } })}
                 />
               ))}
             </div>
@@ -628,6 +669,10 @@ function Historico() {
                           onViewResultados={() => setViewResultados({ id: r.id, angulo: r.angulo })}
                           onPreview={() => handlePreview(r)}
                           previewLoading={previewLoading === r.id}
+                          organizationId={organizationId}
+                          userId={user?.id}
+                          onStatusUpdated={() => queryClient.invalidateQueries({ queryKey: ["criativos", projectId] })}
+                          onNextDraft={(id) => navigate({ to: "/app/editor", search: { criativoId: id, focus: "audio" } })}
                         />
                       ))}
                   </div>
@@ -661,6 +706,10 @@ function Historico() {
                         onViewResultados={() => setViewResultados({ id: r.id, angulo: r.angulo })}
                         onPreview={() => handlePreview(r)}
                         previewLoading={previewLoading === r.id}
+                        organizationId={organizationId}
+                        userId={user?.id}
+                        onStatusUpdated={() => queryClient.invalidateQueries({ queryKey: ["criativos", projectId] })}
+                        onNextDraft={(id) => navigate({ to: "/app/editor", search: { criativoId: id, focus: "audio" } })}
                       />
                     ))}
                   </TableBody>
@@ -809,6 +858,22 @@ function ResultadoDialog({
   );
 }
 
+type CriativoActionsProps = {
+  row: CriativoRow;
+  highlighted?: boolean;
+  reviewPriority?: ReviewPriority;
+  resultadosCount: number;
+  onStatusChange: (status: CriativoStatus) => void;
+  onDownload: (paths: string[], path?: string) => void;
+  onViewResultados: () => void;
+  onPreview: () => void;
+  previewLoading?: boolean;
+  organizationId?: string;
+  userId?: string;
+  onStatusUpdated?: () => void;
+  onNextDraft?: (criativoId: string) => void;
+};
+
 function CriativoCard({
   row,
   compact,
@@ -820,18 +885,11 @@ function CriativoCard({
   onViewResultados,
   onPreview,
   previewLoading,
-}: {
-  row: CriativoRow;
-  compact?: boolean;
-  highlighted?: boolean;
-  reviewPriority?: ReviewPriority;
-  resultadosCount: number;
-  onStatusChange: (status: CriativoStatus) => void;
-  onDownload: (paths: string[], path?: string) => void;
-  onViewResultados: () => void;
-  onPreview: () => void;
-  previewLoading?: boolean;
-}) {
+  organizationId,
+  userId,
+  onStatusUpdated,
+  onNextDraft,
+}: CriativoActionsProps & { compact?: boolean }) {
   const dataFmt = format(new Date(row.created_at), "dd/MM", { locale: ptBR });
   const paths = (row.export_paths as string[]) ?? [];
 
@@ -890,8 +948,23 @@ function CriativoCard({
         <Link to="/app/editor" search={{ criativoId: row.id }}>
           <Button size="sm" variant="outline" className="min-h-11">Editor</Button>
         </Link>
-        {row.export_status === "pronto" && row.status === "Gerado" && (
-          <PlanoTesteMetaDialog criativoId={row.id} anguloNome={row.angulo} />
+        {row.export_status === "pronto" && (
+          <PostExportHubDialog
+            criativoId={row.id}
+            anguloNome={row.angulo}
+            utm={row.utm_content ?? row.id}
+            exportPaths={paths}
+            organizationId={organizationId}
+            userId={userId}
+            onStatusUpdated={onStatusUpdated}
+            onNextDraft={onNextDraft}
+            criativoStatus={row.status}
+            trigger={
+              <Button size="sm" className="min-h-11 bg-gradient-primary border-0">
+                Pipeline
+              </Button>
+            }
+          />
         )}
         {row.export_status !== "pronto" && (
           <Link to="/app/editor" search={{ criativoId: row.id, focus: "score" }}>
@@ -920,17 +993,11 @@ function CriativoRowItem({
   onViewResultados,
   onPreview,
   previewLoading,
-}: {
-  row: CriativoRow;
-  highlighted?: boolean;
-  reviewPriority?: ReviewPriority;
-  resultadosCount: number;
-  onStatusChange: (status: CriativoStatus) => void;
-  onDownload: (paths: string[], path?: string) => void;
-  onViewResultados: () => void;
-  onPreview: () => void;
-  previewLoading?: boolean;
-}) {
+  organizationId,
+  userId,
+  onStatusUpdated,
+  onNextDraft,
+}: CriativoActionsProps) {
   const dataFmt = format(new Date(row.created_at), "dd/MM", { locale: ptBR });
   const paths = (row.export_paths as string[]) ?? [];
 
@@ -1017,8 +1084,23 @@ function CriativoRowItem({
         <Link to="/app/editor" search={{ criativoId: row.id }}>
           <Button size="sm" variant="ghost">Editor</Button>
         </Link>
-        {row.export_status === "pronto" && row.status === "Gerado" && (
-          <PlanoTesteMetaDialog criativoId={row.id} anguloNome={row.angulo} />
+        {row.export_status === "pronto" && (
+          <PostExportHubDialog
+            criativoId={row.id}
+            anguloNome={row.angulo}
+            utm={row.utm_content ?? row.id}
+            exportPaths={paths}
+            organizationId={organizationId}
+            userId={userId}
+            onStatusUpdated={onStatusUpdated}
+            onNextDraft={onNextDraft}
+            criativoStatus={row.status}
+            trigger={
+              <Button size="sm" className="bg-gradient-primary border-0">
+                Pipeline
+              </Button>
+            }
+          />
         )}
         {row.export_status !== "pronto" && row.status !== "Pausado" && (
           <Link to="/app/editor" search={{ criativoId: row.id, focus: "score" }}>

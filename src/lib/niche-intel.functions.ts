@@ -17,18 +17,29 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+import type { NicheBenchmarks } from "./project-niche-benchmark";
+
 export type IntelInsight = { title: string; desc: string; tag: string };
 
-async function generateNicheIntel(nichoLabel: string): Promise<IntelInsight[]> {
+export type { NicheBenchmarks };
+
+type NicheIntelGenerated = {
+  insights: IntelInsight[];
+  benchmarks?: NicheBenchmarks;
+};
+
+async function generateNicheIntel(nichoLabel: string): Promise<NicheIntelGenerated> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return [
-      {
-        tag: "Andromeda",
-        title: `Tendências em ${nichoLabel}`,
-        desc: "Configure ANTHROPIC_API_KEY para insights diários com web search. Enquanto isso, gere criativos e reporte métricas no histórico.",
-      },
-    ];
+    return {
+      insights: [
+        {
+          tag: "Andromeda",
+          title: `Tendências em ${nichoLabel}`,
+          desc: "Configure ANTHROPIC_API_KEY para insights diários com web search. Enquanto isso, gere criativos e reporte métricas no pipeline.",
+        },
+      ],
+    };
   }
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -42,7 +53,11 @@ async function generateNicheIntel(nichoLabel: string): Promise<IntelInsight[]> {
       model: "claude-sonnet-4-5",
       max_tokens: 1024,
       system: `Você é analista de Meta Ads. Gere 3 insights curtos sobre o que está escalando HOJE no nicho informado.
-Responda APENAS JSON: { "insights": [ { "tag": "Hook|Formato|CPM", "title": "...", "desc": "..." } ] }
+Inclua benchmarks típicos do nicho (estimativa conservadora baseada em mercado BR).
+Responda APENAS JSON: {
+  "insights": [ { "tag": "Hook|Formato|CPM", "title": "...", "desc": "..." } ],
+  "benchmarks": { "cpa_medio_brl": number|null, "roas_medio": number|null, "hook_rate_medio_pct": number|null }
+}
 Português do Brasil. Sem markdown.`,
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
       messages: [
@@ -55,13 +70,15 @@ Português do Brasil. Sem markdown.`,
   });
 
   if (!res.ok) {
-    return [
-      {
-        tag: "Feed",
-        title: `Panorama ${nichoLabel}`,
-        desc: "Não foi possível gerar insights externos agora. Use seus dados em Inteligência após exportar criativos.",
-      },
-    ];
+    return {
+      insights: [
+        {
+          tag: "Feed",
+          title: `Panorama ${nichoLabel}`,
+          desc: "Não foi possível gerar insights externos agora. Use seus dados em Inteligência após exportar criativos.",
+        },
+      ],
+    };
   }
 
   const payload = (await res.json()) as {
@@ -72,19 +89,24 @@ Português do Brasil. Sem markdown.`,
     .map((b) => b.text as string)
     .join("\n");
   const match = text.match(/\{[\s\S]*\}/);
-  if (!match) return [];
+  if (!match) return { insights: [] };
   try {
-    const parsed = JSON.parse(match[0]) as { insights?: IntelInsight[] };
-    return parsed.insights?.slice(0, 3) ?? [];
+    const parsed = JSON.parse(match[0]) as NicheIntelGenerated;
+    return {
+      insights: parsed.insights?.slice(0, 3) ?? [],
+      benchmarks: parsed.benchmarks,
+    };
   } catch {
-    return [];
+    return { insights: [] };
   }
 }
+
+import { parseNicheIntelPayload } from "./project-niche-benchmark";
 
 export async function loadNicheDailyInsights(
   supabase: SupabaseClient<Database>,
   nicho: string,
-): Promise<{ insights: IntelInsight[]; cached: boolean }> {
+): Promise<{ insights: IntelInsight[]; benchmarks?: NicheBenchmarks; cached: boolean }> {
   const key = nichoKey(nicho);
   const today = todayIso();
 
@@ -96,29 +118,30 @@ export async function loadNicheDailyInsights(
     .maybeSingle();
 
   if (cached?.insights) {
-    return { insights: cached.insights as IntelInsight[], cached: true };
+    const payload = parseNicheIntelPayload(cached.insights);
+    return { insights: payload.insights, benchmarks: payload.benchmarks, cached: true };
   }
 
-  const insights = await generateNicheIntel(nicho);
-  if (insights.length > 0) {
+  const generated = await generateNicheIntel(nicho);
+  if (generated.insights.length > 0) {
     await supabase.from("niche_daily_intel").upsert(
       {
         nicho_key: key,
         nicho_label: nicho,
-        insights,
+        insights: generated as unknown as Database["public"]["Tables"]["niche_daily_intel"]["Insert"]["insights"],
         generated_for: today,
       },
       { onConflict: "nicho_key,generated_for" },
     );
   }
 
-  return { insights, cached: false };
+  return { insights: generated.insights, benchmarks: generated.benchmarks, cached: false };
 }
 
 export const getNicheDailyIntel = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ nicho: z.string().min(1) }))
   .handler(async ({ data, context }) => {
-    const { insights, cached } = await loadNicheDailyInsights(context.supabase, data.nicho);
-    return { nicho: data.nicho, insights, cached };
+    const { insights, benchmarks, cached } = await loadNicheDailyInsights(context.supabase, data.nicho);
+    return { nicho: data.nicho, insights, benchmarks, cached };
   });

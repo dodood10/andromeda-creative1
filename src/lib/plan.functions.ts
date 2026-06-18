@@ -60,6 +60,29 @@ export const getPlanUsage = createServerFn({ method: "POST" })
 
     const { count: escalaMes } = await escalaQuery;
 
+    let importsQuery = supabase
+      .from("criativos")
+      .select("id", { count: "exact", head: true })
+      .eq("source", "importado")
+      .gte("created_at", since);
+
+    if (data.organizationId) {
+      importsQuery = importsQuery.eq("organization_id", data.organizationId);
+    } else {
+      importsQuery = importsQuery.eq("user_id", userId);
+    }
+
+    const { count: importsMes } = await importsQuery;
+
+    let projetosCount = 0;
+    if (data.organizationId) {
+      const { count } = await supabase
+        .from("projects")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", data.organizationId);
+      projetosCount = count ?? 0;
+    }
+
     const limits = PLAN_LIMITS[tier];
 
     return {
@@ -67,14 +90,20 @@ export const getPlanUsage = createServerFn({ method: "POST" })
       geracoesMes: geracoesMes ?? 0,
       exportsMes: exportsMes ?? 0,
       escalaMes: escalaMes ?? 0,
+      importsMes: importsMes ?? 0,
+      projetosCount,
       limits: {
         geracoesMes: limits.geracoesMes,
         exportsMes: limits.exportsMes,
         escalaMes: limits.escalaMes,
+        importsMes: limits.importsMes,
+        projetos: limits.projetos,
       },
       canGerar: (geracoesMes ?? 0) < limits.geracoesMes,
       canExport: (exportsMes ?? 0) < limits.exportsMes,
       canEscala: limits.escalaMes === Infinity || (escalaMes ?? 0) < limits.escalaMes,
+      canImport: limits.importsMes === Infinity || (importsMes ?? 0) < limits.importsMes,
+      canCreateProject: limits.projetos === Infinity || projetosCount < limits.projetos,
       label: PLAN_LABELS[tier],
     };
   });

@@ -38,7 +38,6 @@ import { gerarVslCurta } from "@/lib/vsl.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
 import { celebrateFirstExport } from "@/lib/first-export-celebration";
 import { trackMetaExportConcluido, trackMetaMarcarSubiu } from "@/lib/meta-pixel";
-import { PlanoTesteMetaDialog } from "@/components/plano-teste-meta-dialog";
 import {
   avaliarAlinhamentoLanding,
   getCriativoLandingContext,
@@ -60,11 +59,12 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { GeradorStepper } from "@/components/gerador-stepper";
 import { UpgradeBanner } from "@/components/upgrade-banner";
-import { MetaUploadGuide } from "@/components/meta-upload-guide";
-import { UtmBuilder } from "@/components/utm-builder";
 import { ExportLimitModal } from "@/components/export-limit-modal";
+import { PostExportBanner, PostExportContent } from "@/components/post-export-hub";
 import { getPlanUsage } from "@/lib/plan.functions";
 import { trackMetaInitiateCheckout } from "@/lib/meta-pixel";
+import { advanceDraftQueue, draftQueuePosition } from "@/lib/draft-queue";
+import { suggestVoiceForTom } from "@/lib/voice-suggestion";
 
 const searchSchema = z.object({
   criativoId: z.string().uuid().optional(),
@@ -211,6 +211,7 @@ function Editor({ criativoId, focus }: EditorProps) {
   const [downloadUrls, setDownloadUrls] = useState<Record<string, string>>({});
   const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
   const [uploadingBg, setUploadingBg] = useState(false);
+  const [musicVolume, setMusicVolume] = useState(40);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openedTracked = useRef<string | null>(null);
   const focusHandled = useRef(false);
@@ -276,8 +277,12 @@ function Editor({ criativoId, focus }: EditorProps) {
 
   useEffect(() => {
     if (criativo?.roteiro) setRoteiro(criativo.roteiro as RoteiroBloco[]);
+    if (criativo?.music_volume != null) setMusicVolume(criativo.music_volume);
+    const tomApplied = (criativo?.angulo_json as { tom_calibracao_aplicado?: string } | null)
+      ?.tom_calibracao_aplicado;
     if (criativo?.voice_id) setVoiceId(criativo.voice_id);
-  }, [criativo?.roteiro, criativo?.voice_id]);
+    else if (criativo) setVoiceId(suggestVoiceForTom(tomApplied));
+  }, [criativo?.roteiro, criativo?.voice_id, criativo?.angulo_json, criativo]);
 
   useEffect(() => {
     const paths = (criativo?.export_paths as string[]) ?? [];
@@ -295,11 +300,35 @@ function Editor({ criativoId, focus }: EditorProps) {
         return;
       }
       await saveRoteiro({
-        data: { id: criativoId, roteiro: parsed.data, voiceId: voiceId || undefined },
+        data: {
+          id: criativoId,
+          roteiro: parsed.data,
+          voiceId: voiceId || undefined,
+          musicVolume,
+        },
       });
       queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
     },
-    [criativoId, saveRoteiro, voiceId, queryClient],
+    [criativoId, saveRoteiro, voiceId, musicVolume, queryClient],
+  );
+
+  const persistMusicVolume = useCallback(
+    (vol: number) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        void saveRoteiro({
+          data: {
+            id: criativoId,
+            roteiro: roteiro as RoteiroBloco[],
+            voiceId: voiceId || undefined,
+            musicVolume: vol,
+          },
+        }).then(() => {
+          queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
+        });
+      }, 400);
+    },
+    [criativoId, roteiro, saveRoteiro, voiceId, queryClient],
   );
 
   function updateBlockContent(idx: number, conteudo: string) {
@@ -570,6 +599,12 @@ function Editor({ criativoId, focus }: EditorProps) {
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       toast.success("Marcado como Subiu!");
+      const nextId = advanceDraftQueue(criativoId);
+      if (nextId) {
+        navigate({ to: "/app/editor", search: { criativoId: nextId, focus: "audio" } });
+        toast.info("Próximo rascunho da fila");
+        return;
+      }
       navigate({ to: "/app/historico", search: { criativoId } });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao atualizar status");
@@ -577,6 +612,19 @@ function Editor({ criativoId, focus }: EditorProps) {
       setMarkingSubiu(false);
     }
   }
+
+  function handleNextDraft() {
+    const nextId = advanceDraftQueue(criativoId);
+    if (nextId) {
+      navigate({ to: "/app/editor", search: { criativoId: nextId, focus: "audio" } });
+      toast.info("Próximo rascunho da fila");
+    } else {
+      toast.success("Fila concluída");
+      navigate({ to: "/app/historico" });
+    }
+  }
+
+  const queuePos = draftQueuePosition(criativoId);
 
   function copyUtm() {
     const utm = criativo?.utm_content ?? criativoId;
@@ -659,6 +707,12 @@ function Editor({ criativoId, focus }: EditorProps) {
           </span>
         </div>
       )}
+      {audioPaths["0"] && criativo.export_status !== "pronto" && (
+        <div className="px-6 py-2 bg-success/10 border-b border-success/30 flex items-center gap-2 text-sm">
+          <Mic className="size-4 text-success shrink-0" />
+          <span>Hook com narração pré-gerado — ouça o bloco 0 ou ajuste a voz abaixo.</span>
+        </div>
+      )}
       {(showPostExport || criativo.export_status === "pronto") && exportPaths.length > 0 && (
         <PostExportBanner
           criativoId={criativoId}
@@ -675,17 +729,33 @@ function Editor({ criativoId, focus }: EditorProps) {
           exportDevMode={exportDevMode}
           organizationId={organizationId}
           userId={user?.id}
+          onNextDraft={
+            queuePos && queuePos.index < queuePos.total ? handleNextDraft : undefined
+          }
+          criativoStatus={criativo.status}
         />
       )}
       <div className="px-4 lg:px-6 pt-4">
         <AppBreadcrumbs
           items={[
-            { label: "Projeto", to: "/app" },
-            { label: "Histórico", to: "/app/historico" },
+            { label: "Dashboard", to: "/app" },
+            { label: "Pipeline", to: "/app/historico" },
             { label: anguloNome },
           ]}
         />
         <GeradorStepper etapa="editor" />
+        {queuePos && queuePos.total > 1 && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <span>
+              Fila de produção: criativo <strong>{queuePos.index}</strong> de <strong>{queuePos.total}</strong>
+            </span>
+            {criativo.export_status === "pronto" && (
+              <Button size="sm" variant="outline" onClick={handleNextDraft}>
+                Próximo rascunho ({queuePos.index}/{queuePos.total})
+              </Button>
+            )}
+          </div>
+        )}
         {planUsage && !planUsage.canExport && (
           <UpgradeBanner
             message={`Limite de exports do plano grátis atingido (${planUsage.exportsMes}/${planUsage.limits.exportsMes} este mês).`}
@@ -1033,7 +1103,14 @@ function Editor({ criativoId, focus }: EditorProps) {
           </div>
           <div className="space-y-1.5">
             <Label className="flex items-center gap-1.5"><Music className="size-3.5" /> Música</Label>
-            <Slider defaultValue={[40]} max={100} />
+            <Slider
+              value={[musicVolume]}
+              max={100}
+              onValueChange={([v]) => {
+                setMusicVolume(v);
+                persistMusicVolume(v);
+              }}
+            />
           </div>
           <div className="space-y-1.5">
             <Label className="flex items-center gap-1.5"><Type className="size-3.5" /> Legendas</Label>
@@ -1067,6 +1144,8 @@ function Editor({ criativoId, focus }: EditorProps) {
             </DialogTitle>
           </DialogHeader>
           <PostExportContent
+            criativoId={criativoId}
+            anguloNome={anguloNome}
             utm={criativo.utm_content ?? criativoId}
             exportPaths={exportPaths}
             downloadUrls={downloadUrls}
@@ -1074,6 +1153,10 @@ function Editor({ criativoId, focus }: EditorProps) {
             onMarcarSubiu={handleMarcarSubiu}
             markingSubiu={markingSubiu}
             exportDevMode={exportDevMode}
+            onNextDraft={
+              queuePos && queuePos.index < queuePos.total ? handleNextDraft : undefined
+            }
+            criativoStatus={criativo.status}
           />
         </DialogContent>
       </Dialog>
@@ -1087,173 +1170,6 @@ function Editor({ criativoId, focus }: EditorProps) {
         />
       )}
     </div>
-  );
-}
-
-type PostExportContentProps = {
-  criativoId: string;
-  anguloNome?: string;
-  utm: string;
-  exportPaths: string[];
-  downloadUrls: Record<string, string>;
-  onCopyUtm: () => void;
-  onMarcarSubiu: () => void;
-  markingSubiu: boolean;
-  exportDevMode: boolean;
-  onOpenTestPlan?: () => void;
-};
-
-function PostExportContent({
-  criativoId,
-  anguloNome,
-  utm,
-  exportPaths,
-  downloadUrls,
-  onCopyUtm,
-  onMarcarSubiu,
-  markingSubiu,
-  exportDevMode,
-  onOpenTestPlan,
-}: PostExportContentProps) {
-  return (
-    <div className="space-y-4">
-      {exportDevMode && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/15 border border-warning/30 text-sm">
-          <AlertTriangle className="size-4 text-warning shrink-0 mt-0.5" />
-          <span>Estes MP4 são placeholders de desenvolvimento. Não suba no Meta até configurar o serviço FFmpeg.</span>
-        </div>
-      )}
-      <div className="grid md:grid-cols-3 gap-4 text-sm">
-        <div className="space-y-2">
-          <p className="font-medium">Downloads</p>
-          {exportPaths.map((p) => (
-            <a
-              key={p}
-              href={downloadUrls[p] ?? "#"}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1.5 text-primary-glow underline"
-            >
-              <Download className="size-3.5" />
-              {p.includes("4x5") ? "Baixar 4:5" : "Baixar 9:16"}
-            </a>
-          ))}
-        </div>
-        <div className="space-y-2">
-          <p className="font-medium">UTM para Meta</p>
-          <code className="block text-xs bg-background/60 p-2 rounded font-mono truncate">{utm}</code>
-          <Button size="sm" variant="outline" onClick={onCopyUtm}>
-            <Copy className="size-3.5 mr-1" /> Copiar utm_content
-          </Button>
-        </div>
-        <div className="space-y-2">
-          <p className="font-medium">Checklist Meta</p>
-          <ul className="text-xs text-muted-foreground space-y-1">
-            <li>• Pixel e eventos de conversão ativos</li>
-            <li>• CTA visível fora da safe zone inferior</li>
-            <li>• utm_content no anúncio para rastrear</li>
-          </ul>
-          <MetaUploadGuide />
-        </div>
-      </div>
-      <UtmBuilder utmContent={utm} />
-      <div className="flex flex-wrap gap-2">
-        {onOpenTestPlan && (
-          <Button size="sm" variant="outline" onClick={onOpenTestPlan}>
-            <Target className="size-3.5 mr-1" /> Plano de teste Meta
-          </Button>
-        )}
-        <Button className="bg-gradient-primary border-0" onClick={onMarcarSubiu} disabled={markingSubiu}>
-          {markingSubiu ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4 mr-1.5" />}
-          Marcar como Subiu
-        </Button>
-        <Link to="/app/historico">
-          <Button variant="outline">Ir ao histórico</Button>
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-type PostExportBannerProps = PostExportContentProps & {
-  onDismiss: () => void;
-  onExpand: () => void;
-  expanded: boolean;
-  organizationId?: string | null;
-  userId?: string;
-};
-
-function PostExportBanner({
-  criativoId,
-  anguloNome,
-  utm,
-  exportPaths,
-  downloadUrls,
-  onCopyUtm,
-  onMarcarSubiu,
-  markingSubiu,
-  onDismiss,
-  onExpand,
-  expanded,
-  exportDevMode,
-  organizationId,
-  userId,
-}: PostExportBannerProps) {
-  const [testPlanOpen, setTestPlanOpen] = useState(false);
-
-  const dialog = (
-    <PlanoTesteMetaDialog
-      criativoId={criativoId}
-      anguloNome={anguloNome}
-      autoOpen
-      showTrigger={false}
-      open={testPlanOpen}
-      onOpenChange={setTestPlanOpen}
-      organizationId={organizationId}
-      userId={userId}
-    />
-  );
-
-  if (!expanded) {
-    return (
-      <>
-        {dialog}
-        <div className="px-6 py-2 bg-success/10 border-b border-success/30 flex items-center justify-between text-sm">
-          <span className="flex items-center gap-2">
-            <CheckCircle2 className="size-4 text-success" /> Export pronto — abra o checklist pós-export
-          </span>
-          <Button size="sm" variant="outline" onClick={onExpand}>
-            Ver checklist
-          </Button>
-        </div>
-      </>
-    );
-  }
-
-  return (
-    <>
-      {dialog}
-      <div className="px-6 py-4 bg-success/10 border-b border-success/30">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="font-display font-semibold flex items-center gap-2 text-sm">
-          <CheckCircle2 className="size-4 text-success" /> Checklist pós-export
-        </h2>
-        <Button size="sm" variant="ghost" onClick={onDismiss}>Recolher</Button>
-      </div>
-      <PostExportContent
-        criativoId={criativoId}
-        anguloNome={anguloNome}
-        utm={utm}
-        exportPaths={exportPaths}
-        downloadUrls={downloadUrls}
-        onCopyUtm={onCopyUtm}
-        onMarcarSubiu={onMarcarSubiu}
-        markingSubiu={markingSubiu}
-        exportDevMode={exportDevMode}
-        onOpenTestPlan={() => setTestPlanOpen(true)}
-      />
-    </div>
-    </>
   );
 }
 

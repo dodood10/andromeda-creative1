@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { format } from "date-fns";
@@ -7,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { TrendingUp, AlertTriangle, Sparkles, ArrowRight, Flame, Eye, Zap, Loader2, Brain } from "lucide-react";
+import { TrendingUp, AlertTriangle, Sparkles, ArrowRight, Flame, Eye, Zap, Loader2, Brain, Upload } from "lucide-react";
 import { getDashboardStats } from "@/lib/criativos.functions";
 import { getPlanUsage } from "@/lib/plan.functions";
 import { getNicheDailyIntel } from "@/lib/niche-intel.functions";
@@ -108,6 +109,46 @@ function Dashboard() {
 
   const feedItems = stats?.feed ?? [];
   const nextAction = stats?.nextAction;
+  const [calibrationDismissed, setCalibrationDismissed] = useState(false);
+
+  const calibrationAckKey =
+    projectId && stats?.calibrationNotice?.calibratedAt
+      ? `andromeda_calib_ack_${projectId}`
+      : null;
+
+  useEffect(() => {
+    if (!calibrationAckKey || !stats?.calibrationNotice?.calibratedAt) {
+      setCalibrationDismissed(false);
+      return;
+    }
+    const acked = localStorage.getItem(calibrationAckKey);
+    setCalibrationDismissed(acked === stats.calibrationNotice.calibratedAt);
+  }, [calibrationAckKey, stats?.calibrationNotice?.calibratedAt]);
+
+  function dismissCalibrationBanner() {
+    if (calibrationAckKey && stats?.calibrationNotice?.calibratedAt) {
+      localStorage.setItem(calibrationAckKey, stats.calibrationNotice.calibratedAt);
+    }
+    setCalibrationDismissed(true);
+  }
+
+  const showCalibrationBanner =
+    !calibrationDismissed &&
+    stats?.calibrationNotice &&
+    stats.exportados > 0;
+
+  const [csvReminderDismissed, setCsvReminderDismissed] = useState(false);
+  const csvReminderKey = projectId ? `andromeda_csv_reminder_${projectId}` : null;
+
+  useEffect(() => {
+    if (!csvReminderKey) return;
+    setCsvReminderDismissed(localStorage.getItem(csvReminderKey) === "1");
+  }, [csvReminderKey, stats?.showCsvReminder]);
+
+  function dismissCsvReminder() {
+    if (csvReminderKey) localStorage.setItem(csvReminderKey, "1");
+    setCsvReminderDismissed(true);
+  }
 
   const activationSteps = stats
     ? [
@@ -143,11 +184,17 @@ function Dashboard() {
         },
         {
           id: "subiu",
-          label: "Marcar criativo como Subiu no histórico",
+          label: "Marcar criativo como Subiu no pipeline",
           done: stats.marcouSubiu ?? false,
-          action: { to: "/app/historico" as const, label: "Abrir histórico" },
+          action: { to: "/app/historico" as const, label: "Abrir pipeline" },
         },
-      ]
+        {
+          id: "csv",
+          label: "Importar CSV do Meta (recomendado)",
+          done: stats.temCsvImport ?? false,
+          action: { to: "/app/historico" as const, label: "Importar CSV" },
+        },
+      ].filter((step) => step.id !== "csv" || (stats.exportados ?? 0) > 0)
     : [];
 
   return (
@@ -190,11 +237,92 @@ function Dashboard() {
         </Card>
       )}
 
+      {showCalibrationBanner && stats?.calibrationNotice && (
+        <Card className="glass p-4 border border-success/30 bg-success/5 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm space-y-1">
+            <p>
+              <strong>Dados validados</strong>
+              {stats.calibrationNotice.samples > 0 && (
+                <>
+                  {" "}— hook rate calibrado com {stats.calibrationNotice.samples} resultado(s) reais
+                  {stats.calibrationNotice.hookBiasPp != null
+                    ? ` (ajuste ${stats.calibrationNotice.hookBiasPp > 0 ? "+" : ""}${stats.calibrationNotice.hookBiasPp} pp)`
+                    : ""}
+                </>
+              )}
+              {(stats.calibrationNotice.cpaMedio != null || stats.calibrationNotice.roasMedio != null) && (
+                <>
+                  {stats.calibrationNotice.samples > 0 ? " · " : " — "}
+                  {stats.calibrationNotice.cpaMedio != null && `CPA médio R$ ${stats.calibrationNotice.cpaMedio.toFixed(2)}`}
+                  {stats.calibrationNotice.cpaMedio != null && stats.calibrationNotice.roasMedio != null && " · "}
+                  {stats.calibrationNotice.roasMedio != null && `ROAS ${stats.calibrationNotice.roasMedio.toFixed(2)}`}
+                </>
+              )}
+              . A próxima geração já usa essa calibração.
+            </p>
+            {stats.calibrationNotice.conversionNotes && (
+              <p className="text-xs text-muted-foreground">{stats.calibrationNotice.conversionNotes}</p>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Link to="/app/gerador">
+              <Button size="sm" className="bg-gradient-primary border-0">Gerar com calibração</Button>
+            </Link>
+            <Button size="sm" variant="ghost" onClick={dismissCalibrationBanner}>
+              Ok
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {stats?.showCsvReminder && !csvReminderDismissed && (
+        <Card className="glass p-4 border border-primary/30 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm flex items-center gap-2">
+            <Upload className="size-4 text-primary-glow shrink-0" />
+            Criativos no ar há 3+ dias — importe o CSV do Meta com coluna{" "}
+            <code className="text-xs font-mono bg-muted px-1 rounded">utm_content</code>{" "}
+            para calibrar hook rate e CPA automaticamente.
+          </p>
+          <div className="flex gap-2">
+            <Link to="/app/historico">
+              <Button size="sm" className="bg-gradient-primary border-0">Importar CSV</Button>
+            </Link>
+            <Button size="sm" variant="ghost" onClick={dismissCsvReminder}>
+              Depois
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {planUsage && !planUsage.canGerar && (
         <UpgradeBanner message="Você atingiu o limite de gerações do plano grátis este mês." upgradeTo="/app/plano" />
       )}
 
       <ContinueWizardBanner />
+
+      {stats?.exportSubiuReminderId && stats.exportSubiuReminderId !== stats.staleExportReminderId && (
+        <Card className="glass p-4 border border-primary/30 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm flex items-center gap-2">
+            <Sparkles className="size-4 text-primary-glow shrink-0" />
+            Export pronto — marque como <strong>Subiu</strong> após subir no Meta para avançar no pipeline.
+          </p>
+          <Link to="/app/historico" search={{ criativoId: stats.exportSubiuReminderId }}>
+            <Button size="sm" className="bg-gradient-primary border-0">Marcar Subiu</Button>
+          </Link>
+        </Card>
+      )}
+
+      {stats?.rodandoMetricsReminderCount ? (
+        <Card className="glass p-4 border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm flex items-center gap-2">
+            <AlertTriangle className="size-4 text-accent shrink-0" />
+            {stats.rodandoMetricsReminderCount} criativo(s) em <strong>Rodando</strong> há 7+ dias sem métricas — reporte CPA/ROAS para calibrar a IA.
+          </p>
+          <Link to="/app/historico" search={{ status: "Rodando" }}>
+            <Button size="sm" variant="outline">Reportar métricas</Button>
+          </Link>
+        </Card>
+      ) : null}
 
       {stats?.staleExportReminderId && (
         <Card className="glass p-4 border border-warning/40 bg-warning/10 flex flex-wrap items-center justify-between gap-3">
@@ -259,6 +387,34 @@ function Dashboard() {
               </Card>
             ))}
           </div>
+        )}
+
+        {stats?.nicheComparison && stats.nicheComparison.lines.length > 0 && (
+          <Card className="glass p-5 border border-primary/20 mb-6">
+            <h3 className="font-semibold text-sm mb-3">
+              Seu projeto vs. nicho ({stats.nicheComparison.nicho})
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {stats.nicheComparison.lines.map((line) => (
+                <div
+                  key={line.metric}
+                  className={`rounded-lg border p-3 text-sm ${
+                    line.verdict === "better"
+                      ? "border-success/40 bg-success/5"
+                      : line.verdict === "worse"
+                        ? "border-warning/40 bg-warning/5"
+                        : "border-border/50"
+                  }`}
+                >
+                  <p className="font-medium">{line.metric}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Você: {line.project} · Nicho: {line.niche}
+                  </p>
+                  <p className="text-xs mt-2">{line.hint}</p>
+                </div>
+              ))}
+            </div>
+          </Card>
         )}
 
         {feedItems.length > 0 && (

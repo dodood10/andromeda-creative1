@@ -23,6 +23,7 @@ import {
   isLikelyLessonTranscript,
 } from "@/lib/reference-transcription-extract";
 import { compareWithProjectNicho } from "@/lib/reference-niche-guard";
+import { useWorkspace } from "@/contexts/workspace-context";
 
 type ColarTranscricaoDialogProps = {
   open: boolean;

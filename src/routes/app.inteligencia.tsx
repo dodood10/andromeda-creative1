@@ -23,6 +23,7 @@ import { ImportBibliotecaButton } from "@/components/import-biblioteca-dialog";
 import { ColarTranscricaoButton } from "@/components/colar-transcricao-dialog";
 import { ReferenceTranscriptionsList } from "@/components/reference-transcriptions-list";
 import { ReferenceComboPanel } from "@/components/reference-combo-panel";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 export const Route = createFileRoute("/app/inteligencia")({
   head: () => ({
@@ -54,6 +55,7 @@ function Inteligencia() {
 
   return (
     <div className="container mx-auto px-6 py-8 max-w-6xl space-y-8">
+      <AppBreadcrumbs items={[{ label: "Dashboard", to: "/app" }, { label: "Inteligência" }]} />
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-3xl font-display font-bold flex items-center gap-3">
@@ -189,6 +191,34 @@ function Inteligencia() {
                 sub={data.intelSettings?.conversion_bias_notes ?? undefined}
               />
             </div>
+          )}
+
+          {data.nicheComparison && data.nicheComparison.lines.length > 0 && (
+            <Card className="glass p-5 border border-primary/20">
+              <h2 className="font-semibold text-sm mb-3">
+                Benchmark do nicho ({data.nicheComparison.nicho})
+              </h2>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {data.nicheComparison.lines.map((line) => (
+                  <div
+                    key={line.metric}
+                    className={`rounded-lg border p-3 text-sm ${
+                      line.verdict === "better"
+                        ? "border-success/40 bg-success/5"
+                        : line.verdict === "worse"
+                          ? "border-warning/40 bg-warning/5"
+                          : "border-border/50"
+                    }`}
+                  >
+                    <p className="font-medium">{line.metric}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Projeto: {line.project} · Nicho: {line.niche}
+                    </p>
+                    <p className="text-xs mt-2 text-muted-foreground">{line.hint}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
           )}
 
           {(data.pendentesValidacao.performando > 0 || data.pendentesValidacao.resultados > 0) && (

@@ -2,25 +2,22 @@ const STEPS = [
   { id: "input", label: "Briefing", etapas: ["input", "respondendo"] as const },
   { id: "resultado", label: "Ângulos", etapas: ["resultado"] as const },
   { id: "wizard", label: "Produção", etapas: ["wizard"] as const },
-  { id: "editor", label: "Editor", etapas: [] as const },
-  { id: "export", label: "Export", etapas: ["export"] as const },
+  { id: "editor", label: "Editor", etapas: ["editor"] as const },
 ] as const;
 
 export type GeradorStepId = (typeof STEPS)[number]["id"];
 
 export function GeradorStepper({ etapa }: { etapa: string }) {
   const currentIdx =
-    etapa === "export"
-      ? 4
-      : etapa === "editor"
-        ? 3
-        : etapa === "wizard"
-          ? 2
-          : etapa === "resultado"
-            ? 1
-            : etapa === "respondendo" || etapa === "input"
-              ? 0
-              : 0;
+    etapa === "editor"
+      ? 3
+      : etapa === "wizard"
+        ? 2
+        : etapa === "resultado"
+          ? 1
+          : etapa === "respondendo" || etapa === "input"
+            ? 0
+            : 0;
 
   return (
     <div className="flex items-center gap-2 text-xs mb-6 overflow-x-auto pb-1">

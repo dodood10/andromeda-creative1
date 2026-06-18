@@ -9,6 +9,7 @@ import { createProject } from "@/lib/organizations.functions";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { toast } from "sonner";
 import { FolderKanban, Plus, Check } from "lucide-react";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 export const Route = createFileRoute("/app/projetos")({
   head: () => ({
@@ -18,6 +19,7 @@ export const Route = createFileRoute("/app/projetos")({
 });
 
 function Projetos() {
+  const navigate = useNavigate();
   const { organizations, organizationId, projectId, setWorkspace, refresh, currentOrg } = useWorkspace();
   const runCreate = useServerFn(createProject);
   const [name, setName] = useState("");
@@ -58,6 +60,7 @@ function Projetos() {
 
   return (
     <div className="container mx-auto px-6 py-8 max-w-3xl space-y-8">
+      <AppBreadcrumbs items={[{ label: "Dashboard", to: "/app" }, { label: "Projetos" }]} />
       <div>
         <h1 className="text-3xl font-display font-bold flex items-center gap-3">
           <FolderKanban className="size-7 text-primary-glow" /> Projetos

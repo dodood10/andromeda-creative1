@@ -3,10 +3,10 @@ import type { Database } from "@/integrations/supabase/types";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
 import type { AudioPaths } from "@/lib/types/criativo-json";
 import { parseAudioPaths } from "@/lib/types/criativo-json";
+import { suggestVoiceForTom, DEFAULT_VOICE_ID } from "@/lib/voice-suggestion";
+import type { TomCalibracao } from "@/lib/types/enums";
 
 const BUCKET = "criativos-media";
-
-const DEFAULT_VOICE_ID = "EXAVITQu4vr4xnSDxMaL";
 
 async function uploadAudioBlock(
   supabase: SupabaseClient<Database>,
@@ -87,4 +87,45 @@ export async function ensureCriativoAudio(params: {
   }
 
   return { audioPaths, generated: gerados > 0 };
+}
+
+/** Define voz sugerida e gera áudio do hook (bloco 0) ao criar rascunho. */
+export async function bootstrapDraftHookAudio(params: {
+  supabase: SupabaseClient<Database>;
+  criativoId: string;
+  roteiro: RoteiroBloco[];
+  tomCalibracao?: TomCalibracao | string;
+}): Promise<{ voiceId: string; hookGenerated: boolean }> {
+  const voiceId = suggestVoiceForTom(params.tomCalibracao);
+  await params.supabase
+    .from("criativos")
+    .update({ voice_id: voiceId })
+    .eq("id", params.criativoId);
+
+  const hookText = params.roteiro[0]?.conteudo?.trim();
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey || !hookText) {
+    return { voiceId, hookGenerated: false };
+  }
+
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: "POST",
+    headers: {
+      "xi-api-key": apiKey,
+      "Content-Type": "application/json",
+      Accept: "audio/mpeg",
+    },
+    body: JSON.stringify({ text: hookText, model_id: "eleven_multilingual_v2" }),
+  });
+
+  if (!res.ok) return { voiceId, hookGenerated: false };
+
+  const buffer = await res.arrayBuffer();
+  const path = await uploadAudioBlock(params.supabase, params.criativoId, 0, buffer);
+  await params.supabase
+    .from("criativos")
+    .update({ audio_paths: { "0": path }, voice_id: voiceId })
+    .eq("id", params.criativoId);
+
+  return { voiceId, hookGenerated: true };
 }

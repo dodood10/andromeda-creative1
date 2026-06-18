@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { AnguloSchema, ResultadoAngulosSchema, RoteiroBlocoSchema } from "./schemas/angulos.schema";
+import { AnguloSchema, ResultadoAngulosSchema, RoteiroBlocoSchema, type RoteiroBloco } from "./schemas/angulos.schema";
 import type { ResultadoAngulos } from "./schemas/angulos.schema";
 import { normalizeAngulo, getProjectFormatContext } from "./formato-recomendacao";
 import {
@@ -23,7 +23,10 @@ import type { AppLink } from "./app-links";
 import { buildVslRoteiroFromAngulo } from "./vsl-roteiro";
 import { generateVslFromAngulo } from "./vsl.functions";
 import { gerarVariacoesEscala } from "./escala.functions";
+import { bootstrapDraftHookAudio } from "./render/audio-prep";
+import { trackFunnelEvent } from "./funnel-events";
 import { loadNicheDailyInsights } from "./niche-intel.functions";
+import { buildNicheBenchmarkComparison } from "./project-niche-benchmark";
 import { trackApiUsage } from "./api-usage";
 import { HttpUrlSchema } from "./security-url";
 import { assertUserOwnedMediaPath } from "./security-storage";
@@ -98,6 +101,15 @@ async function syncProjectCalibration(
   );
 }
 
+/** Recalcula calibração do projeto (ex.: após aprovação admin). */
+export async function refreshCalibrationForProject(
+  supabase: SupabaseClient<Database>,
+  projectId: string,
+): Promise<void> {
+  const perf = await getProjectPerformanceContext(supabase, projectId);
+  await syncProjectCalibration(supabase, projectId, perf);
+}
+
 const ProjectScopeSchema = z.object({
   projectId: z.string().uuid(),
   organizationId: z.string().uuid(),
@@ -161,6 +173,12 @@ export const updateCriativoStatus = createServerFn({ method: "POST" })
       patch.performando_intel_notes = null;
     }
 
+    if (data.status === "Rodando") {
+      patch.status_rodando_at = new Date().toISOString();
+    } else {
+      patch.status_rodando_at = null;
+    }
+
     const { data: row, error } = await supabase
       .from("criativos")
       .update(patch)
@@ -169,6 +187,17 @@ export const updateCriativoStatus = createServerFn({ method: "POST" })
       .single();
 
     if (error) throw new Error(error.message);
+
+    if (data.status === "Subiu") {
+      const rowOrg = row as CriativoRow & { organization_id?: string };
+      trackFunnelEvent({
+        userId: context.userId,
+        organizationId: rowOrg.organization_id,
+        event: "marcou_subiu",
+        metadata: { criativoId: data.id },
+      });
+    }
+
     return row as CriativoRow;
   });
 
@@ -180,6 +209,7 @@ export const updateCriativoRoteiro = createServerFn({ method: "POST" })
       roteiro: z.array(RoteiroBlocoSchema),
       voiceId: z.string().optional(),
       backgroundMediaPath: z.string().optional(),
+      musicVolume: z.number().int().min(0).max(100).optional(),
     }),
   )
   .handler(async ({ data, context }) => {
@@ -190,6 +220,7 @@ export const updateCriativoRoteiro = createServerFn({ method: "POST" })
       assertUserOwnedMediaPath(userId, data.backgroundMediaPath);
       patch.background_media_path = data.backgroundMediaPath;
     }
+    if (data.musicVolume !== undefined) patch.music_volume = data.musicVolume;
 
     const { data: row, error } = await supabase
       .from("criativos")
@@ -397,6 +428,7 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
     const anguloJson = {
       ...anguloNormalized,
       ...vslExtras,
+      tom_calibracao_aplicado: data.tomCalibracao ?? "direto",
       recomendacao_formato_original: anguloNormalized.recomendacao_formato,
       recomendacao_formato_aplicada: {
         formato_saida: data.formatoSaida,
@@ -434,7 +466,20 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
       .single();
 
     if (error) throw new Error(error.message);
-    return { criativoId: criativo.id, vslDevMode: data.formatoSaida === "vsl_curta" && !!vslExtras.vsl_dev_mode };
+
+    const bootstrap = await bootstrapDraftHookAudio({
+      supabase,
+      criativoId: criativo.id,
+      roteiro: roteiro as RoteiroBloco[],
+      tomCalibracao: data.tomCalibracao,
+    }).catch(() => ({ voiceId: "", hookGenerated: false }));
+
+    return {
+      criativoId: criativo.id,
+      vslDevMode: data.formatoSaida === "vsl_curta" && !!vslExtras.vsl_dev_mode,
+      hookAudioGenerated: bootstrap?.hookGenerated ?? false,
+      voiceId: bootstrap?.voiceId,
+    };
   });
 
 export const getDashboardStats = createServerFn({ method: "POST" })
@@ -448,7 +493,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
     const { data: criativos, error } = await supabase
       .from("criativos")
       .select(
-        "status, angulo, formato_saida, export_status, id, performando_intel_status, updated_at, angulo_json",
+        "status, angulo, formato_saida, export_status, id, performando_intel_status, updated_at, status_rodando_at, angulo_json",
       )
       .eq("project_id", data.projectId);
 
@@ -536,6 +581,12 @@ export const getDashboardStats = createServerFn({ method: "POST" })
     ).length;
 
     const fortyEightHoursAgo = Date.now() - 48 * 60 * 60 * 1000;
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    const exportSubiuReminder = (criativos ?? []).find(
+      (c) => c.export_status === "pronto" && c.status === "Gerado",
+    );
+
     const staleExportReminder = (criativos ?? []).find(
       (c) =>
         c.export_status === "pronto" &&
@@ -543,6 +594,38 @@ export const getDashboardStats = createServerFn({ method: "POST" })
         c.updated_at &&
         new Date(c.updated_at).getTime() < fortyEightHoursAgo,
     );
+
+    const rodandoSince = (c: { status_rodando_at?: string | null; updated_at?: string | null }) => {
+      const at = c.status_rodando_at ?? c.updated_at;
+      return at ? new Date(at).getTime() : null;
+    };
+
+    const rodandoMetricsReminder = (criativos ?? []).find((c) => {
+      if (c.status !== "Rodando") return false;
+      const since = rodandoSince(c);
+      if (since == null || since > sevenDaysAgo) return false;
+      return !metricsByCriativo.has(c.id);
+    });
+    const rodandoMetricsReminderCount = (criativos ?? []).filter((c) => {
+      if (c.status !== "Rodando") return false;
+      const since = rodandoSince(c);
+      if (since == null || since > sevenDaysAgo) return false;
+      return !metricsByCriativo.has(c.id);
+    }).length;
+
+    const temCsvImport = (resultadosProjeto ?? []).some((r) =>
+      r.observacao?.includes("Import CSV"),
+    );
+    const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    const showCsvReminder =
+      !temCsvImport &&
+      exportados > 0 &&
+      (criativos ?? []).some(
+        (c) =>
+          c.export_status === "pronto" &&
+          c.updated_at &&
+          new Date(c.updated_at).getTime() < threeDaysAgo,
+      );
 
     const feed: Array<{ tag: string; title: string; desc: string; action: AppLink }> = [];
     if (counts.Performando > 0) {
@@ -585,6 +668,30 @@ export const getDashboardStats = createServerFn({ method: "POST" })
         title: `Apenas ${angulosTestados.size} ângulo(s) testados`,
         desc: "Gere novos ângulos para encontrar o campeão mais rápido.",
         action: { to: "/app/gerador" },
+      });
+    }
+    if (exportSubiuReminder) {
+      feed.push({
+        tag: "Pipeline",
+        title: "MP4 pronto — marque como Subiu",
+        desc: "Após subir no Meta, atualize o status para acompanhar o pipeline e métricas.",
+        action: { to: "/app/historico", search: { criativoId: exportSubiuReminder.id } },
+      });
+    }
+    if (rodandoMetricsReminderCount > 0) {
+      feed.push({
+        tag: "Métricas",
+        title: `${rodandoMetricsReminderCount} criativo(s) rodando há 7+ dias`,
+        desc: "Reporte CPA, ROAS ou hook rate para calibrar a próxima geração.",
+        action: { to: "/app/historico", search: { status: "Rodando" } },
+      });
+    }
+    if (showCsvReminder) {
+      feed.push({
+        tag: "Métricas",
+        title: "Importe o CSV do Meta",
+        desc: "Com 3+ dias no ar, o CSV com utm_content calibra hook rate e CPA automaticamente.",
+        action: { to: "/app/historico", search: { export: "pronto" } },
       });
     }
     if (feed.length === 0) {
@@ -636,6 +743,55 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       return { label: "Gerar novos ângulos para diversificar", to: "/app/gerador" };
     })();
 
+    const intelSettings = await loadProjectIntelSettings(supabase, data.projectId);
+    const calibrationNotice =
+      intelSettings?.last_calibrated_at &&
+      ((intelSettings.calibration_samples ?? 0) > 0 ||
+        (intelSettings.calibration_samples_conversion ?? 0) > 0)
+        ? {
+            calibratedAt: intelSettings.last_calibrated_at,
+            hookBiasPp: intelSettings.hook_rate_bias_pp ?? null,
+            samples: intelSettings.calibration_samples ?? 0,
+            conversionSamples: intelSettings.calibration_samples_conversion ?? 0,
+            conversionNotes: intelSettings.conversion_bias_notes ?? null,
+            cpaMedio: intelSettings.cpa_medio_validado ?? null,
+            roasMedio: intelSettings.roas_medio_validado ?? null,
+          }
+        : null;
+
+    const { data: projectRow } = await supabase
+      .from("projects")
+      .select("nicho")
+      .eq("id", data.projectId)
+      .maybeSingle();
+
+    let nicheComparison: {
+      nicho: string;
+      lines: ReturnType<typeof buildNicheBenchmarkComparison>["lines"];
+    } | null = null;
+
+    if (projectRow?.nicho?.trim()) {
+      const nicheData = await loadNicheDailyInsights(supabase, projectRow.nicho.trim());
+      const hookRatesProj: number[] = [];
+      for (const r of resultadosProjeto ?? []) {
+        if (r.metrica !== "hook_rate" || !r.valor) continue;
+        if (r.intel_review_status !== "approved" && !r.observacao?.includes("Import CSV")) continue;
+        const n = parseNumericMetric(r.valor);
+        if (n != null) hookRatesProj.push(n);
+      }
+      const comp = buildNicheBenchmarkComparison({
+        projectCpa: intelSettings?.cpa_medio_validado,
+        projectRoas: intelSettings?.roas_medio_validado,
+        projectHookRate: hookRatesProj.length
+          ? hookRatesProj.reduce((a, b) => a + b, 0) / hookRatesProj.length
+          : null,
+        benchmarks: nicheData.benchmarks,
+      });
+      if (comp.hasComparison) {
+        nicheComparison = { nicho: projectRow.nicho.trim(), lines: comp.lines };
+      }
+    }
+
     return {
       counts,
       total,
@@ -655,6 +811,10 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       firstPerformandoId,
       performandoPendentes,
       staleExportReminderId: staleExportReminder?.id ?? null,
+      exportSubiuReminderId: exportSubiuReminder?.id ?? null,
+      rodandoMetricsReminderId: rodandoMetricsReminder?.id ?? null,
+      rodandoMetricsReminderCount,
+      nicheComparison,
       volumeTarget: 12,
       escalaLineage,
       sugestao:
@@ -665,16 +825,58 @@ export const getDashboardStats = createServerFn({ method: "POST" })
             : !formatosTestados.has("vsl_curta")
               ? "Você ainda não testou VSL curta neste projeto."
               : "Continue escalando os criativos que estão performando.",
+      temCsvImport,
+      showCsvReminder,
+      calibrationNotice,
     };
   });
 
 export const getLatestCriativo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({ projectId: z.string().uuid() }).parse(input),
+    z
+      .object({
+        projectId: z.string().uuid(),
+        currentCriativoId: z.string().uuid().optional(),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
+
+    if (data.currentCriativoId) {
+      const { data: current } = await supabase
+        .from("criativos")
+        .select("id, export_status")
+        .eq("id", data.currentCriativoId)
+        .eq("project_id", data.projectId)
+        .maybeSingle();
+      if (current && current.export_status !== "pronto") {
+        return { criativoId: current.id };
+      }
+    }
+
+    const { data: pending } = await supabase
+      .from("criativos")
+      .select("id")
+      .eq("project_id", data.projectId)
+      .neq("export_status", "pronto")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (pending) return { criativoId: pending.id };
+
+    if (data.currentCriativoId) {
+      const { data: current } = await supabase
+        .from("criativos")
+        .select("id")
+        .eq("id", data.currentCriativoId)
+        .eq("project_id", data.projectId)
+        .maybeSingle();
+      if (current) return { criativoId: current.id };
+    }
+
     const { data: row, error } = await supabase
       .from("criativos")
       .select("id")
@@ -1088,6 +1290,21 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
           : null,
       nicheInsights: nicheInsights?.insights ?? [],
       nicheInsightsCached: nicheInsights?.cached ?? false,
+      nicheBenchmarks: nicheInsights?.benchmarks ?? null,
+      nicheComparison: (() => {
+        if (!project?.nicho?.trim()) return null;
+        const comp = buildNicheBenchmarkComparison({
+          projectCpa: intelSettings?.cpa_medio_validado,
+          projectRoas: intelSettings?.roas_medio_validado,
+          projectHookRate: hookRatesReais.length
+            ? hookRatesReais.reduce((a, b) => a + b, 0) / hookRatesReais.length
+            : null,
+          benchmarks: nicheInsights?.benchmarks,
+        });
+        return comp.hasComparison
+          ? { nicho: project.nicho.trim(), lines: comp.lines }
+          : null;
+      })(),
       resultadosRecentes: resultadosAprovados.slice(0, 8).map((r) => ({
         angulo: (r.criativos as { angulo?: string })?.angulo ?? "—",
         tipo: r.tipo,

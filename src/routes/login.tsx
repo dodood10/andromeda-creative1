@@ -15,6 +15,7 @@ import { safeLoginRedirect } from "@/lib/utils";
 
 const searchSchema = z.object({
   redirect: z.string().optional(),
+  tab: z.enum(["signin", "signup"]).optional(),
 });
 
 export const Route = createFileRoute("/login")({
@@ -42,13 +43,19 @@ function authErrorMessage(error: unknown, fallback: string): string {
 
 function Login() {
   const navigate = useNavigate();
-  const { redirect } = Route.useSearch();
+  const { redirect, tab: tabParam } = Route.useSearch();
   const { session, loading: authLoading, profile } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState("signin");
+  const [tab, setTab] = useState(tabParam ?? "signin");
+
+  const isInviteFlow = redirect?.includes("/accept-invite");
+
+  useEffect(() => {
+    if (tabParam) setTab(tabParam);
+  }, [tabParam]);
 
   useEffect(() => {
     if (authLoading || !session) return;
@@ -163,6 +170,11 @@ function Login() {
           </div>
 
           <Card className="glass bg-gradient-card p-6">
+            {isInviteFlow && (
+              <p className="text-sm text-primary-glow bg-primary/10 border border-primary/20 rounded-lg px-3 py-2 mb-4">
+                Você tem um convite pendente — entre ou crie conta para aceitar o workspace.
+              </p>
+            )}
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList className="grid w-full grid-cols-2 mb-6">
                 <TabsTrigger value="signin">Entrar</TabsTrigger>
