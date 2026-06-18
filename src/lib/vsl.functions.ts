@@ -16,6 +16,7 @@ import { formatCalibrationBiasInstruction, loadProjectIntelSettings } from "./si
 import { getProjectGeneralIntelText } from "./project-reference-intel";
 import { getProjectPerformanceContext } from "./project-performance-context";
 import { buildOfferSnapshot, formatOfferSnapshotBlock } from "./offer-snapshot";
+import { TomCalibracaoSchema } from "./types/enums";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 

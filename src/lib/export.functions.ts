@@ -243,8 +243,6 @@ const CLAIMS_PROIBIDOS = [
   /ganhe\s+dinheiro\s+enquanto\s+dorme/i,
 ];
 
-import type { EstiloProducao } from "./formato-recomendacao";
-
 export type { ScoreDimensao, CriativoScore } from "./types/criativo-json";
 
 function computeSafeZonesScore(roteiro: RoteiroBloco[]) {
