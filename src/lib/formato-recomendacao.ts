@@ -4,9 +4,9 @@ import {
   RecomendacaoFormatoSchema,
   type RecomendacaoFormato,
 } from "./schemas/angulos.schema";
+import type { EstiloProducao, FormatoSaida } from "./types/enums";
 
-export type FormatoSaida = "criativo_curto" | "vsl_curta";
-export type EstiloProducao = "texto_animado" | "clipes_texto" | "ugc_avatar";
+export type { EstiloProducao, FormatoSaida } from "./types/enums";
 
 export type FormatoOverride = {
   formatoSaida: FormatoSaida;

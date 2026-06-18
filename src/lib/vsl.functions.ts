@@ -6,7 +6,7 @@ import { VSL_CURTA_SYSTEM } from "./prompts/vsl-curta.system";
 import { VslOutputSchema } from "./schemas/vsl.schema";
 import { buildVslRoteiroFromAngulo, vslOutputToRoteiro } from "./vsl-roteiro";
 import { trackApiUsage } from "./api-usage";
-import type { ResultadoAngulos } from "./anthropic.functions";
+import type { ResultadoAngulos } from "./schemas/angulos.schema";
 import { AnguloSchema } from "./schemas/angulos.schema";
 
 const InputSchema = z.object({

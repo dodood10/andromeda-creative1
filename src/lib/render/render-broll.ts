@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
+import type { AudioPaths } from "@/lib/types/criativo-json";
 import { runWithConcurrency } from "@/lib/gerador-helpers";
 import { buildBrollPrompts } from "@/lib/render/broll-prompts";
 import { BUCKET, callFfmpegRender } from "@/lib/render/render-ffmpeg";
@@ -89,7 +90,7 @@ export async function executeBrollRender(params: {
   supabase: SupabaseClient<Database>;
   criativoId: string;
   roteiro: RoteiroBloco[];
-  audioPaths: unknown;
+  audioPaths: AudioPaths | null;
   utm: string;
   hookVisual?: string;
   produto?: string;

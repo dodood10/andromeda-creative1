@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { OrgMemberRole } from "./types/enums";
 
 async function assertOrgOwner(
   supabase: SupabaseClient<Database>,
@@ -63,7 +64,7 @@ export type WorkspaceOrg = {
   id: string;
   name: string;
   slug: string;
-  role: string;
+  role: OrgMemberRole;
   projects: Array<{
     id: string;
     name: string;

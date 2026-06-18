@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FeedbackNegativoSchema } from "@/lib/types/enums";
 
 const VslBlocoBase = z.object({
   texto_falado: z.string(),
@@ -53,7 +54,7 @@ export const VslOutputSchema = z.object({
     hook_rate_estimado: z.string(),
     hold_rate_30s: z.string(),
     taxa_conclusao_estimada: z.string(),
-    feedback_negativo_esperado: z.enum(["baixo", "medio", "alto"]).or(z.string()),
+    feedback_negativo_esperado: FeedbackNegativoSchema,
   }),
 });
 

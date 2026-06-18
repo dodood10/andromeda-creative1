@@ -4,7 +4,9 @@ import { refineBlockWithAI } from "./anthropic-refine";
 import { trackApiUsage } from "./api-usage";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getProjectFormatContext, normalizeAngulo } from "./formato-recomendacao";
-import { ResultadoAngulosSchema, type RecomendacaoFormato } from "./schemas/angulos.schema";
+import { ResultadoAngulosSchema, type RecomendacaoFormato, type ResultadoAngulos } from "./schemas/angulos.schema";
+import { HttpUrlSchema } from "./security-url";
+import { rateLimitGerarAngulos } from "./security-rate-limit";
 
 const PRODUCT_QUESTION_RULES: Record<string, string> = {
   ecom: "qual é a principal objeção que impede a compra deste produto específico",
@@ -19,7 +21,7 @@ const PRODUCT_QUESTION_RULES: Record<string, string> = {
 // =====================================================
 
 const PerguntaInputSchema = z.object({
-  url: z.string().min(1),
+  url: HttpUrlSchema,
   productType: z.string().optional().default("info"),
   goal: z.string().optional().default("conv"),
   context: z.string().optional().default(""),
@@ -100,7 +102,7 @@ Gere a pergunta cirúrgica adaptada a este produto específico (não genérica) 
 // =====================================================
 
 const InputSchema = z.object({
-  url: z.string().min(1),
+  url: HttpUrlSchema,
   productType: z.string().optional().default("info"),
   goal: z.string().optional().default("conv"),
   context: z.string().optional().default(""),
@@ -273,7 +275,7 @@ recomendacao_formato — OBRIGATÓRIO em cada ângulo:
 Sempre EXATAMENTE 5 ângulos, cada um para micropersona diferente. Português do Brasil.`;
 
 export const gerarAngulos = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireSupabaseAuth, rateLimitGerarAngulos])
   .inputValidator((input: unknown) => InputSchema.parse(input))
   .handler(async ({ data, context }) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -342,21 +344,21 @@ Execute o processo completo: visite a URL com web_search, pesquise o que escala 
       trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
       throw new Error("JSON inválido: " + parsed.error.message.slice(0, 200));
     }
-    const normalized = {
+    const normalized: ResultadoAngulos = {
       ...parsed.data,
       angulos: parsed.data.angulos.map((a) => normalizeAngulo(a)),
     };
     trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: true });
-    return normalized as ResultadoAngulos;
+    return normalized;
   });
 
 export const refinarBloco = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(
     z.object({
-      conteudoAtual: z.string(),
-      instrucao: z.string().min(1),
-      tempo: z.string(),
+      conteudoAtual: z.string().max(5000),
+      instrucao: z.string().min(1).max(4000),
+      tempo: z.string().max(64),
       tomCalibracao: z.enum(["direto", "empatico", "autoritativo"]).optional(),
     }),
   )
@@ -380,42 +382,4 @@ export const refinarBloco = createServerFn({ method: "POST" })
     }
   });
 
-export type ResultadoAngulos = {
-  diagnostico: {
-    mecanismo: string;
-    nivel_consciencia: string;
-    sofisticacao_mercado: "novo" | "intermediario" | "sofisticado" | string;
-    variavel_oportunidade: string;
-    framework_copy_atual?: string;
-    panorama_formatos_nicho?: string;
-  };
-  angulos: Array<{
-    numero: number;
-    nome: string;
-    tipo: "Previsibilidade" | "Escala" | "Orgânico" | string;
-    micropersona: { nome: string; papel_temido: string };
-    variavel_explorada: string;
-    nivel_schwartz: string;
-    nivel_conspiracao: "sem" | "leve" | "forte" | string;
-    hook: string;
-    estrutura: Array<{ tempo: string; conteudo: string }>;
-    hook_visual: string;
-    cta: string;
-    justificativa_probabilistica: string;
-    sinais_andromeda: {
-      hook_rate_estimado: string;
-      feedback_negativo_esperado: "baixo" | "medio" | "alto" | string;
-      fatia_leilao: string;
-    };
-    saturacao_hook: {
-      status: "saturado" | "neutro" | "sub_explorado" | string;
-      observacao: string;
-    };
-    janela_relevancia: {
-      tipo: "atemporal" | "media" | "curta" | string;
-      estimativa: string;
-      motivo: string;
-    };
-    recomendacao_formato: RecomendacaoFormato;
-  }>;
-};
+export type { ResultadoAngulos } from "./schemas/angulos.schema";

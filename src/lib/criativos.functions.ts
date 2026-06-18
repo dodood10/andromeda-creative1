@@ -2,29 +2,31 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import type { Tables, Enums } from "@/integrations/supabase/types";
-import type { ResultadoAngulos } from "./anthropic.functions";
-import { AnguloSchema, RoteiroBlocoSchema } from "./schemas/angulos.schema";
+import { AnguloSchema, ResultadoAngulosSchema, RoteiroBlocoSchema } from "./schemas/angulos.schema";
+import type { ResultadoAngulos } from "./schemas/angulos.schema";
 import { normalizeAngulo, getProjectFormatContext } from "./formato-recomendacao";
 import type { AppLink } from "./app-links";
 import { buildVslRoteiroFromAngulo } from "./vsl-roteiro";
 import { generateVslFromAngulo } from "./vsl.functions";
 import { gerarVariacoesEscala } from "./escala.functions";
 import { trackApiUsage } from "./api-usage";
+import { HttpUrlSchema } from "./security-url";
+import { assertUserOwnedMediaPath } from "./security-storage";
+import {
+  CriativoStatusSchema,
+  type CriativoStatus,
+  type EstiloProducao,
+  type FormatoSaida,
+} from "./types/enums";
+import {
+  mapCriativoRow,
+  type CriativoRow,
+} from "./types/criativo-json";
+import type { Enums } from "@/integrations/supabase/types";
 
-export type CriativoRow = Tables<"criativos">;
-type CriativoStatus = Enums<"criativo_status">;
-type FormatoSaida = Enums<"formato_saida">;
-type EstiloProducao = Enums<"estilo_producao">;
 type ResultadoTipo = Enums<"resultado_tipo">;
 
-const CriativoStatusSchema = z.enum([
-  "Gerado",
-  "Subiu",
-  "Rodando",
-  "Performando",
-  "Pausado",
-]);
+export type { CriativoRow } from "./types/criativo-json";
 
 const ProjectScopeSchema = z.object({
   projectId: z.string().uuid(),
@@ -60,7 +62,7 @@ export const getCriativo = createServerFn({ method: "POST" })
       .single();
 
     if (error) throw new Error(error.message);
-    return row as CriativoRow;
+    return mapCriativoRow(row as CriativoRow);
   });
 
 export const updateCriativoStatus = createServerFn({ method: "POST" })
@@ -95,10 +97,13 @@ export const updateCriativoRoteiro = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data, context }) => {
-    const { supabase } = context;
+    const { supabase, userId } = context;
     const patch: Record<string, unknown> = { roteiro: data.roteiro };
     if (data.voiceId !== undefined) patch.voice_id = data.voiceId;
-    if (data.backgroundMediaPath !== undefined) patch.background_media_path = data.backgroundMediaPath;
+    if (data.backgroundMediaPath !== undefined) {
+      assertUserOwnedMediaPath(userId, data.backgroundMediaPath);
+      patch.background_media_path = data.backgroundMediaPath;
+    }
 
     const { data: row, error } = await supabase
       .from("criativos")
@@ -112,11 +117,11 @@ export const updateCriativoRoteiro = createServerFn({ method: "POST" })
   });
 
 const SaveGeracaoSchema = z.object({
-  url: z.string().min(1),
+  url: HttpUrlSchema,
   productType: z.string(),
   goal: z.string(),
   context: z.string().optional().default(""),
-  resultado: z.custom<ResultadoAngulos>(),
+  resultado: ResultadoAngulosSchema,
   criarCriativos: z.boolean().optional().default(false),
   projectId: z.string().uuid(),
   organizationId: z.string().uuid(),

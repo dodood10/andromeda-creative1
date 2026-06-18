@@ -33,6 +33,7 @@ import {
 } from "@/lib/gerador-helpers";
 import { searchPexelsMedia, downloadPexelsToStorage } from "@/lib/stock-media.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
+import { validateHttpUrl } from "@/lib/security-url";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { useNavigate } from "@tanstack/react-router";
@@ -342,6 +343,12 @@ function Gerador() {
       toast.error("Informe a URL do site");
       return;
     }
+    try {
+      validateHttpUrl(url);
+    } catch {
+      toast.error("Informe uma URL válida (http ou https)");
+      return;
+    }
     setLoadingPergunta(true);
     try {
       const data = await askQuestion({ data: { url, productType, goal, context } });
@@ -358,6 +365,12 @@ function Gerador() {
   async function runGerarAngulos(skipPergunta = false, updateGeracaoId?: string | null) {
     if (!url.trim()) {
       toast.error("Informe a URL do site");
+      return;
+    }
+    try {
+      validateHttpUrl(url);
+    } catch {
+      toast.error("Informe uma URL válida (http ou https)");
       return;
     }
     if (!skipPergunta && !resposta.trim()) {

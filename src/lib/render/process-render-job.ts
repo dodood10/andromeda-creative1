@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import type { EstiloProducao } from "@/lib/formato-recomendacao";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
+import type { AudioPaths, ScoreJson } from "@/lib/types/criativo-json";
+import { parseAudioPaths, parseScoreJson } from "@/lib/types/criativo-json";
 import { trackApiUsage } from "@/lib/api-usage";
 import { trackFunnelEvent } from "@/lib/funnel-events";
 import { ensureCriativoAudio } from "@/lib/render/audio-prep";
@@ -15,13 +17,13 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 export type CriativoRenderRow = {
   id: string;
   roteiro: RoteiroBloco[] | null;
-  audio_paths: unknown;
+  audio_paths: AudioPaths | null;
   background_media_path: string | null;
   utm_content: string | null;
   estilo_producao: EstiloProducao | null;
   angulo_json: unknown;
   produto: string;
-  score_json: unknown;
+  score_json: ScoreJson | null;
   organization_id: string | null;
   voice_id: string | null;
 };
@@ -55,7 +57,7 @@ export async function processCriativoRenderJob(params: {
     existingJobId: params.jobId,
   });
 
-  const existingScore = (criativo.score_json as Record<string, unknown>) ?? {};
+  const existingScore = criativo.score_json;
   const scorePatch = buildExportScorePatch(existingScore, resolved);
 
   await supabase
@@ -153,7 +155,19 @@ export async function runBackgroundRenderForCriativoId(criativoId: string, userI
   try {
     await processCriativoRenderJob({
       supabase: supabaseAdmin,
-      criativo: criativo as CriativoRenderRow,
+      criativo: {
+        id: criativo.id,
+        roteiro: criativo.roteiro as RoteiroBloco[] | null,
+        audio_paths: parseAudioPaths(criativo.audio_paths),
+        background_media_path: criativo.background_media_path,
+        utm_content: criativo.utm_content,
+        estilo_producao: criativo.estilo_producao as EstiloProducao | null,
+        angulo_json: criativo.angulo_json,
+        produto: criativo.produto,
+        score_json: parseScoreJson(criativo.score_json),
+        organization_id: criativo.organization_id,
+        voice_id: criativo.voice_id,
+      },
       userId,
       renderStart,
     });

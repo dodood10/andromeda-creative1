@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
+import type { AudioPaths } from "@/lib/types/criativo-json";
+import { parseAudioPaths } from "@/lib/types/criativo-json";
 
 const BUCKET = "criativos-media";
 
@@ -20,9 +22,8 @@ async function uploadAudioBlock(
   return path;
 }
 
-function hasAudioPaths(audioPaths: unknown): boolean {
-  if (!audioPaths || typeof audioPaths !== "object") return false;
-  return Object.keys(audioPaths as Record<string, string>).length > 0;
+function hasAudioPaths(audioPaths: AudioPaths | null | undefined): boolean {
+  return Boolean(audioPaths && Object.keys(audioPaths).length > 0);
 }
 
 /** Gera narração ElevenLabs para todos os blocos se ainda não existir áudio. */
@@ -33,7 +34,7 @@ export async function ensureCriativoAudio(params: {
   voiceId?: string | null;
   userId?: string;
   organizationId?: string | null;
-}): Promise<{ audioPaths: Record<string, string>; generated: boolean }> {
+}): Promise<{ audioPaths: AudioPaths; generated: boolean }> {
   const { supabase, criativoId, roteiro } = params;
 
   const { data: row } = await supabase
@@ -42,7 +43,7 @@ export async function ensureCriativoAudio(params: {
     .eq("id", criativoId)
     .single();
 
-  const existing = (row?.audio_paths as Record<string, string>) ?? {};
+  const existing = parseAudioPaths(row?.audio_paths);
   if (hasAudioPaths(existing)) {
     return { audioPaths: existing, generated: false };
   }
@@ -53,7 +54,7 @@ export async function ensureCriativoAudio(params: {
   }
 
   const voiceId = params.voiceId ?? row?.voice_id ?? DEFAULT_VOICE_ID;
-  const audioPaths: Record<string, string> = {};
+  const audioPaths: AudioPaths = {};
   let gerados = 0;
 
   for (let i = 0; i < roteiro.length; i++) {

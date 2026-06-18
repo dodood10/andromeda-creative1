@@ -31,9 +31,13 @@ import { uploadCriativoMedia } from "@/lib/storage";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { useAuth } from "@/hooks/use-auth";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
+import { RoteiroBlocoSchema } from "@/lib/schemas/angulos.schema";
+import { validateHttpUrl } from "@/lib/security-url";
 import { VSL_BLOCOS_META, vslBlockLabel, isVslRoteiro, type VslAnguloJsonExtras } from "@/lib/vsl-roteiro";
 import { gerarVslCurta } from "@/lib/vsl.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
+import type { AudioPaths } from "@/lib/types/criativo-json";
+import type { CriativoScore } from "@/lib/types/criativo-json";
 
 function formatEtaRange(sec: number): string {
   const minMin = Math.max(1, Math.round((sec * 0.7) / 60));
@@ -112,7 +116,9 @@ function EditorPage() {
   return <Editor criativoId={searchId} focus={focus} />;
 }
 
-function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "score" | "media" }) {
+type EditorProps = { criativoId: string; focus?: "audio" | "score" | "media" };
+
+function Editor({ criativoId, focus }: EditorProps) {
   const { user } = useAuth();
   const { projectId, organizationId } = useWorkspace();
   const navigate = useNavigate();
@@ -163,7 +169,7 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
   const [refinarInstrucao, setRefinarInstrucao] = useState("");
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [scoreOpen, setScoreOpen] = useState(false);
-  const [scoreData, setScoreData] = useState<Awaited<ReturnType<typeof runAvaliar>> | null>(null);
+  const [scoreData, setScoreData] = useState<CriativoScore | null>(null);
   const [exporting, setExporting] = useState(false);
   const [renderProgress, setRenderProgress] = useState<string | null>(null);
   const [exportDevMode, setExportDevMode] = useState(false);
@@ -185,9 +191,13 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
 
   useEffect(() => {
     if (criativo?.score_json) {
-      setScoreData(criativo.score_json as typeof scoreData);
-      const meta = criativo.score_json as { exportDevMode?: boolean };
-      if (meta.exportDevMode) setExportDevMode(true);
+      const parsed = criativo.score_json;
+      if (parsed.dimensoes && parsed.podeExportar !== undefined) {
+        setScoreData(parsed as CriativoScore);
+      } else {
+        setScoreData(null);
+      }
+      if (parsed.exportDevMode) setExportDevMode(true);
     }
   }, [criativo]);
 
@@ -211,7 +221,7 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
   }, [criativo?.background_media_path, signAudio]);
 
   const loadBlockAudio = useCallback(
-    async (idx: number, paths: Record<string, string> | null) => {
+    async (idx: number, paths: AudioPaths | null) => {
       const p = paths?.[String(idx)];
       if (!p) {
         setAudioUrl(null);
@@ -228,7 +238,7 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
   );
 
   useEffect(() => {
-    const paths = criativo?.audio_paths as Record<string, string> | null;
+    const paths = criativo?.audio_paths ?? null;
     void loadBlockAudio(block, paths);
   }, [block, criativo?.audio_paths, loadBlockAudio]);
 
@@ -247,8 +257,13 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
 
   const persistRoteiro = useCallback(
     async (next: RoteiroBloco[]) => {
+      const parsed = z.array(RoteiroBlocoSchema).safeParse(next);
+      if (!parsed.success) {
+        toast.error(parsed.error.issues[0]?.message ?? "Roteiro inválido");
+        return;
+      }
       await saveRoteiro({
-        data: { id: criativoId, roteiro: next, voiceId: voiceId || undefined },
+        data: { id: criativoId, roteiro: parsed.data, voiceId: voiceId || undefined },
       });
       queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
     },
@@ -483,12 +498,7 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
 
   const anguloNome = criativo.angulo;
   const estilo = criativo.estilo_producao ?? "texto_animado";
-  const scoreMeta = criativo.score_json as {
-    ugc_recommended?: boolean;
-    ugc_message?: string;
-    ugc_provider?: string;
-    exportDevMode?: boolean;
-  } | null;
+  const scoreMeta = criativo.score_json;
   const showUgcFallbackBanner =
     scoreMeta?.ugc_recommended ||
     (estilo === "ugc_avatar" && !capabilities?.agentMediaConfigured);
@@ -501,7 +511,7 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
   const vslExtras = (criativo.angulo_json as VslAnguloJsonExtras | null) ?? {};
   const vslDevMode = !!vslExtras.vsl_dev_mode;
   const blocoAtual = roteiro[block];
-  const audioPaths = (criativo.audio_paths as Record<string, string>) ?? {};
+  const audioPaths = criativo.audio_paths ?? {};
   const exportPaths = (criativo.export_paths as string[]) ?? {};
 
   return (
@@ -837,6 +847,16 @@ function Editor({ criativoId, focus }: { criativoId: string; focus?: "audio" | "
   );
 }
 
+type PostExportContentProps = {
+  utm: string;
+  exportPaths: string[];
+  downloadUrls: Record<string, string>;
+  onCopyUtm: () => void;
+  onMarcarSubiu: () => void;
+  markingSubiu: boolean;
+  exportDevMode: boolean;
+};
+
 function PostExportContent({
   utm,
   exportPaths,
@@ -845,15 +865,7 @@ function PostExportContent({
   onMarcarSubiu,
   markingSubiu,
   exportDevMode,
-}: {
-  utm: string;
-  exportPaths: string[];
-  downloadUrls: Record<string, string>;
-  onCopyUtm: () => void;
-  onMarcarSubiu: () => void;
-  markingSubiu: boolean;
-  exportDevMode: boolean;
-}) {
+}: PostExportContentProps) {
   return (
     <div className="space-y-4">
       {exportDevMode && (
@@ -907,6 +919,12 @@ function PostExportContent({
   );
 }
 
+type PostExportBannerProps = PostExportContentProps & {
+  onDismiss: () => void;
+  onExpand: () => void;
+  expanded: boolean;
+};
+
 function PostExportBanner({
   utm,
   exportPaths,
@@ -918,18 +936,7 @@ function PostExportBanner({
   onExpand,
   expanded,
   exportDevMode,
-}: {
-  utm: string;
-  exportPaths: string[];
-  downloadUrls: Record<string, string>;
-  onCopyUtm: () => void;
-  onMarcarSubiu: () => void;
-  markingSubiu: boolean;
-  onDismiss: () => void;
-  onExpand: () => void;
-  expanded: boolean;
-  exportDevMode: boolean;
-}) {
+}: PostExportBannerProps) {
   if (!expanded) {
     return (
       <div className="px-6 py-2 bg-success/10 border-b border-success/30 flex items-center justify-between text-sm">
@@ -964,6 +971,16 @@ function PostExportBanner({
   );
 }
 
+type ExportDialogProps = {
+  score: CriativoScore | null;
+  onExport: () => void;
+  onReavaliar: () => void;
+  exporting: boolean;
+  downloadUrls: Record<string, string>;
+  exportPaths: string[];
+  exportEtaLabel?: string;
+};
+
 function ExportDialog({
   score,
   onExport,
@@ -972,15 +989,7 @@ function ExportDialog({
   downloadUrls,
   exportPaths,
   exportEtaLabel,
-}: {
-  score: { dimensoes: Array<{ label: string; score: number; ok: boolean; dica?: string }>; podeExportar: boolean } | null;
-  onExport: () => void;
-  onReavaliar: () => void;
-  exporting: boolean;
-  downloadUrls: Record<string, string>;
-  exportPaths: string[];
-  exportEtaLabel?: string;
-}) {
+}: ExportDialogProps) {
   return (
     <DialogContent>
       <DialogHeader>

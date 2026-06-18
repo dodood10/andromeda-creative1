@@ -1,11 +1,12 @@
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
+import type { AudioPaths } from "@/lib/types/criativo-json";
 
 const BUCKET = "criativos-media";
 
 export async function callFfmpegRender(payload: {
   criativoId: string;
   roteiro: RoteiroBloco[];
-  audioPaths: unknown;
+  audioPaths: AudioPaths | null;
   backgroundMediaPath?: string | null;
   clipPaths?: string[];
   utmContent: string;

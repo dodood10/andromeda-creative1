@@ -17,7 +17,11 @@ import {
   processCriativoRenderJob,
   type CriativoRenderRow,
 } from "./render/process-render-job";
+import { assertUserCanSignStoragePath } from "./security-storage";
+import { rateLimitExport } from "./security-rate-limit";
 import type { EstiloProducao } from "./formato-recomendacao";
+import type { AudioPaths, CriativoScore, ScoreDimensao } from "./types/criativo-json";
+import { parseAudioPaths, parseScoreJson } from "./types/criativo-json";
 
 const BUCKET = "criativos-media";
 
@@ -26,7 +30,7 @@ const VOZES_PTBR = [
   { id: "EXAVITQu4vr4xnSDxMaL", label: "Bella (feminina)" },
   { id: "VR6AewLTigWG4xSOukaG", label: "Arnold (autoritativa)" },
   { id: "ThT5KcBeYPX3keUQqHPh", label: "Dorothy (empática)" },
-];
+] as const satisfies readonly { id: string; label: string }[];
 
 export const listVozes = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -54,7 +58,7 @@ export const listVozes = createServerFn({ method: "GET" })
         /* fallback */
       }
     }
-    return VOZES_PTBR;
+    return [...VOZES_PTBR];
   });
 
 async function uploadAudioBlock(
@@ -120,7 +124,7 @@ export const gerarAudio = createServerFn({ method: "POST" })
       .eq("id", data.criativoId)
       .single();
 
-    const audioPaths = (criativo?.audio_paths as Record<string, string>) ?? {};
+    const audioPaths = parseAudioPaths(criativo?.audio_paths);
     audioPaths[String(data.blocoIndex)] = path;
 
     await supabase
@@ -177,7 +181,7 @@ export const gerarAudioRoteiroCompleto = createServerFn({ method: "POST" })
     if (error || !criativo) throw new Error("Criativo não encontrado");
 
     const roteiro = (criativo.roteiro as RoteiroBloco[]) ?? [];
-    const audioPaths: Record<string, string> = {};
+    const audioPaths: AudioPaths = {};
     let gerados = 0;
 
     for (let i = 0; i < roteiro.length; i++) {
@@ -229,14 +233,9 @@ const CLAIMS_PROIBIDOS = [
   /ganhe\s+dinheiro\s+enquanto\s+dorme/i,
 ];
 
-export type ScoreDimensao = {
-  id: string;
-  label: string;
-  score: number;
-  minimo: number;
-  ok: boolean;
-  dica?: string;
-};
+import type { EstiloProducao } from "./formato-recomendacao";
+
+export type { ScoreDimensao, CriativoScore } from "./types/criativo-json";
 
 function computeSafeZonesScore(roteiro: RoteiroBloco[]) {
   if (roteiro.length === 0) return 40;
@@ -339,7 +338,7 @@ export const avaliarCriativo = createServerFn({ method: "POST" })
     ];
 
     const podeExportar = dimensoes.every((d) => d.ok);
-    const scoreJson = { dimensoes, podeExportar, avaliadoEm: new Date().toISOString() };
+    const scoreJson: CriativoScore = { dimensoes, podeExportar, avaliadoEm: new Date().toISOString() };
 
     await supabase.from("criativos").update({ score_json: scoreJson }).eq("id", data.criativoId);
 
@@ -399,10 +398,11 @@ export const getSignedExportUrls = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ paths: z.array(z.string().min(1)) }))
   .handler(async ({ data, context }) => {
-    const { supabase } = context;
+    const { supabase, userId } = context;
     const urls: Record<string, string> = {};
 
     for (const p of data.paths) {
+      await assertUserCanSignStoragePath(supabase, userId, p);
       const { data: signed, error } = await supabase.storage
         .from(BUCKET)
         .createSignedUrl(p, 3600);
@@ -416,7 +416,8 @@ export const getSignedAudioUrl = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ path: z.string().min(1) }))
   .handler(async ({ data, context }) => {
-    const { supabase } = context;
+    const { supabase, userId } = context;
+    await assertUserCanSignStoragePath(supabase, userId, data.path);
     const { data: signed, error } = await supabase.storage
       .from(BUCKET)
       .createSignedUrl(data.path, 3600);
@@ -426,7 +427,7 @@ export const getSignedAudioUrl = createServerFn({ method: "POST" })
 
 
 export const solicitarExport = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireSupabaseAuth, rateLimitExport])
   .inputValidator(z.object({ criativoId: z.string().uuid() }))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
@@ -439,7 +440,7 @@ export const solicitarExport = createServerFn({ method: "POST" })
 
     if (error || !criativo) throw new Error("Criativo não encontrado");
 
-    const score = criativo.score_json as { podeExportar?: boolean } | null;
+    const score = parseScoreJson(criativo.score_json);
     if (score && score.podeExportar === false) {
       throw new Error("Score abaixo do mínimo — corrija os alertas antes de exportar");
     }
@@ -463,13 +464,13 @@ export const solicitarExport = createServerFn({ method: "POST" })
     const criativoRow: CriativoRenderRow = {
       id: criativo.id,
       roteiro: criativo.roteiro as RoteiroBloco[],
-      audio_paths: criativo.audio_paths,
+      audio_paths: parseAudioPaths(criativo.audio_paths),
       background_media_path: criativo.background_media_path,
       utm_content: criativo.utm_content,
       estilo_producao: estilo,
       angulo_json: criativo.angulo_json,
       produto: criativo.produto,
-      score_json: criativo.score_json,
+      score_json: parseScoreJson(criativo.score_json),
       organization_id: criativo.organization_id,
       voice_id: criativo.voice_id,
     };

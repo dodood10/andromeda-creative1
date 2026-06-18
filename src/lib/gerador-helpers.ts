@@ -1,4 +1,4 @@
-import type { ResultadoAngulos } from "./anthropic.functions";
+import type { ResultadoAngulos } from "./schemas/angulos.schema";
 import {
   buildFormatoPorAngulo,
   type FormatoOverride,

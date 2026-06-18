@@ -3,7 +3,7 @@ import { z } from "zod";
 export const EscalaMenuItemSchema = z.object({
   id: z.enum(["hook-v", "hook-t", "avatar", "formato", "empilha", "benef", "cta"]),
   nome: z.string(),
-  nivel_risco: z.enum(["baixo", "medio", "alto"]).or(z.string()),
+  nivel_risco: z.enum(["baixo", "medio", "alto"]),
   o_que_muda: z.string(),
   o_que_permanece: z.string(),
   justificativa_probabilistica: z.string(),

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import type { EstiloProducao } from "@/lib/formato-recomendacao";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
+import type { AudioPaths, ScoreJson } from "@/lib/types/criativo-json";
 import {
   extractRecomendacaoFromAnguloJson,
   resolveRenderPipeline,
@@ -52,13 +53,13 @@ export async function executeCriativoRender(params: {
   criativo: {
     id: string;
     roteiro: RoteiroBloco[] | null;
-    audio_paths: unknown;
+    audio_paths: AudioPaths | null;
     background_media_path: string | null;
     utm_content: string | null;
     estilo_producao: EstiloProducao | null;
     angulo_json: unknown;
     produto: string;
-    score_json: unknown;
+    score_json: ScoreJson | null;
   };
   existingJobId?: string;
 }): Promise<RenderOrchestratorResult> {
@@ -183,10 +184,10 @@ export async function executeCriativoRender(params: {
 }
 
 export function buildExportScorePatch(
-  existingScore: Record<string, unknown> | null,
+  existingScore: ScoreJson | null,
   resolved: ResolvedRender,
-): Record<string, unknown> {
-  const base = { ...(existingScore ?? {}) };
+): ScoreJson {
+  const base: ScoreJson = { ...(existingScore ?? {}) };
 
   if (resolved.usedUgcProvider) {
     const next = { ...base };

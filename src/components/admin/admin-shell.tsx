@@ -13,6 +13,7 @@ import {
   Loader2,
   Shield,
   BarChart3,
+  type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { checkAdminAccess } from "@/lib/admin.functions";
@@ -24,7 +25,7 @@ const navItems = [
   { title: "Criativos", url: "/admin/criativos", icon: Film },
   { title: "IA & custos", url: "/admin/ia", icon: BarChart3 },
   { title: "Auditoria", url: "/admin/auditoria", icon: ScrollText },
-] as const;
+] as const satisfies readonly { title: string; url: string; icon: LucideIcon; exact?: boolean }[];
 
 export function AdminShell() {
   const { session, loading: authLoading, signOut } = useAuth();
@@ -123,15 +124,13 @@ export function AdminShell() {
   );
 }
 
-export function AdminKpiCard({
-  label,
-  value,
-  sub,
-}: {
+export type AdminKpiCardProps = {
   label: string;
   value: string | number;
   sub?: string;
-}) {
+};
+
+export function AdminKpiCard({ label, value, sub }: AdminKpiCardProps) {
   return (
     <div className="glass rounded-xl p-4 border border-border/40">
       <p className="text-xs text-muted-foreground">{label}</p>

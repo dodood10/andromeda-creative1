@@ -175,7 +175,9 @@ function AdminOverview() {
   );
 }
 
-function FunnelStep({ label, value }: { label: string; value: number }) {
+type FunnelStepProps = { label: string; value: number };
+
+function FunnelStep({ label, value }: FunnelStepProps) {
   return (
     <div className="rounded-lg bg-background/40 border border-border/40 p-4 text-center">
       <p className="text-2xl font-bold">{value}</p>
