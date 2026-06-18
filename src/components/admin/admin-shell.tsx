@@ -13,6 +13,7 @@ import {
   Loader2,
   Shield,
   BarChart3,
+  ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
@@ -23,6 +24,7 @@ const navItems = [
   { title: "Usuários", url: "/admin/usuarios", icon: Users },
   { title: "Organizações", url: "/admin/organizacoes", icon: Building2 },
   { title: "Criativos", url: "/admin/criativos", icon: Film },
+  { title: "Avaliação", url: "/admin/avaliacao", icon: ClipboardCheck },
   { title: "IA & custos", url: "/admin/ia", icon: BarChart3 },
   { title: "Auditoria", url: "/admin/auditoria", icon: ScrollText },
 ] as const satisfies readonly { title: string; url: string; icon: LucideIcon; exact?: boolean }[];

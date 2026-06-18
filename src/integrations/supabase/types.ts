@@ -91,6 +91,13 @@ export type Database = {
           id: string
           observacoes: string | null
           organization_id: string | null
+          performando_intel_notes: string | null
+          performando_intel_reviewed_at: string | null
+          performando_intel_reviewed_by: string | null
+          performando_intel_status:
+            | Database["public"]["Enums"]["intel_review_status"]
+            | null
+          performando_intel_submitted_at: string | null
           produto: string
           project_id: string | null
           roteiro: Json | null
@@ -118,6 +125,13 @@ export type Database = {
           id?: string
           observacoes?: string | null
           organization_id?: string | null
+          performando_intel_notes?: string | null
+          performando_intel_reviewed_at?: string | null
+          performando_intel_reviewed_by?: string | null
+          performando_intel_status?:
+            | Database["public"]["Enums"]["intel_review_status"]
+            | null
+          performando_intel_submitted_at?: string | null
           produto: string
           project_id?: string | null
           roteiro?: Json | null
@@ -145,6 +159,13 @@ export type Database = {
           id?: string
           observacoes?: string | null
           organization_id?: string | null
+          performando_intel_notes?: string | null
+          performando_intel_reviewed_at?: string | null
+          performando_intel_reviewed_by?: string | null
+          performando_intel_status?:
+            | Database["public"]["Enums"]["intel_review_status"]
+            | null
+          performando_intel_submitted_at?: string | null
           produto?: string
           project_id?: string | null
           roteiro?: Json | null
@@ -155,6 +176,39 @@ export type Database = {
           user_id?: string
           utm_content?: string | null
           voice_id?: string | null
+        }
+        Relationships: []
+      }
+      criativo_admin_reviews: {
+        Row: {
+          admin_user_id: string
+          created_at: string
+          criativo_id: string
+          id: string
+          include_in_intelligence: boolean
+          notes: string | null
+          quality_score: number | null
+          verdict: Database["public"]["Enums"]["admin_review_verdict"]
+        }
+        Insert: {
+          admin_user_id: string
+          created_at?: string
+          criativo_id: string
+          id?: string
+          include_in_intelligence?: boolean
+          notes?: string | null
+          quality_score?: number | null
+          verdict: Database["public"]["Enums"]["admin_review_verdict"]
+        }
+        Update: {
+          admin_user_id?: string
+          created_at?: string
+          criativo_id?: string
+          id?: string
+          include_in_intelligence?: boolean
+          notes?: string | null
+          quality_score?: number | null
+          verdict?: Database["public"]["Enums"]["admin_review_verdict"]
         }
         Relationships: []
       }
@@ -376,6 +430,10 @@ export type Database = {
           created_at: string
           criativo_id: string
           id: string
+          intel_notes: string | null
+          intel_review_status: Database["public"]["Enums"]["intel_review_status"]
+          intel_reviewed_at: string | null
+          intel_reviewed_by: string | null
           metrica: string | null
           observacao: string | null
           tipo: Database["public"]["Enums"]["resultado_tipo"]
@@ -386,6 +444,10 @@ export type Database = {
           created_at?: string
           criativo_id: string
           id?: string
+          intel_notes?: string | null
+          intel_review_status?: Database["public"]["Enums"]["intel_review_status"]
+          intel_reviewed_at?: string | null
+          intel_reviewed_by?: string | null
           metrica?: string | null
           observacao?: string | null
           tipo: Database["public"]["Enums"]["resultado_tipo"]
@@ -396,6 +458,10 @@ export type Database = {
           created_at?: string
           criativo_id?: string
           id?: string
+          intel_notes?: string | null
+          intel_review_status?: Database["public"]["Enums"]["intel_review_status"]
+          intel_reviewed_at?: string | null
+          intel_reviewed_by?: string | null
           metrica?: string | null
           observacao?: string | null
           tipo?: Database["public"]["Enums"]["resultado_tipo"]
@@ -412,10 +478,12 @@ export type Database = {
       is_org_member: { Args: { org_id: string }; Returns: boolean }
     }
     Enums: {
+      admin_review_verdict: "approved" | "rejected" | "flagged"
       criativo_status: "Gerado" | "Subiu" | "Rodando" | "Performando" | "Pausado"
       estilo_producao: "texto_animado" | "clipes_texto" | "ugc_avatar"
       export_status: "rascunho" | "renderizando" | "pronto" | "erro"
       formato_saida: "criativo_curto" | "vsl_curta"
+      intel_review_status: "pending" | "approved" | "rejected"
       org_member_role: "owner" | "editor" | "viewer"
       resultado_tipo: "venda" | "lead" | "clique"
     }
@@ -545,10 +613,12 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      admin_review_verdict: ["approved", "rejected", "flagged"],
       criativo_status: ["Gerado", "Subiu", "Rodando", "Performando", "Pausado"],
       estilo_producao: ["texto_animado", "clipes_texto", "ugc_avatar"],
       export_status: ["rascunho", "renderizando", "pronto", "erro"],
       formato_saida: ["criativo_curto", "vsl_curta"],
+      intel_review_status: ["pending", "approved", "rejected"],
       org_member_role: ["owner", "editor", "viewer"],
       resultado_tipo: ["venda", "lead", "clique"],
     },

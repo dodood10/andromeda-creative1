@@ -58,13 +58,27 @@ function Inteligencia() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard label="Criativos" value={resumo?.total ?? 0} />
-            <StatCard label="Performando" value={resumo?.performando ?? 0} accent="success" />
+            <StatCard label="Performando (validados)" value={resumo?.performando ?? 0} accent="success" />
             <StatCard label="Rodando" value={resumo?.rodando ?? 0} accent="accent" />
             <StatCard
               label="Hook rate médio (est.)"
               value={resumo?.hookRateMedio != null ? `${resumo.hookRateMedio}%` : "—"}
             />
           </div>
+
+          {(data.pendentesValidacao.performando > 0 || data.pendentesValidacao.resultados > 0) && (
+            <Card className="glass p-4 border border-warning/30 bg-warning/5">
+              <p className="text-sm font-medium text-warning">Aguardando validação da equipe</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {data.pendentesValidacao.performando > 0 &&
+                  `${data.pendentesValidacao.performando} claim(s) Performando`}
+                {data.pendentesValidacao.performando > 0 && data.pendentesValidacao.resultados > 0 && " · "}
+                {data.pendentesValidacao.resultados > 0 &&
+                  `${data.pendentesValidacao.resultados} métrica(s) reportada(s)`}
+                {" — "}somente dados validados entram nos insights e nas próximas gerações de ângulos.
+              </p>
+            </Card>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card className="glass p-6 space-y-4">

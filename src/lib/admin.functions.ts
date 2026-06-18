@@ -6,6 +6,12 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { logAdminAction } from "@/lib/admin-audit";
 import { scheduleBackgroundRender } from "@/lib/render/background-task";
 import { runBackgroundRenderForCriativoId } from "@/lib/render/process-render-job";
+import {
+  ReviewPerformandoSchema,
+  ReviewResultadoSchema,
+  scoreFromJson,
+  SubmitAdminCriativoReviewSchema,
+} from "@/lib/types/intel-review";
 
 const adminMiddleware = [requireSupabaseAuth, requirePlatformAdmin] as const;
 
@@ -732,6 +738,343 @@ export const setUserSuspended = createServerFn({ method: "POST" })
       action: data.suspended ? "admin.suspend_user" : "admin.unsuspend_user",
       targetType: "user",
       targetId: data.userId,
+    });
+
+    return { ok: true };
+  });
+
+async function resolveUserEmails(userIds: string[]): Promise<Record<string, string>> {
+  const map: Record<string, string> = {};
+  for (const id of [...new Set(userIds)]) {
+    const { data } = await supabaseAdmin.auth.admin.getUserById(id);
+    map[id] = data.user?.email ?? "";
+  }
+  return map;
+}
+
+async function resolveOrgNames(orgIds: string[]): Promise<Record<string, string>> {
+  if (orgIds.length === 0) return {};
+  const { data } = await supabaseAdmin.from("organizations").select("id, name").in("id", orgIds);
+  const map: Record<string, string> = {};
+  for (const o of data ?? []) map[o.id] = o.name;
+  return map;
+}
+
+export const listAdminAvaliacaoQueue = createServerFn({ method: "POST" })
+  .middleware([...adminMiddleware])
+  .handler(async ({ context }) => {
+    const [performandoRes, resultadosRes] = await Promise.all([
+      supabaseAdmin
+        .from("criativos")
+        .select("id, produto, angulo, user_id, organization_id, performando_intel_submitted_at")
+        .eq("performando_intel_status", "pending")
+        .order("performando_intel_submitted_at", { ascending: false })
+        .limit(100),
+      supabaseAdmin
+        .from("resultados_reportados")
+        .select(
+          "id, criativo_id, user_id, tipo, metrica, valor, observacao, created_at, criativos(produto, angulo, organization_id)",
+        )
+        .eq("intel_review_status", "pending")
+        .order("created_at", { ascending: false })
+        .limit(100),
+    ]);
+
+    if (performandoRes.error) throw new Error(performandoRes.error.message);
+    if (resultadosRes.error) throw new Error(resultadosRes.error.message);
+
+    const userIds = [
+      ...(performandoRes.data ?? []).map((c) => c.user_id),
+      ...(resultadosRes.data ?? []).map((r) => r.user_id),
+    ];
+    const orgIds = [
+      ...(performandoRes.data ?? []).map((c) => c.organization_id).filter(Boolean) as string[],
+      ...(resultadosRes.data ?? [])
+        .map((r) => (r.criativos as { organization_id?: string } | null)?.organization_id)
+        .filter(Boolean) as string[],
+    ];
+
+    const [emails, orgNames] = await Promise.all([
+      resolveUserEmails(userIds),
+      resolveOrgNames(orgIds),
+    ]);
+
+    const performandoItems = (performandoRes.data ?? []).map((c) => ({
+      kind: "performando" as const,
+      criativoId: c.id,
+      produto: c.produto,
+      angulo: c.angulo,
+      organizationName: c.organization_id ? (orgNames[c.organization_id] ?? "—") : "—",
+      userEmail: emails[c.user_id] ?? "",
+      submittedAt: c.performando_intel_submitted_at ?? "",
+    }));
+
+    const resultadoItems = (resultadosRes.data ?? []).map((r) => {
+      const criativo = r.criativos as {
+        produto?: string;
+        angulo?: string;
+        organization_id?: string;
+      } | null;
+      const orgId = criativo?.organization_id;
+      return {
+        kind: "resultado" as const,
+        resultadoId: r.id,
+        criativoId: r.criativo_id,
+        produto: criativo?.produto ?? "—",
+        angulo: criativo?.angulo ?? "—",
+        organizationName: orgId ? (orgNames[orgId] ?? "—") : "—",
+        userEmail: emails[r.user_id] ?? "",
+        tipo: r.tipo,
+        metrica: r.metrica,
+        valor: r.valor,
+        observacao: r.observacao,
+        submittedAt: r.created_at,
+      };
+    });
+
+    const items = [...performandoItems, ...resultadoItems].sort(
+      (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
+    );
+
+    await logAdminAction({
+      actorUserId: context.userId,
+      action: "admin.list_avaliacao_queue",
+      metadata: { pending: items.length },
+    });
+
+    return { items, pendingCount: items.length };
+  });
+
+export const listAdminAvaliacaoCriativos = createServerFn({ method: "POST" })
+  .middleware([...adminMiddleware])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        search: z.string().optional(),
+        intelStatus: z.enum(["all", "pending", "approved", "rejected", "none"]).default("all"),
+        exportStatus: z.string().optional(),
+        organizationId: z.string().uuid().optional(),
+        page: z.number().int().min(1).default(1),
+        pageSize: z.number().int().min(1).max(100).default(30),
+      })
+      .parse(input ?? {}),
+  )
+  .handler(async ({ data, context }) => {
+    let query = supabaseAdmin
+      .from("criativos")
+      .select(
+        "id, produto, angulo, status, export_status, formato_saida, created_at, user_id, organization_id, score_json, performando_intel_status",
+        { count: "exact" },
+      )
+      .order("created_at", { ascending: false });
+
+    if (data.exportStatus) {
+      query = query.eq(
+        "export_status",
+        data.exportStatus as "rascunho" | "renderizando" | "pronto" | "erro",
+      );
+    }
+    if (data.organizationId) {
+      query = query.eq("organization_id", data.organizationId);
+    }
+    if (data.intelStatus === "pending") {
+      query = query.eq("performando_intel_status", "pending");
+    } else if (data.intelStatus === "approved") {
+      query = query.eq("performando_intel_status", "approved");
+    } else if (data.intelStatus === "rejected") {
+      query = query.eq("performando_intel_status", "rejected");
+    } else if (data.intelStatus === "none") {
+      query = query.is("performando_intel_status", null);
+    }
+
+    const q = data.search?.trim();
+    if (q) {
+      const pattern = `%${q.replace(/%/g, "\\%")}%`;
+      query = query.or(`angulo.ilike.${pattern},produto.ilike.${pattern},utm_content.ilike.${pattern}`);
+    }
+
+    const from = (data.page - 1) * data.pageSize;
+    const to = from + data.pageSize - 1;
+    const { data: rows, error, count } = await query.range(from, to);
+    if (error) throw new Error(error.message);
+
+    const userIds = (rows ?? []).map((r) => r.user_id);
+    const orgIds = (rows ?? []).map((r) => r.organization_id).filter(Boolean) as string[];
+    const [emails, orgNames] = await Promise.all([
+      resolveUserEmails(userIds),
+      resolveOrgNames(orgIds),
+    ]);
+
+    await logAdminAction({
+      actorUserId: context.userId,
+      action: "admin.list_avaliacao_criativos",
+      metadata: { page: data.page, intelStatus: data.intelStatus },
+    });
+
+    return {
+      criativos: (rows ?? []).map((c) => ({
+        id: c.id,
+        produto: c.produto,
+        angulo: c.angulo,
+        status: c.status,
+        exportStatus: c.export_status,
+        formatoSaida: c.formato_saida,
+        performandoIntelStatus: c.performando_intel_status,
+        organizationName: c.organization_id ? (orgNames[c.organization_id] ?? "—") : "—",
+        userEmail: emails[c.user_id] ?? "",
+        scoreTotal: scoreFromJson(c.score_json),
+        createdAt: c.created_at,
+      })),
+      total: count ?? 0,
+      page: data.page,
+      pageSize: data.pageSize,
+    };
+  });
+
+export const getAdminAvaliacaoDetail = createServerFn({ method: "POST" })
+  .middleware([...adminMiddleware])
+  .inputValidator(z.object({ criativoId: z.string().uuid() }))
+  .handler(async ({ data, context }) => {
+    const { data: criativo, error } = await supabaseAdmin
+      .from("criativos")
+      .select("*")
+      .eq("id", data.criativoId)
+      .single();
+
+    if (error || !criativo) throw new Error("Criativo não encontrado");
+
+    const [resultadosRes, reviewsRes, orgRes, userRes] = await Promise.all([
+      supabaseAdmin
+        .from("resultados_reportados")
+        .select("*")
+        .eq("criativo_id", data.criativoId)
+        .order("created_at", { ascending: false }),
+      supabaseAdmin
+        .from("criativo_admin_reviews")
+        .select("*")
+        .eq("criativo_id", data.criativoId)
+        .order("created_at", { ascending: false })
+        .limit(20),
+      criativo.organization_id
+        ? supabaseAdmin.from("organizations").select("name").eq("id", criativo.organization_id).single()
+        : Promise.resolve({ data: null }),
+      supabaseAdmin.auth.admin.getUserById(criativo.user_id),
+    ]);
+
+    const paths = (criativo.export_paths as string[]) ?? [];
+    const signed: Record<string, string> = {};
+    if (paths.length > 0) {
+      const { data: signedData } = await supabaseAdmin.storage
+        .from("criativos-media")
+        .createSignedUrls(paths, 3600);
+      for (const item of signedData ?? []) {
+        if (item.path && item.signedUrl) signed[item.path] = item.signedUrl;
+      }
+    }
+
+    await logAdminAction({
+      actorUserId: context.userId,
+      action: "admin.view_avaliacao_detail",
+      targetType: "criativo",
+      targetId: data.criativoId,
+    });
+
+    return {
+      criativo,
+      signedUrls: signed,
+      roteiro: criativo.roteiro,
+      scoreJson: criativo.score_json,
+      scoreTotal: scoreFromJson(criativo.score_json),
+      organizationName: orgRes.data?.name ?? "—",
+      userEmail: userRes.data.user?.email ?? "",
+      resultados: resultadosRes.data ?? [],
+      adminReviews: reviewsRes.data ?? [],
+    };
+  });
+
+export const reviewPerformandoClaim = createServerFn({ method: "POST" })
+  .middleware([...adminMiddleware])
+  .inputValidator((input: unknown) => ReviewPerformandoSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const now = new Date().toISOString();
+    const { error } = await supabaseAdmin
+      .from("criativos")
+      .update({
+        performando_intel_status: data.status,
+        performando_intel_reviewed_at: now,
+        performando_intel_reviewed_by: context.userId,
+        performando_intel_notes: data.notes ?? null,
+      })
+      .eq("id", data.criativoId)
+      .eq("performando_intel_status", "pending");
+
+    if (error) throw new Error(error.message);
+
+    await logAdminAction({
+      actorUserId: context.userId,
+      action: data.status === "approved" ? "admin.approve_performando" : "admin.reject_performando",
+      targetType: "criativo",
+      targetId: data.criativoId,
+      metadata: { notes: data.notes },
+    });
+
+    return { ok: true };
+  });
+
+export const reviewResultadoReport = createServerFn({ method: "POST" })
+  .middleware([...adminMiddleware])
+  .inputValidator((input: unknown) => ReviewResultadoSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const now = new Date().toISOString();
+    const { error } = await supabaseAdmin
+      .from("resultados_reportados")
+      .update({
+        intel_review_status: data.status,
+        intel_reviewed_at: now,
+        intel_reviewed_by: context.userId,
+        intel_notes: data.notes ?? null,
+      })
+      .eq("id", data.resultadoId)
+      .eq("intel_review_status", "pending");
+
+    if (error) throw new Error(error.message);
+
+    await logAdminAction({
+      actorUserId: context.userId,
+      action: data.status === "approved" ? "admin.approve_resultado" : "admin.reject_resultado",
+      targetType: "resultado",
+      targetId: data.resultadoId,
+      metadata: { notes: data.notes },
+    });
+
+    return { ok: true };
+  });
+
+export const submitAdminCriativoReview = createServerFn({ method: "POST" })
+  .middleware([...adminMiddleware])
+  .inputValidator((input: unknown) => SubmitAdminCriativoReviewSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await supabaseAdmin.from("criativo_admin_reviews").insert({
+      criativo_id: data.criativoId,
+      admin_user_id: context.userId,
+      verdict: data.verdict,
+      quality_score: data.qualityScore ?? null,
+      notes: data.notes ?? null,
+      include_in_intelligence: data.includeInIntelligence ?? false,
+    });
+
+    if (error) throw new Error(error.message);
+
+    await logAdminAction({
+      actorUserId: context.userId,
+      action: "admin.submit_criativo_review",
+      targetType: "criativo",
+      targetId: data.criativoId,
+      metadata: {
+        verdict: data.verdict,
+        qualityScore: data.qualityScore,
+        includeInIntelligence: data.includeInIntelligence,
+      },
     });
 
     return { ok: true };

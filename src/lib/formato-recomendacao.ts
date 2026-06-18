@@ -112,7 +112,7 @@ export async function getProjectFormatContext(
 ): Promise<ProjectFormatContext | null> {
   const { data: criativos, error } = await supabase
     .from("criativos")
-    .select("angulo, status, formato_saida, estilo_producao")
+    .select("angulo, status, formato_saida, estilo_producao, performando_intel_status")
     .eq("project_id", projectId);
 
   if (error || !criativos?.length) return null;
@@ -126,7 +126,7 @@ export async function getProjectFormatContext(
   for (const c of criativos) {
     if (c.formato_saida) formatosSet.add(c.formato_saida as FormatoSaida);
     if (c.estilo_producao) estilosSet.add(c.estilo_producao as EstiloProducao);
-    if (c.status === "Performando") {
+    if (c.status === "Performando" && c.performando_intel_status === "approved") {
       performando++;
       topPerformers.push({
         angulo: c.angulo,

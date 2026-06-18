@@ -23,3 +23,9 @@ export const FeedbackNegativoSchema = z.enum(["baixo", "medio", "alto"]);
 export const SaturacaoHookStatusSchema = z.enum(["saturado", "neutro", "sub_explorado"]);
 export const JanelaRelevanciaTipoSchema = z.enum(["atemporal", "media", "curta"]);
 export const SofisticacaoMercadoSchema = z.enum(["novo", "intermediario", "sofisticado"]);
+
+export type IntelReviewStatus = Database["public"]["Enums"]["intel_review_status"];
+export type AdminReviewVerdict = Database["public"]["Enums"]["admin_review_verdict"];
+
+export const IntelReviewStatusSchema = z.enum(["pending", "approved", "rejected"]);
+export const AdminReviewVerdictSchema = z.enum(["approved", "rejected", "flagged"]);

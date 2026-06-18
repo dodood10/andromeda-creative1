@@ -29,6 +29,7 @@ import { Route as AdminUsuariosRouteImport } from './routes/admin.usuarios'
 import { Route as AdminOrganizacoesRouteImport } from './routes/admin.organizacoes'
 import { Route as AdminIaRouteImport } from './routes/admin.ia'
 import { Route as AdminCriativosRouteImport } from './routes/admin.criativos'
+import { Route as AdminAvaliacaoRouteImport } from './routes/admin.avaliacao'
 import { Route as AdminAuditoriaRouteImport } from './routes/admin.auditoria'
 
 const LoginRoute = LoginRouteImport.update({
@@ -131,6 +132,11 @@ const AdminCriativosRoute = AdminCriativosRouteImport.update({
   path: '/criativos',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminAvaliacaoRoute = AdminAvaliacaoRouteImport.update({
+  id: '/avaliacao',
+  path: '/avaliacao',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminAuditoriaRoute = AdminAuditoriaRouteImport.update({
   id: '/auditoria',
   path: '/auditoria',
@@ -144,6 +150,7 @@ export interface FileRoutesByFullPath {
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/admin/auditoria': typeof AdminAuditoriaRoute
+  '/admin/avaliacao': typeof AdminAvaliacaoRoute
   '/admin/criativos': typeof AdminCriativosRoute
   '/admin/ia': typeof AdminIaRoute
   '/admin/organizacoes': typeof AdminOrganizacoesRoute
@@ -165,6 +172,7 @@ export interface FileRoutesByTo {
   '/accept-invite': typeof AcceptInviteRoute
   '/login': typeof LoginRoute
   '/admin/auditoria': typeof AdminAuditoriaRoute
+  '/admin/avaliacao': typeof AdminAvaliacaoRoute
   '/admin/criativos': typeof AdminCriativosRoute
   '/admin/ia': typeof AdminIaRoute
   '/admin/organizacoes': typeof AdminOrganizacoesRoute
@@ -189,6 +197,7 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/admin/auditoria': typeof AdminAuditoriaRoute
+  '/admin/avaliacao': typeof AdminAvaliacaoRoute
   '/admin/criativos': typeof AdminCriativosRoute
   '/admin/ia': typeof AdminIaRoute
   '/admin/organizacoes': typeof AdminOrganizacoesRoute
@@ -214,6 +223,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/login'
     | '/admin/auditoria'
+    | '/admin/avaliacao'
     | '/admin/criativos'
     | '/admin/ia'
     | '/admin/organizacoes'
@@ -235,6 +245,7 @@ export interface FileRouteTypes {
     | '/accept-invite'
     | '/login'
     | '/admin/auditoria'
+    | '/admin/avaliacao'
     | '/admin/criativos'
     | '/admin/ia'
     | '/admin/organizacoes'
@@ -258,6 +269,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/login'
     | '/admin/auditoria'
+    | '/admin/avaliacao'
     | '/admin/criativos'
     | '/admin/ia'
     | '/admin/organizacoes'
@@ -425,6 +437,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCriativosRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/avaliacao': {
+      id: '/admin/avaliacao'
+      path: '/avaliacao'
+      fullPath: '/admin/avaliacao'
+      preLoaderRoute: typeof AdminAvaliacaoRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/auditoria': {
       id: '/admin/auditoria'
       path: '/auditoria'
@@ -437,6 +456,7 @@ declare module '@tanstack/react-router' {
 
 interface AdminRouteChildren {
   AdminAuditoriaRoute: typeof AdminAuditoriaRoute
+  AdminAvaliacaoRoute: typeof AdminAvaliacaoRoute
   AdminCriativosRoute: typeof AdminCriativosRoute
   AdminIaRoute: typeof AdminIaRoute
   AdminOrganizacoesRoute: typeof AdminOrganizacoesRoute
@@ -446,6 +466,7 @@ interface AdminRouteChildren {
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminAuditoriaRoute: AdminAuditoriaRoute,
+  AdminAvaliacaoRoute: AdminAvaliacaoRoute,
   AdminCriativosRoute: AdminCriativosRoute,
   AdminIaRoute: AdminIaRoute,
   AdminOrganizacoesRoute: AdminOrganizacoesRoute,

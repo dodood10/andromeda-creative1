@@ -75,9 +75,25 @@ export const updateCriativoStatus = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
+    const patch: Record<string, unknown> = { status: data.status };
+
+    if (data.status === "Performando") {
+      patch.performando_intel_status = "pending";
+      patch.performando_intel_submitted_at = new Date().toISOString();
+      patch.performando_intel_reviewed_at = null;
+      patch.performando_intel_reviewed_by = null;
+      patch.performando_intel_notes = null;
+    } else {
+      patch.performando_intel_status = null;
+      patch.performando_intel_submitted_at = null;
+      patch.performando_intel_reviewed_at = null;
+      patch.performando_intel_reviewed_by = null;
+      patch.performando_intel_notes = null;
+    }
+
     const { data: row, error } = await supabase
       .from("criativos")
-      .update({ status: data.status })
+      .update(patch)
       .eq("id", data.id)
       .select()
       .single();
@@ -357,7 +373,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
 
     const { data: criativos, error } = await supabase
       .from("criativos")
-      .select("status, angulo, formato_saida, export_status, id")
+      .select("status, angulo, formato_saida, export_status, id, performando_intel_status")
       .eq("project_id", data.projectId);
 
     if (error) throw new Error(error.message);
@@ -398,15 +414,26 @@ export const getDashboardStats = createServerFn({ method: "POST" })
     );
     const semExport = semExportList.length;
     const firstExportPendingId = semExportList[0]?.id ?? null;
-    const campeao = (criativos ?? []).find((c) => c.status === "Performando");
+    const campeao = (criativos ?? []).find(
+      (c) => c.status === "Performando" && c.performando_intel_status === "approved",
+    );
     const firstPerformandoId = campeao?.id ?? null;
+    const performandoPendentes = (criativos ?? []).filter(
+      (c) => c.status === "Performando" && c.performando_intel_status === "pending",
+    ).length;
 
     const feed: Array<{ tag: string; title: string; desc: string; action: AppLink }> = [];
     if (counts.Performando > 0) {
       feed.push({
-        tag: "Escalando",
-        title: `${counts.Performando} criativo(s) performando`,
-        desc: "Analise o campeão e gere variações completas com IA na fase de escala.",
+        tag: performandoPendentes > 0 ? "Validação" : "Escalando",
+        title:
+          performandoPendentes > 0
+            ? `${performandoPendentes} performando aguardando validação`
+            : `${counts.Performando} criativo(s) performando`,
+        desc:
+          performandoPendentes > 0
+            ? "A equipe Andromeda valida antes de usar estes dados na inteligência do projeto."
+            : "Analise o campeão e gere variações completas com IA na fase de escala.",
         action: firstPerformandoId
           ? { to: "/app/escala", search: { criativoId: firstPerformandoId } }
           : { to: "/app/historico", search: { status: "Performando" } },
@@ -490,6 +517,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       nextAction,
       firstExportPendingId,
       firstPerformandoId,
+      performandoPendentes,
       volumeTarget: 12,
       sugestao:
         total === 0
@@ -652,7 +680,7 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
 
     const { data: criativos, error: cErr } = await supabase
       .from("criativos")
-      .select("id, angulo, status, formato_saida, angulo_json, export_status")
+      .select("id, angulo, status, formato_saida, angulo_json, export_status, performando_intel_status")
       .eq("project_id", data.projectId);
 
     if (cErr) throw new Error(cErr.message);
@@ -667,10 +695,20 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
 
     const resultados = (resultadosRaw ?? []).filter((r) => {
       const c = r.criativos as { project_id?: string } | null;
-      return c?.project_id === data.projectId;
+      return c?.project_id === data.projectId && r.intel_review_status === "approved";
     });
 
-    const performando = (criativos ?? []).filter((c) => c.status === "Performando");
+    const resultadosPendentes = (resultadosRaw ?? []).filter((r) => {
+      const c = r.criativos as { project_id?: string } | null;
+      return c?.project_id === data.projectId && r.intel_review_status === "pending";
+    }).length;
+
+    const performando = (criativos ?? []).filter(
+      (c) => c.status === "Performando" && c.performando_intel_status === "approved",
+    );
+    const performandoPendentes = (criativos ?? []).filter(
+      (c) => c.status === "Performando" && c.performando_intel_status === "pending",
+    ).length;
     const rodando = (criativos ?? []).filter((c) => c.status === "Rodando");
     const exportados = (criativos ?? []).filter((c) => c.export_status === "pronto");
 
@@ -697,7 +735,9 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
       }
       if (!anguloPerformance[c.angulo]) anguloPerformance[c.angulo] = { performando: 0, total: 0 };
       anguloPerformance[c.angulo].total++;
-      if (c.status === "Performando") anguloPerformance[c.angulo].performando++;
+      if (c.status === "Performando" && c.performando_intel_status === "approved") {
+        anguloPerformance[c.angulo].performando++;
+      }
     }
 
     const metricasAgg: Record<string, string[]> = {};
@@ -724,6 +764,8 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         rodando: rodando.length,
         exportados: exportados.length,
         resultadosReportados: resultados?.length ?? 0,
+        resultadosPendentes,
+        performandoPendentes,
         hookRateMedio: hookRates.length
           ? Math.round(hookRates.reduce((a, b) => a + b, 0) / hookRates.length)
           : null,
@@ -743,7 +785,12 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         metrica: r.metrica,
         valor: r.valor,
         created_at: r.created_at,
+        intelReviewStatus: r.intel_review_status,
       })),
+      pendentesValidacao: {
+        performando: performandoPendentes,
+        resultados: resultadosPendentes,
+      },
     };
   });
 
@@ -846,6 +893,7 @@ export const reportarResultado = createServerFn({ method: "POST" })
       metrica: data.metrica ?? null,
       valor: data.valor ?? null,
       observacao: data.observacao ?? null,
+      intel_review_status: "pending",
     });
 
     if (error) throw new Error(error.message);

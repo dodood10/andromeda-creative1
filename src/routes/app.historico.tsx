@@ -230,7 +230,7 @@ function Historico() {
       setValor("");
       setObservacao("");
       queryClient.invalidateQueries({ queryKey: ["resultados"] });
-      toast.success("Resultado reportado");
+      toast.success("Métrica enviada — será considerada na inteligência após validação da equipe");
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Erro ao reportar"),
   });
@@ -588,7 +588,19 @@ function CriativoRowItem({
       <TableCell>
         <Select value={row.status} onValueChange={(v) => onStatusChange(v as CriativoStatus)}>
           <SelectTrigger className="h-8 w-[130px] border-0 bg-transparent p-0 shadow-none">
-            <Badge variant="outline" className={statusStyle[row.status]}>{row.status}</Badge>
+            <div className="flex flex-col gap-1 items-start">
+              <Badge variant="outline" className={statusStyle[row.status]}>{row.status}</Badge>
+              {row.status === "Performando" && row.performando_intel_status === "pending" && (
+                <Badge variant="outline" className="text-[10px] border-warning/40 text-warning">
+                  aguardando validação
+                </Badge>
+              )}
+              {row.status === "Performando" && row.performando_intel_status === "rejected" && (
+                <Badge variant="outline" className="text-[10px] border-destructive/40 text-destructive">
+                  não validado
+                </Badge>
+              )}
+            </div>
           </SelectTrigger>
           <SelectContent>
             {ALL_STATUSES.map((s) => (
