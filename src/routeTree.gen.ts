@@ -19,6 +19,7 @@ import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AppVslRouteImport } from './routes/app.vsl'
 import { Route as AppProjetosRouteImport } from './routes/app.projetos'
+import { Route as AppPlanoRouteImport } from './routes/app.plano'
 import { Route as AppOnboardingRouteImport } from './routes/app.onboarding'
 import { Route as AppInteligenciaRouteImport } from './routes/app.inteligencia'
 import { Route as AppHistoricoRouteImport } from './routes/app.historico'
@@ -81,6 +82,11 @@ const AppVslRoute = AppVslRouteImport.update({
 const AppProjetosRoute = AppProjetosRouteImport.update({
   id: '/projetos',
   path: '/projetos',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPlanoRoute = AppPlanoRouteImport.update({
+  id: '/plano',
+  path: '/plano',
   getParentRoute: () => AppRoute,
 } as any)
 const AppOnboardingRoute = AppOnboardingRouteImport.update({
@@ -169,6 +175,7 @@ export interface FileRoutesByFullPath {
   '/app/historico': typeof AppHistoricoRoute
   '/app/inteligencia': typeof AppInteligenciaRoute
   '/app/onboarding': typeof AppOnboardingRoute
+  '/app/plano': typeof AppPlanoRoute
   '/app/projetos': typeof AppProjetosRoute
   '/app/vsl': typeof AppVslRoute
   '/admin/': typeof AdminIndexRoute
@@ -192,6 +199,7 @@ export interface FileRoutesByTo {
   '/app/historico': typeof AppHistoricoRoute
   '/app/inteligencia': typeof AppInteligenciaRoute
   '/app/onboarding': typeof AppOnboardingRoute
+  '/app/plano': typeof AppPlanoRoute
   '/app/projetos': typeof AppProjetosRoute
   '/app/vsl': typeof AppVslRoute
   '/admin': typeof AdminIndexRoute
@@ -218,6 +226,7 @@ export interface FileRoutesById {
   '/app/historico': typeof AppHistoricoRoute
   '/app/inteligencia': typeof AppInteligenciaRoute
   '/app/onboarding': typeof AppOnboardingRoute
+  '/app/plano': typeof AppPlanoRoute
   '/app/projetos': typeof AppProjetosRoute
   '/app/vsl': typeof AppVslRoute
   '/admin/': typeof AdminIndexRoute
@@ -245,6 +254,7 @@ export interface FileRouteTypes {
     | '/app/historico'
     | '/app/inteligencia'
     | '/app/onboarding'
+    | '/app/plano'
     | '/app/projetos'
     | '/app/vsl'
     | '/admin/'
@@ -268,6 +278,7 @@ export interface FileRouteTypes {
     | '/app/historico'
     | '/app/inteligencia'
     | '/app/onboarding'
+    | '/app/plano'
     | '/app/projetos'
     | '/app/vsl'
     | '/admin'
@@ -293,6 +304,7 @@ export interface FileRouteTypes {
     | '/app/historico'
     | '/app/inteligencia'
     | '/app/onboarding'
+    | '/app/plano'
     | '/app/projetos'
     | '/app/vsl'
     | '/admin/'
@@ -378,6 +390,13 @@ declare module '@tanstack/react-router' {
       path: '/projetos'
       fullPath: '/app/projetos'
       preLoaderRoute: typeof AppProjetosRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/plano': {
+      id: '/app/plano'
+      path: '/plano'
+      fullPath: '/app/plano'
+      preLoaderRoute: typeof AppPlanoRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/onboarding': {
@@ -504,6 +523,7 @@ interface AppRouteChildren {
   AppHistoricoRoute: typeof AppHistoricoRoute
   AppInteligenciaRoute: typeof AppInteligenciaRoute
   AppOnboardingRoute: typeof AppOnboardingRoute
+  AppPlanoRoute: typeof AppPlanoRoute
   AppProjetosRoute: typeof AppProjetosRoute
   AppVslRoute: typeof AppVslRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -517,6 +537,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppHistoricoRoute: AppHistoricoRoute,
   AppInteligenciaRoute: AppInteligenciaRoute,
   AppOnboardingRoute: AppOnboardingRoute,
+  AppPlanoRoute: AppPlanoRoute,
   AppProjetosRoute: AppProjetosRoute,
   AppVslRoute: AppVslRoute,
   AppIndexRoute: AppIndexRoute,

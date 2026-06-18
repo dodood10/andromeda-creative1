@@ -19,6 +19,7 @@ import {
 } from "./render/process-render-job";
 import { assertUserCanSignStoragePath } from "./security-storage";
 import { rateLimitExport } from "./security-rate-limit";
+import { assertCanExport } from "./plan-enforcement";
 import type { EstiloProducao } from "./formato-recomendacao";
 import type { AudioPaths, CriativoScore, ScoreDimensao } from "./types/criativo-json";
 import { parseAudioPaths, parseScoreJson } from "./types/criativo-json";
@@ -439,6 +440,8 @@ export const solicitarExport = createServerFn({ method: "POST" })
       .single();
 
     if (error || !criativo) throw new Error("Criativo não encontrado");
+
+    await assertCanExport(context.supabase, userId, criativo.organization_id);
 
     const score = parseScoreJson(criativo.score_json);
     if (score && score.podeExportar === false) {

@@ -29,14 +29,15 @@ import {
   Loader2,
   FolderKanban,
   Settings,
-  Pencil,
   BarChart3,
   TrendingUp,
   Plus,
   CreditCard,
+  Film,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { WorkspaceProvider, useWorkspace } from "@/contexts/workspace-context";
+import { EditorNavLink } from "@/components/editor-nav-link";
 
 export const Route = createFileRoute("/app")({
   head: () => ({
@@ -55,7 +56,7 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
     label: "Criar",
     items: [
       { title: "Gerar ângulos", url: "/app/gerador", icon: Wand2 },
-      { title: "Editor", url: "/app/editor", icon: Pencil },
+      { title: "VSL curta", url: "/app/vsl", icon: Film },
     ],
   },
   {
@@ -159,89 +160,127 @@ function ProjectSelector({ compact }: { compact?: boolean }) {
   );
 }
 
+function OnboardingShell({ children }: { children: React.ReactNode }) {
+  const { signOut } = useAuth();
+  return (
+    <div className="min-h-screen flex flex-col bg-background">
+      <header className="h-14 flex items-center justify-between border-b border-border/50 px-6">
+        <div className="flex items-center gap-2">
+          <div className="size-7 rounded-md bg-gradient-primary shadow-glow" />
+          <span className="font-display font-semibold">Andromeda</span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => signOut()}>
+          <LogOut className="size-4 mr-1.5" /> Sair
+        </Button>
+      </header>
+      <main className="flex-1">{children}</main>
+    </div>
+  );
+}
+
 function AppLayout() {
-  const { profile, signOut } = useAuth();
   const pathname = useRouterState({ select: (r) => r.location.pathname });
-  const showFab =
-    pathname.startsWith("/app") &&
-    !pathname.startsWith("/app/onboarding") &&
-    pathname !== "/app/gerador";
+  const isOnboarding = pathname === "/app/onboarding";
+
+  if (isOnboarding) {
+    return (
+      <AppAuthGate>
+        <WorkspaceProvider>
+          <OnboardingShell>
+            <Outlet />
+          </OnboardingShell>
+        </WorkspaceProvider>
+      </AppAuthGate>
+    );
+  }
 
   return (
     <AppAuthGate>
       <WorkspaceProvider>
-        <SidebarProvider>
-          <div className="min-h-screen flex w-full bg-background">
-            <AppSidebar />
-            <div className="flex-1 flex flex-col">
-              <header className="h-14 sticky top-0 z-30 flex items-center gap-3 border-b border-border/50 bg-background/80 backdrop-blur px-4">
-                <SidebarTrigger />
-                <Link to="/" className="flex items-center gap-2">
-                  <div className="size-6 rounded-md bg-gradient-primary shadow-glow" />
-                  <span className="font-display font-semibold text-sm">Andromeda</span>
-                </Link>
-                <ProjectSelector />
-                <div className="flex md:hidden flex-1 min-w-0 max-w-[200px]">
-                  <ProjectSelector compact />
-                </div>
-                <div className="ml-auto flex items-center gap-3">
-                  <Link to="/app/configuracoes" className="hidden sm:flex">
-                    <Button variant="ghost" size="sm" className="h-8 px-2" title="Configurações">
-                      <Settings className="size-4" />
-                    </Button>
-                  </Link>
-                  <Link to="/app/projetos" className="hidden sm:flex">
-                    <Button variant="ghost" size="sm" className="h-8 px-2" title="Projetos">
-                      <FolderKanban className="size-4" />
-                    </Button>
-                  </Link>
-                  <span className="text-xs text-muted-foreground hidden sm:inline">
-                    {profile?.display_name ?? "Workspace"}
-                  </span>
-                  <Button variant="ghost" size="sm" onClick={() => signOut()} className="h-8 px-2">
-                    <LogOut className="size-4" />
-                  </Button>
-                </div>
-              </header>
-              <main className="flex-1 overflow-auto">
-                <Outlet />
-              </main>
-              {showFab && (
-                <Link
-                  to="/app/gerador"
-                  className="fixed bottom-4 right-4 z-40 md:bottom-6 md:right-6"
-                >
-                  <Button
-                    size="lg"
-                    className="rounded-full shadow-glow bg-gradient-primary border-0 min-h-12 min-w-12 px-4"
-                  >
-                    <Plus className="size-5 mr-1" />
-                    <span className="hidden sm:inline">Novo criativo</span>
-                  </Button>
-                </Link>
-              )}
-            </div>
-          </div>
-        </SidebarProvider>
+        <AppShell />
       </WorkspaceProvider>
     </AppAuthGate>
   );
 }
 
-function AppSidebar() {
-  const pathname = useRouterState({ select: (r) => r.location.pathname });
+function AppShell() {
+  const { profile, signOut } = useAuth();
   const { currentOrg } = useWorkspace();
+  const pathname = useRouterState({ select: (r) => r.location.pathname });
   const isOwner = currentOrg?.role === "owner";
+  const showFab = pathname.startsWith("/app") && pathname !== "/app/gerador";
+
+  return (
+    <SidebarProvider>
+      <div className="min-h-screen flex w-full bg-background">
+        <AppSidebar isOwner={isOwner} />
+        <div className="flex-1 flex flex-col">
+          <header className="h-14 sticky top-0 z-30 flex items-center gap-3 border-b border-border/50 bg-background/80 backdrop-blur px-4">
+            <SidebarTrigger />
+            <Link to="/app" className="flex items-center gap-2">
+              <div className="size-6 rounded-md bg-gradient-primary shadow-glow" />
+              <span className="font-display font-semibold text-sm">Andromeda</span>
+            </Link>
+            <ProjectSelector />
+            <div className="flex md:hidden flex-1 min-w-0 max-w-[200px]">
+              <ProjectSelector compact />
+            </div>
+            <div className="ml-auto flex items-center gap-3">
+              {isOwner && (
+                <Link to="/app/configuracoes" className="hidden sm:flex">
+                  <Button variant="ghost" size="sm" className="h-8 px-2" title="Configurações">
+                    <Settings className="size-4" />
+                  </Button>
+                </Link>
+              )}
+              <Link to="/app/projetos" className="hidden sm:flex">
+                <Button variant="ghost" size="sm" className="h-8 px-2" title="Projetos">
+                  <FolderKanban className="size-4" />
+                </Button>
+              </Link>
+              <span className="text-xs text-muted-foreground hidden sm:inline">
+                {profile?.display_name ?? "Workspace"}
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => signOut()} className="h-8 px-2">
+                <LogOut className="size-4" />
+              </Button>
+            </div>
+          </header>
+          <main className="flex-1 overflow-auto">
+            <Outlet />
+          </main>
+          {showFab && (
+            <Link
+              to="/app/gerador"
+              className="fixed bottom-4 right-4 z-40 md:bottom-6 md:right-6"
+            >
+              <Button
+                size="lg"
+                className="rounded-full shadow-glow bg-gradient-primary border-0 min-h-12 min-w-12 px-4"
+              >
+                <Plus className="size-5 mr-1" />
+                <span className="hidden sm:inline">Novo criativo</span>
+              </Button>
+            </Link>
+          )}
+        </div>
+      </div>
+    </SidebarProvider>
+  );
+}
+
+function AppSidebar({ isOwner }: { isOwner: boolean }) {
+  const pathname = useRouterState({ select: (r) => r.location.pathname });
   const isActive = (url: string, exact?: boolean) =>
     exact ? pathname === url : pathname === url || pathname.startsWith(url + "/");
 
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="px-4 py-3">
-        <div className="flex items-center gap-2">
+        <Link to="/app" className="flex items-center gap-2">
           <div className="size-7 rounded-md bg-gradient-primary shadow-glow" />
           <span className="font-display font-semibold">Andromeda</span>
-        </div>
+        </Link>
       </SidebarHeader>
       <SidebarContent>
         {navGroups.map((group) => (
@@ -259,6 +298,9 @@ function AppSidebar() {
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
+                {group.label === "Criar" && (
+                  <EditorNavLink isActive={isActive("/app/editor")} />
+                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
@@ -282,10 +324,10 @@ function AppSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={pathname === "/planos"}>
-                  <Link to="/planos" className="flex items-center gap-2">
+                <SidebarMenuButton asChild isActive={pathname === "/app/plano"}>
+                  <Link to="/app/plano" className="flex items-center gap-2">
                     <CreditCard className="size-4" />
-                    <span>Planos</span>
+                    <span>Plano e uso</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

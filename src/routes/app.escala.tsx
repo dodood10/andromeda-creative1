@@ -109,9 +109,7 @@ function Escala() {
 
   const statusOk = ["Performando", "Rodando", "Subiu"].includes(campeao?.status ?? "");
   const intelPending = campeao?.performando_intel_status === "pending";
-  const intelApproved =
-    campeao?.status !== "Performando" || campeao?.performando_intel_status === "approved";
-  const canScale = statusOk && intelApproved;
+  const canScale = statusOk;
 
   const analiseMutation = useMutation({
     mutationFn: (force: boolean) => {
@@ -296,10 +294,10 @@ function Escala() {
                       </div>
                     )}
                     {intelPending && (
-                      <div className="mt-3 flex items-start gap-2 text-sm text-warning p-3 rounded-lg bg-warning/10 border border-warning/30">
+                      <div className="mt-3 flex items-start gap-2 text-sm text-muted-foreground p-3 rounded-lg bg-muted/30 border border-border">
                         <AlertTriangle className="size-4 shrink-0 mt-0.5" />
                         <span>
-                          Performando aguardando validação da equipe — a escala com inteligência completa só após aprovação admin.
+                          Resultados reportados aguardam validação para entrar na inteligência global — você já pode gerar variações agora.
                         </span>
                       </div>
                     )}

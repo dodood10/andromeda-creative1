@@ -37,6 +37,7 @@ import { VSL_BLOCOS_META, vslBlockLabel, isVslRoteiro, type VslAnguloJsonExtras 
 import { gerarVslCurta } from "@/lib/vsl.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
 import { celebrateFirstExport } from "@/lib/first-export-celebration";
+import { trackMetaExportConcluido, trackMetaMarcarSubiu } from "@/lib/meta-pixel";
 import type { AudioPaths } from "@/lib/types/criativo-json";
 import type { CriativoScore } from "@/lib/types/criativo-json";
 
@@ -51,8 +52,13 @@ function sleep(ms: number) {
 }
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { GeradorStepper } from "@/components/gerador-stepper";
 import { UpgradeBanner } from "@/components/upgrade-banner";
+import { MetaUploadGuide } from "@/components/meta-upload-guide";
+import { UtmBuilder } from "@/components/utm-builder";
+import { ExportLimitModal } from "@/components/export-limit-modal";
 import { getPlanUsage } from "@/lib/plan.functions";
+import { trackMetaInitiateCheckout } from "@/lib/meta-pixel";
 
 const searchSchema = z.object({
   criativoId: z.string().uuid().optional(),
@@ -187,6 +193,7 @@ function Editor({ criativoId, focus }: EditorProps) {
   const [exportDevMode, setExportDevMode] = useState(false);
   const [audioDevMode, setAudioDevMode] = useState(false);
   const [showPostExport, setShowPostExport] = useState(false);
+  const [exportLimitOpen, setExportLimitOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<"roteiro" | "preview" | "export">("roteiro");
   const [markingSubiu, setMarkingSubiu] = useState(false);
   const [downloadUrls, setDownloadUrls] = useState<Record<string, string>>({});
@@ -401,6 +408,11 @@ function Editor({ criativoId, focus }: EditorProps) {
   }, [criativo, focus, criativoId]);
 
   async function handleExport() {
+    if (planUsage && !planUsage.canExport) {
+      setExportLimitOpen(true);
+      trackMetaInitiateCheckout("export_limit");
+      return;
+    }
     setExporting(true);
     setRenderProgress("Iniciando render…");
     const pollTimer = setInterval(() => {
@@ -450,6 +462,7 @@ function Editor({ criativoId, focus }: EditorProps) {
             setScoreOpen(false);
             toast.success("Export concluído!");
             celebrateFirstExport();
+            trackMetaExportConcluido();
             trackFunnelEvent({ userId: user?.id, organizationId, event: "export_pronto", success: true });
             queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
             return;
@@ -474,6 +487,7 @@ function Editor({ criativoId, focus }: EditorProps) {
     setMarkingSubiu(true);
     try {
       await patchStatus({ data: { id: criativoId, status: "Subiu" } });
+      trackMetaMarcarSubiu();
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       toast.success("Marcado como Subiu!");
@@ -577,10 +591,12 @@ function Editor({ criativoId, focus }: EditorProps) {
             { label: anguloNome },
           ]}
         />
+        <GeradorStepper etapa="editor" />
         {planUsage && !planUsage.canExport && (
           <UpgradeBanner
             message={`Limite de exports do plano grátis atingido (${planUsage.exportsMes}/${planUsage.limits.exportsMes} este mês).`}
             compact
+            upgradeTo="/app/plano"
           />
         )}
       </div>
@@ -928,6 +944,15 @@ function Editor({ criativoId, focus }: EditorProps) {
           />
         </DialogContent>
       </Dialog>
+
+      {planUsage && (
+        <ExportLimitModal
+          open={exportLimitOpen}
+          onOpenChange={setExportLimitOpen}
+          exportsUsed={planUsage.exportsMes}
+          exportsLimit={planUsage.limits.exportsMes}
+        />
+      )}
     </div>
   );
 }
@@ -989,8 +1014,10 @@ function PostExportContent({
             <li>• CTA visível fora da safe zone inferior</li>
             <li>• utm_content no anúncio para rastrear</li>
           </ul>
+          <MetaUploadGuide />
         </div>
       </div>
+      <UtmBuilder utmContent={utm} />
       <div className="flex flex-wrap gap-2">
         <Button className="bg-gradient-primary border-0" onClick={onMarcarSubiu} disabled={markingSubiu}>
           {markingSubiu ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4 mr-1.5" />}

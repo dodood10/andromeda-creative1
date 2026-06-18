@@ -20,7 +20,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Search, Download, TrendingUp, Play, Loader2, BarChart3, LayoutGrid, List } from "lucide-react";
+import { Search, Download, TrendingUp, Play, Loader2, BarChart3, LayoutGrid, List, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   listCriativos,
@@ -28,12 +28,15 @@ import {
   reportarResultado,
   exportZipCriativos,
   listResultados,
+  importMetricasCsv,
   type CriativoRow,
 } from "@/lib/criativos.functions";
 import { getSignedExportUrls } from "@/lib/export.functions";
 import { useWorkspace } from "@/contexts/workspace-context";
 import type { Enums } from "@/integrations/supabase/types";
+import { trackMetaMarcarSubiu, trackMetaPerformando } from "@/lib/meta-pixel";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { MetaUploadGuide } from "@/components/meta-upload-guide";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -97,6 +100,7 @@ function Historico() {
   const patchStatus = useServerFn(updateCriativoStatus);
   const submitResultado = useServerFn(reportarResultado);
   const runZip = useServerFn(exportZipCriativos);
+  const runImportCsv = useServerFn(importMetricasCsv);
   const signExports = useServerFn(getSignedExportUrls);
   const queryClient = useQueryClient();
 
@@ -113,7 +117,10 @@ function Historico() {
   const [zipLoading, setZipLoading] = useState(false);
   const [preview, setPreview] = useState<{ angulo: string; url: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
+  const [viewMode, setViewMode] = useState<"table" | "kanban">("kanban");
+  const [csvOpen, setCsvOpen] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [csvLoading, setCsvLoading] = useState(false);
   const [statusConfirm, setStatusConfirm] = useState<{
     id: string;
     angulo: string;
@@ -221,7 +228,11 @@ function Historico() {
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
       if (vars.status === "Performando") {
+        trackMetaPerformando();
         setReportModal({ id: vars.id, angulo: vars.angulo });
+      } else if (vars.status === "Subiu") {
+        trackMetaMarcarSubiu();
+        toast.success("Status atualizado");
       } else {
         toast.success("Status atualizado");
       }
@@ -283,6 +294,27 @@ function Historico() {
     statusMutation.mutate({ id: row.id, status, angulo: row.angulo });
   }
 
+  async function handleImportCsv() {
+    if (!projectId || !csvText.trim()) {
+      toast.error("Cole o conteúdo do CSV exportado do Ads Manager");
+      return;
+    }
+    setCsvLoading(true);
+    try {
+      const { imported, total } = await runImportCsv({
+        data: { projectId, csvText: csvText.trim() },
+      });
+      toast.success(`${imported} de ${total} linhas importadas`);
+      setCsvOpen(false);
+      setCsvText("");
+      queryClient.invalidateQueries({ queryKey: ["resultados", projectId] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao importar CSV");
+    } finally {
+      setCsvLoading(false);
+    }
+  }
+
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-7xl space-y-6">
       <AppBreadcrumbs items={[{ label: "Projeto", to: "/app" }, { label: "Meus criativos" }]} />
@@ -299,6 +331,12 @@ function Historico() {
           )}
         </div>
         <div className="flex flex-col items-end gap-2">
+          <div className="flex flex-wrap gap-2 justify-end">
+            <MetaUploadGuide />
+            <Button variant="outline" size="sm" onClick={() => setCsvOpen(true)}>
+              <Upload className="size-4 mr-1.5" /> Importar CSV Meta
+            </Button>
+          </div>
           <Link to="/app/gerador">
             <Button size="sm" className="bg-gradient-primary border-0">
               Gerar novos ângulos
@@ -573,7 +611,7 @@ function Historico() {
             <AlertDialogTitle>Confirmar mudança de status</AlertDialogTitle>
             <AlertDialogDescription>
               {statusConfirm?.status === "Performando"
-                ? `Marcar "${statusConfirm.angulo}" como Performando? A equipe validará antes de usar na inteligência.`
+                ? `Marcar "${statusConfirm.angulo}" como Performando? Reporte métricas no próximo passo para alimentar inteligência e escala.`
                 : `Alterar "${statusConfirm?.angulo}" de ${statusConfirm?.from} para ${statusConfirm?.status}?`}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -595,6 +633,27 @@ function Historico() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={csvOpen} onOpenChange={setCsvOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Importar métricas do Ads Manager</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Exporte um relatório CSV do Meta Ads com colunas de anúncio, utm_content ou gasto. O Andromeda associa por utm_content ou nome do ângulo.
+          </p>
+          <Textarea
+            rows={8}
+            placeholder="Cole o CSV aqui..."
+            value={csvText}
+            onChange={(e) => setCsvText(e.target.value)}
+            className="font-mono text-xs"
+          />
+          <Button onClick={() => void handleImportCsv()} disabled={csvLoading} className="w-full">
+            {csvLoading ? <Loader2 className="size-4 animate-spin" /> : "Importar"}
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

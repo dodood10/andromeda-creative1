@@ -373,7 +373,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
 
     const { data: criativos, error } = await supabase
       .from("criativos")
-      .select("status, angulo, formato_saida, export_status, id, performando_intel_status")
+      .select("status, angulo, formato_saida, export_status, id, performando_intel_status, updated_at")
       .eq("project_id", data.projectId);
 
     if (error) throw new Error(error.message);
@@ -429,6 +429,15 @@ export const getDashboardStats = createServerFn({ method: "POST" })
     const performandoPendentes = (criativos ?? []).filter(
       (c) => c.status === "Performando" && c.performando_intel_status === "pending",
     ).length;
+
+    const fortyEightHoursAgo = Date.now() - 48 * 60 * 60 * 1000;
+    const staleExportReminder = (criativos ?? []).find(
+      (c) =>
+        c.export_status === "pronto" &&
+        c.status === "Gerado" &&
+        c.updated_at &&
+        new Date(c.updated_at).getTime() < fortyEightHoursAgo,
+    );
 
     const feed: Array<{ tag: string; title: string; desc: string; action: AppLink }> = [];
     if (counts.Performando > 0) {
@@ -529,6 +538,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       firstExportPendingId,
       firstPerformandoId,
       performandoPendentes,
+      staleExportReminderId: staleExportReminder?.id ?? null,
       volumeTarget: 12,
       sugestao:
         total === 0
@@ -909,6 +919,62 @@ export const reportarResultado = createServerFn({ method: "POST" })
 
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+/** Importa métricas do Ads Manager (CSV) e associa por utm_content ou nome do anúncio */
+export const importMetricasCsv = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    z.object({
+      projectId: z.string().uuid(),
+      csvText: z.string().min(10),
+    }),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+
+    const { data: criativos, error: cErr } = await supabase
+      .from("criativos")
+      .select("id, utm_content, angulo, produto")
+      .eq("project_id", data.projectId);
+
+    if (cErr) throw new Error(cErr.message);
+
+    const lines = data.csvText.trim().split(/\r?\n/);
+    if (lines.length < 2) throw new Error("CSV precisa de cabeçalho e ao menos uma linha");
+
+    const header = lines[0].split(/[,;\t]/).map((h) => h.trim().toLowerCase());
+    const utmIdx = header.findIndex((h) => h.includes("utm") || h.includes("content"));
+    const spendIdx = header.findIndex((h) => h.includes("gasto") || h.includes("spend") || h.includes("valor"));
+    const nameIdx = header.findIndex((h) => h.includes("anúncio") || h.includes("anuncio") || h.includes("ad name"));
+
+    let imported = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(/[,;\t]/).map((c) => c.trim().replace(/^"|"$/g, ""));
+      const utmVal = utmIdx >= 0 ? cols[utmIdx] : "";
+      const adName = nameIdx >= 0 ? cols[nameIdx] : "";
+      const spend = spendIdx >= 0 ? cols[spendIdx] : "";
+
+      const match = (criativos ?? []).find(
+        (c) =>
+          (utmVal && c.utm_content === utmVal) ||
+          (adName && (c.angulo?.toLowerCase().includes(adName.toLowerCase()) ?? false)),
+      );
+      if (!match) continue;
+
+      const { error } = await supabase.from("resultados_reportados").insert({
+        criativo_id: match.id,
+        user_id: userId,
+        tipo: "clique",
+        metrica: spendIdx >= 0 ? "gasto" : "import_csv",
+        valor: spend || null,
+        observacao: `Import CSV linha ${i + 1}`,
+        intel_review_status: "pending",
+      });
+      if (!error) imported++;
+    }
+
+    return { imported, total: lines.length - 1 };
   });
 
 export { ProjectScopeSchema };

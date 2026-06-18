@@ -7,14 +7,16 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { TrendingUp, AlertTriangle, Sparkles, ArrowRight, Flame, Eye, Zap, Loader2 } from "lucide-react";
+import { TrendingUp, AlertTriangle, Sparkles, ArrowRight, Flame, Eye, Zap, Loader2, Brain } from "lucide-react";
 import { getDashboardStats } from "@/lib/criativos.functions";
 import { getPlanUsage } from "@/lib/plan.functions";
+import { getNicheDailyIntel } from "@/lib/niche-intel.functions";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspace } from "@/contexts/workspace-context";
 import type { AppLink } from "@/lib/app-links";
 import { ActivationChecklist } from "@/components/activation-checklist";
 import { UpgradeBanner } from "@/components/upgrade-banner";
+import { ContinueWizardBanner } from "@/components/continue-wizard-banner";
 
 export const Route = createFileRoute("/app/")({
   head: () => ({
@@ -63,6 +65,7 @@ function Dashboard() {
   const { projectId, currentProject, organizationId, loading: wsLoading } = useWorkspace();
   const fetchStats = useServerFn(getDashboardStats);
   const fetchPlanUsage = useServerFn(getPlanUsage);
+  const fetchNicheIntel = useServerFn(getNicheDailyIntel);
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ["dashboard-stats", projectId],
@@ -75,6 +78,14 @@ function Dashboard() {
     queryFn: () => fetchPlanUsage({ data: { organizationId: organizationId! } }),
     enabled: !!organizationId,
     staleTime: 60_000,
+  });
+
+  const nichoRaw = currentProject?.nicho ?? profile?.nicho ?? "";
+  const { data: nicheIntel } = useQuery({
+    queryKey: ["niche-daily-intel", nichoRaw],
+    queryFn: () => fetchNicheIntel({ data: { nicho: nichoRaw } }),
+    enabled: nichoRaw.length > 2,
+    staleTime: 6 * 60 * 60 * 1000,
   });
 
   const hoje = format(new Date(), "d 'de' MMMM 'de' yyyy", { locale: ptBR });
@@ -145,7 +156,33 @@ function Dashboard() {
       </div>
 
       {planUsage && !planUsage.canGerar && (
-        <UpgradeBanner message="Você atingiu o limite de gerações do plano grátis este mês." />
+        <UpgradeBanner message="Você atingiu o limite de gerações do plano grátis este mês." upgradeTo="/app/plano" />
+      )}
+
+      <ContinueWizardBanner />
+
+      {stats?.staleExportReminderId && (
+        <Card className="glass p-4 border border-warning/40 bg-warning/10 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm flex items-center gap-2">
+            <AlertTriangle className="size-4 text-warning shrink-0" />
+            Export pronto há mais de 48h — marque como Subiu após subir no Meta.
+          </p>
+          <Link to="/app/historico" search={{ criativoId: stats.staleExportReminderId }}>
+            <Button size="sm" variant="outline">Marcar agora</Button>
+          </Link>
+        </Card>
+      )}
+
+      {stats?.firstPerformandoId && (
+        <Card className="glass p-4 border border-success/30 bg-success/5 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm flex items-center gap-2">
+            <TrendingUp className="size-4 text-success shrink-0" />
+            Você tem um criativo performando — gere variações para escalar.
+          </p>
+          <Link to="/app/escala" search={{ criativoId: stats.firstPerformandoId }}>
+            <Button size="sm" className="bg-gradient-primary border-0">Ir para escala</Button>
+          </Link>
+        </Card>
       )}
 
       {stats && activationSteps.length > 0 && <ActivationChecklist steps={activationSteps} />}
@@ -187,7 +224,29 @@ function Dashboard() {
       )}
 
       <div>
-        <h2 className="font-display text-xl font-semibold mb-4">Feed de inteligência diária</h2>
+        <h2 className="font-display text-xl font-semibold mb-1">Feed de ações e inteligência</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Ações do seu projeto + panorama diário do nicho {nicho !== "Seu nicho" ? `(${nicho})` : ""}.
+        </p>
+
+        {(nicheIntel?.insights?.length ?? 0) > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            {nicheIntel!.insights.map((item) => (
+              <Card key={item.title} className="glass bg-gradient-card p-5 border border-primary/20">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="size-9 rounded-lg bg-primary/15 flex items-center justify-center">
+                    <Brain className="size-4 text-primary-glow" />
+                  </div>
+                  <Badge variant="outline" className="text-[10px] uppercase">{item.tag}</Badge>
+                </div>
+                <h3 className="font-semibold leading-snug">{item.title}</h3>
+                <p className="text-sm text-muted-foreground mt-1.5">{item.desc}</p>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {feedItems.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {feedItems.map((item, i) => {
             const Icon = FEED_ICONS[i % FEED_ICONS.length];
@@ -210,6 +269,7 @@ function Dashboard() {
             );
           })}
         </div>
+        )}
       </div>
 
       <div>

@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 export function UpgradeBanner({
   message,
   compact,
+  upgradeTo = "/app/plano",
 }: {
   message: string;
   compact?: boolean;
+  upgradeTo?: "/app/plano" | "/planos";
 }) {
   return (
     <div
@@ -17,9 +19,9 @@ export function UpgradeBanner({
         <Sparkles className="size-4 text-primary-glow shrink-0" />
         {message}
       </p>
-      <Link to="/planos">
+      <Link to={upgradeTo}>
         <Button size="sm" variant="outline" className="min-h-11 border-primary/40">
-          Ver planos
+          {upgradeTo === "/app/plano" ? "Ver plano e upgrade" : "Ver planos"}
         </Button>
       </Link>
     </div>

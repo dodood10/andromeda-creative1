@@ -37,6 +37,11 @@ import {
 } from "@/lib/gerador-helpers";
 import { searchPexelsMedia, downloadPexelsToStorage } from "@/lib/stock-media.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
+import {
+  trackMetaAngulosGerados,
+  trackMetaRascunhoCriado,
+  trackMetaAddToCart,
+} from "@/lib/meta-pixel";
 import { validateHttpUrl } from "@/lib/security-url";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "@/contexts/workspace-context";
@@ -56,10 +61,13 @@ import {
   type FormatoOverride,
 } from "@/lib/formato-recomendacao";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 const wizardSearchSchema = z.object({
   step: z.enum(["wizard"]).optional(),
   formato: z.enum(["criativo_curto", "vsl_curta"]).optional(),
+  url: z.string().optional(),
+  ttfe: z.enum(["1"]).optional(),
 });
 
 const WIZARD_STORAGE_KEY = "andromeda_wizard_state";
@@ -124,7 +132,7 @@ type WizardStep = "producao" | "midia";
 
 function Gerador() {
   const navigate = useNavigate();
-  const { step: urlStep, formato: urlFormato } = Route.useSearch();
+  const { step: urlStep, formato: urlFormato, url: urlSearch, ttfe: ttfeFlag } = Route.useSearch();
   const { organizationId, projectId, currentProject, setWorkspace } = useWorkspace();
   const askQuestion = useServerFn(gerarPerguntaCirurgica);
   const run = useServerFn(gerarAngulos);
@@ -168,6 +176,7 @@ function Gerador() {
   const [modoRapido, setModoRapido] = useState(false);
   const mediaRef = useRef<HTMLInputElement>(null);
   const prevProjectRef = useRef<string | null>(null);
+  const pendingAutoDraft = useRef(false);
   const { user } = useAuth();
 
   const fetchIntel = useServerFn(getInteligenciaNicho);
@@ -231,6 +240,22 @@ function Gerador() {
       setUrl(currentProject.url_default);
     }
   }, [currentProject?.url_default, projectId]);
+
+  useEffect(() => {
+    if (urlSearch?.trim()) {
+      setUrl(urlSearch.trim());
+    }
+  }, [urlSearch]);
+
+  useEffect(() => {
+    if (ttfeFlag === "1") {
+      sessionStorage.setItem("andromeda_ttfe", "1");
+      pendingAutoDraft.current = true;
+      setModoRapido(true);
+      toast.info("Fluxo rápido: vamos gerar ângulos e abrir o editor automaticamente.");
+      navigate({ to: "/app/gerador", search: { url: urlSearch }, replace: true });
+    }
+  }, [ttfeFlag, urlSearch, navigate]);
 
   useEffect(() => {
     if (geracaoRestoreError) {
@@ -413,6 +438,7 @@ function Gerador() {
           respostaCirurgica: skipPergunta ? context || "Gerar com contexto mínimo da URL." : resposta,
           tomCalibracao,
           projectId: projectId ?? undefined,
+          organizationId: organizationId ?? undefined,
         },
       });
 
@@ -440,6 +466,19 @@ function Gerador() {
       setUnsavedResultado(null);
       setResultado(data);
       setGeracaoId(saved.geracaoId);
+
+      const shouldAutoDraft =
+        pendingAutoDraft.current ||
+        sessionStorage.getItem("andromeda_ttfe") === "1";
+      if (shouldAutoDraft) {
+        pendingAutoDraft.current = false;
+        sessionStorage.removeItem("andromeda_ttfe");
+        setLoadingAngulos(false);
+        setLoadingStep("");
+        const ok = await autoCreateSingleDraft(data, saved.geracaoId);
+        if (ok) return;
+      }
+
       setEtapa("resultado");
       persistWizard({ geracaoId: saved.geracaoId, selectedAngulos: [...selectedAngulos] });
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
@@ -448,6 +487,7 @@ function Gerador() {
       trackFunnelEvent({ userId: user?.id, organizationId, event: "angulos_gerados", success: true, durationMs });
       trackFunnelEvent({ userId: user?.id, organizationId, event: "wizard_step", success: true, durationMs });
       localStorage.setItem("gerador_completed_once", "1");
+      trackMetaAngulosGerados(data.angulos?.length ?? 5);
 
       if (durationMs > 90000) toast.warning("Geração levou mais de 90 segundos");
       toast.success(existingId ? "Ângulos atualizados" : "Ângulos salvos");
@@ -500,6 +540,7 @@ function Gerador() {
   }
 
   async function handleGenerateDirect() {
+    pendingAutoDraft.current = modoRapido;
     await runGerarAngulos(true);
   }
 
@@ -510,6 +551,56 @@ function Gerador() {
     }
     setSelectedAngulos(new Set());
     await runGerarAngulos(!!context.trim(), geracaoId);
+  }
+
+  async function autoCreateSingleDraft(
+    angulosData: ResultadoAngulos,
+    gId: string,
+  ): Promise<boolean> {
+    if (!organizationId || !projectId) return false;
+    const [idx] = pickRecommendedAngulos(angulosData, 1);
+    const fmtMap = initFormatoPorAngulo([idx], "criativo_curto");
+    const fmt = fmtMap[idx];
+    if (!fmt) return false;
+    const fmtFinal: FormatoOverride = {
+      ...fmt,
+      estiloProducao: "texto_animado",
+      source: "manual",
+    };
+
+    setCreatingDrafts(true);
+    setDraftProgress({ done: 0, total: 1 });
+    setLoadingStep("Criando rascunho do melhor ângulo…");
+
+    try {
+      const { criativoId } = await createDraft({
+        data: {
+          geracaoId: gId,
+          anguloIndex: idx,
+          formatoSaida: fmtFinal.formatoSaida,
+          estiloProducao: fmtFinal.estiloProducao,
+          formatoSource: fmtFinal.source,
+          aspectRatioPrioritario: fmtFinal.aspectRatioPrioritario,
+          projectId,
+          organizationId,
+        },
+      });
+
+      localStorage.removeItem(WIZARD_STORAGE_KEY);
+      queryClient.invalidateQueries({ queryKey: ["criativos"] });
+      trackMetaRascunhoCriado(1);
+      trackMetaAddToCart(angulosData.angulos[idx]?.nome ?? `angulo-${idx}`);
+      toast.success("Rascunho criado — abrindo o editor");
+      navigate({ to: "/app/editor", search: { criativoId, focus: "audio" } });
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao criar rascunho automático");
+      return false;
+    } finally {
+      setCreatingDrafts(false);
+      setDraftProgress(null);
+      setLoadingStep("");
+    }
   }
 
   async function applyMediaFallback(mediaIndices: number[]): Promise<Record<number, FormatoOverride> | null> {
@@ -628,6 +719,7 @@ function Gerador() {
       }
 
       const first = created[0];
+      trackMetaRascunhoCriado(created.length);
       toast.success(
         created.length === 1
           ? "Rascunho criado — próximo: gerar áudio"
@@ -656,6 +748,13 @@ function Gerador() {
 
   return (
     <div className="container mx-auto px-6 py-8 max-w-6xl space-y-8 relative">
+      <AppBreadcrumbs
+        items={[
+          { label: "Dashboard", to: "/app" },
+          { label: "Gerador", to: "/app/gerador" },
+          ...(etapa !== "input" ? [{ label: etapa === "wizard" ? "Produção" : etapa }] : []),
+        ]}
+      />
       {loadingAngulos && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center">
           <Card className="glass p-8 max-w-md text-center space-y-4">
@@ -724,7 +823,7 @@ function Gerador() {
         <h1 className="text-3xl font-display font-bold">Gerador de ângulos</h1>
         <p className="text-muted-foreground mt-1">
           {modoRapido
-            ? "Modo rápido: URL + objetivo → 5 ângulos em uma etapa."
+            ? "Modo rápido: URL → melhor ângulo → rascunho no editor em um clique."
             : "Cole a URL, responda a pergunta cirúrgica e gere 5 ângulos com lógica probabilística Andromeda 2026."}
         </p>
         <div className="flex items-center gap-2 mt-3">
@@ -801,9 +900,9 @@ function Gerador() {
               className="min-h-11 bg-gradient-primary border-0 shadow-glow"
             >
               {loadingAngulos ? (
-                <><Loader2 className="size-4 mr-1.5 animate-spin" /> Gerando 5 ângulos…</>
+                <><Loader2 className="size-4 mr-1.5 animate-spin" /> Gerando e criando rascunho…</>
               ) : (
-                <><Sparkles className="size-4 mr-1.5" /> Gerar 5 ângulos agora</>
+                <><Sparkles className="size-4 mr-1.5" /> Gerar melhor ângulo e abrir editor</>
               )}
             </Button>
           ) : etapa !== "respondendo" ? (
@@ -998,8 +1097,10 @@ function Gerador() {
                             checked={selectedAngulos.has(i)}
                             onCheckedChange={(checked) => {
                               const next = new Set(selectedAngulos);
-                              if (checked) next.add(i);
-                              else next.delete(i);
+                              if (checked) {
+                                next.add(i);
+                                trackMetaAddToCart(a.nome);
+                              } else next.delete(i);
                               setSelectedAngulos(next);
                             }}
                             onClick={(e) => e.stopPropagation()}

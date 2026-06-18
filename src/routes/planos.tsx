@@ -1,9 +1,12 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Check, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PLAN_LIMITS, PLAN_LABELS, formatLimit } from "@/lib/plan-quota";
+import { trackMetaInitiateCheckout } from "@/lib/meta-pixel";
+import { useAuth } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/planos")({
   head: () => ({
@@ -46,7 +49,7 @@ const TIERS = [
     ],
     cta: "Assinar Pro",
     ctaTo: "/login" as const,
-    ctaSearch: { redirect: "/app/configuracoes" },
+    ctaSearch: { redirect: "/app/plano" },
     highlight: true,
   },
   {
@@ -68,6 +71,17 @@ const TIERS = [
 ];
 
 function PlanosPage() {
+  const navigate = useNavigate();
+  const { session, loading } = useAuth();
+
+  useEffect(() => {
+    if (!loading && session) {
+      navigate({ to: "/app/plano", replace: true });
+    }
+  }, [loading, session, navigate]);
+
+  if (!loading && session) return null;
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/40">
@@ -120,7 +134,12 @@ function PlanosPage() {
                   </li>
                 ))}
               </ul>
-              <Link to={t.ctaTo} search={t.ctaSearch} className="mt-6 block">
+              <Link
+                to={t.ctaTo}
+                search={t.ctaSearch}
+                className="mt-6 block"
+                onClick={() => trackMetaInitiateCheckout(t.id)}
+              >
                 <Button
                   className={`w-full min-h-11 ${t.highlight ? "bg-gradient-primary border-0 shadow-glow" : ""}`}
                   variant={t.highlight ? "default" : "outline"}

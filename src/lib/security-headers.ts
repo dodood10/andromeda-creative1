@@ -5,11 +5,11 @@ const SECURITY_HEADERS: Record<string, string> = {
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
   "Content-Security-Policy": [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-inline' https://connect.facebook.net",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https://*.supabase.co",
+    "img-src 'self' data: https://*.supabase.co https://www.facebook.com",
     "media-src 'self' https://*.supabase.co",
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://www.facebook.com https://connect.facebook.net",
     "frame-ancestors 'none'",
   ].join("; "),
 };

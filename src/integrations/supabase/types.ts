@@ -326,6 +326,33 @@ export type Database = {
         }
         Relationships: []
       }
+      niche_daily_intel: {
+        Row: {
+          created_at: string
+          generated_for: string
+          id: string
+          insights: Json
+          nicho_key: string
+          nicho_label: string
+        }
+        Insert: {
+          created_at?: string
+          generated_for?: string
+          id?: string
+          insights?: Json
+          nicho_key: string
+          nicho_label: string
+        }
+        Update: {
+          created_at?: string
+          generated_for?: string
+          id?: string
+          insights?: Json
+          nicho_key?: string
+          nicho_label?: string
+        }
+        Relationships: []
+      }
       organization_members: {
         Row: {
           created_at: string
@@ -470,6 +497,47 @@ export type Database = {
         }
         Relationships: []
       }
+      subscriptions: {
+        Row: {
+          created_at: string
+          id: string
+          organization_id: string
+          status: string
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          tier: Database["public"]["Enums"]["plan_tier"]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          organization_id: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          tier?: Database["public"]["Enums"]["plan_tier"]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          organization_id?: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          tier?: Database["public"]["Enums"]["plan_tier"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscriptions_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -485,6 +553,7 @@ export type Database = {
       formato_saida: "criativo_curto" | "vsl_curta"
       intel_review_status: "pending" | "approved" | "rejected"
       org_member_role: "owner" | "editor" | "viewer"
+      plan_tier: "free" | "pro" | "agency"
       resultado_tipo: "venda" | "lead" | "clique"
     }
     CompositeTypes: {
@@ -620,6 +689,7 @@ export const Constants = {
       formato_saida: ["criativo_curto", "vsl_curta"],
       intel_review_status: ["pending", "approved", "rejected"],
       org_member_role: ["owner", "editor", "viewer"],
+      plan_tier: ["free", "pro", "agency"],
       resultado_tipo: ["venda", "lead", "clique"],
     },
   },

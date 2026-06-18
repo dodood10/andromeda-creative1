@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { OrgMemberRole } from "./types/enums";
+import { assertCanCreateProject } from "./plan-enforcement";
 
 async function assertOrgOwner(
   supabase: SupabaseClient<Database>,
@@ -86,6 +87,7 @@ export const createProject = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
+    await assertCanCreateProject(supabase, data.organizationId);
     const { data: project, error } = await supabase
       .from("projects")
       .insert({

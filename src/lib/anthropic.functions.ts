@@ -7,6 +7,7 @@ import { getProjectFormatContext, normalizeAngulo } from "./formato-recomendacao
 import { ResultadoAngulosSchema, type RecomendacaoFormato, type ResultadoAngulos } from "./schemas/angulos.schema";
 import { HttpUrlSchema } from "./security-url";
 import { rateLimitGerarAngulos } from "./security-rate-limit";
+import { assertCanGerar } from "./plan-enforcement";
 
 const PRODUCT_QUESTION_RULES: Record<string, string> = {
   ecom: "qual é a principal objeção que impede a compra deste produto específico",
@@ -113,6 +114,7 @@ const InputSchema = z.object({
     .optional()
     .default("direto"),
   projectId: z.string().uuid().optional(),
+  organizationId: z.string().uuid().optional(),
 });
 
 const SYSTEM_PROMPT = `IDENTIDADE E PAPEL
@@ -280,6 +282,8 @@ export const gerarAngulos = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
+
+    await assertCanGerar(context.supabase, context.userId, data.organizationId);
 
     const tomLabel = {
       direto: "Direto e agressivo",

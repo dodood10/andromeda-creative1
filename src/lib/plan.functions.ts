@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { PLAN_LIMITS, type PlanTier } from "./plan-quota";
+import { PLAN_LIMITS, PLAN_LABELS, type PlanTier } from "./plan-quota";
+import { getOrgPlanTier } from "./plan-enforcement";
 
 function monthStartIso() {
   const d = new Date();
@@ -17,7 +18,7 @@ export const getPlanUsage = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const since = monthStartIso();
 
-    const tier: PlanTier = "free";
+    const tier: PlanTier = await getOrgPlanTier(supabase, data.organizationId);
 
     const geracoesQuery = supabase
       .from("geracoes")
@@ -57,5 +58,68 @@ export const getPlanUsage = createServerFn({ method: "POST" })
       },
       canGerar: (geracoesMes ?? 0) < limits.geracoesMes,
       canExport: (exportsMes ?? 0) < limits.exportsMes,
+      label: PLAN_LABELS[tier],
     };
+  });
+
+/** Stripe checkout — ativa quando STRIPE_SECRET_KEY estiver configurado */
+export const createStripeCheckout = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    z.object({
+      organizationId: z.string().uuid(),
+      tier: z.enum(["pro", "agency"]),
+    }),
+  )
+  .handler(async ({ data, context }) => {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    const pricePro = process.env.STRIPE_PRICE_PRO_ID;
+
+    if (!stripeKey || !pricePro) {
+      throw new Error(
+        "Checkout em configuração. Entre em contato ou aguarde a ativação do Stripe.",
+      );
+    }
+
+    const { supabase, userId } = context;
+
+    const { data: member } = await supabase
+      .from("organization_members")
+      .select("role")
+      .eq("organization_id", data.organizationId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (member?.role !== "owner") {
+      throw new Error("Apenas o owner pode gerenciar o plano");
+    }
+
+    if (data.tier === "agency") {
+      throw new Error("Plano Agency — fale com vendas em suporte@andromeda.app");
+    }
+
+    const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${stripeKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        mode: "subscription",
+        "line_items[0][price]": pricePro,
+        "line_items[0][quantity]": "1",
+        success_url: `${process.env.APP_URL ?? "http://localhost:5173"}/app/plano?checkout=success`,
+        cancel_url: `${process.env.APP_URL ?? "http://localhost:5173"}/app/plano?checkout=cancel`,
+        client_reference_id: data.organizationId,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Stripe: ${err.slice(0, 200)}`);
+    }
+
+    const session = (await res.json()) as { url?: string };
+    if (!session.url) throw new Error("Stripe não retornou URL de checkout");
+    return { checkoutUrl: session.url };
   });

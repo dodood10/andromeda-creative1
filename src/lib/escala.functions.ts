@@ -11,6 +11,7 @@ import {
 } from "./schemas/escala.schema";
 import { trackApiUsage } from "./api-usage";
 import type { RoteiroBloco } from "./schemas/angulos.schema";
+import { assertCanEscala } from "./plan-enforcement";
 
 const VARIACAO_IDS = ["hook-v", "hook-t", "avatar", "formato", "empilha", "benef", "cta"] as const;
 
@@ -138,6 +139,7 @@ export const gerarVariacoesEscala = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
+    await assertCanEscala(supabase, data.organizationId, data.variacoes.length);
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
 

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { z } from "zod";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { trackMetaCompleteRegistration, trackMetaLead } from "@/lib/meta-pixel";
+import { useAuth } from "@/hooks/use-auth";
 
 const searchSchema = z.object({
   redirect: z.string().optional(),
@@ -28,11 +30,18 @@ export const Route = createFileRoute("/login")({
 function Login() {
   const navigate = useNavigate();
   const { redirect } = Route.useSearch();
+  const { session, loading: authLoading, profile } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState("signin");
+
+  useEffect(() => {
+    if (authLoading || !session) return;
+    const dest = redirect ?? (profile?.nicho ? "/app" : "/app/onboarding");
+    navigate({ to: dest });
+  }, [authLoading, session, profile?.nicho, redirect, navigate]);
 
   async function handleSignIn() {
     if (!email || !password) {
@@ -66,6 +75,8 @@ function Login() {
         },
       });
       if (error) throw error;
+      trackMetaLead("signup_form");
+      trackMetaCompleteRegistration("email");
       toast.success("Conta criada! Verifique seu e-mail se a confirmação estiver ativa.");
       navigate({ to: redirect ?? "/app/onboarding" });
     } catch (e) {
@@ -99,7 +110,7 @@ function Login() {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: `${window.location.origin}${redirect ?? "/app"}` },
+        options: { redirectTo: `${window.location.origin}${redirect ?? "/app/onboarding"}` },
       });
       if (error) throw error;
     } catch (e) {

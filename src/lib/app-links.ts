@@ -7,8 +7,9 @@ export type AppLink = {
     | "/app/editor"
     | "/app/projetos"
     | "/app/escala"
-    | "/app/inteligencia"
-    | "/app/vsl";
+  | "/app/inteligencia"
+  | "/app/vsl"
+  | "/app/plano";
   search?: Record<string, string | undefined>;
 };
 

@@ -41,7 +41,7 @@ export const Route = createFileRoute("/")({
       {
         property: "og:description",
         content:
-          "Inteligência diária por nicho, 5 ângulos por briefing, editor com safe zones do Meta e fase de escala.",
+          "Feed de ações e panorama diário do nicho, 5 ângulos por briefing, editor com safe zones do Meta e fase de escala.",
       },
     ],
   }),
@@ -51,8 +51,8 @@ export const Route = createFileRoute("/")({
 const areas = [
   {
     icon: Sparkles,
-    title: "Dashboard diário",
-    desc: "Feed de inteligência por nicho. O que está escalando hoje, antes do CPM subir.",
+    title: "Dashboard e feed de ações",
+    desc: "Próxima ação clara + panorama diário do seu nicho. Insights do projeto conforme você reporta resultados.",
   },
   {
     icon: Wand2,
@@ -90,7 +90,7 @@ const differentials = [
   { icon: Target, title: "5 ângulos por briefing", desc: "Dois de previsibilidade, dois de escala, um orgânico. Sempre." },
   { icon: Shield, title: "Safe zones do Meta", desc: "35% inferior e 14% superior marcados no preview. Nada importante na zona de risco." },
   { icon: LineChart, title: "Score de qualidade pré-export", desc: "Hook rate esperado, compliance, calibração e diversidade antes de exportar." },
-  { icon: Brain, title: "Inteligência diária", desc: "Web search em tempo real cruzado com Andromeda 2026." },
+  { icon: Brain, title: "Inteligência do projeto", desc: "Benchmarks de hook rate e ângulos a partir dos seus criativos validados." },
   { icon: TrendingUp, title: "Fase de escala", desc: "Gere lote de variações do criativo que está performando." },
   { icon: Zap, title: "Refinamento por bloco", desc: "Ajuste só o hook, só o CTA, só uma objeção. Em linguagem natural." },
 ];
@@ -156,7 +156,7 @@ function Landing() {
               <span className="bg-clip-text text-transparent bg-gradient-primary">15 minutos</span>
             </h1>
             <p className="mt-6 text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto">
-              Os segredos dos criativos de alta conversão em uma plataforma. Inteligência diária por nicho, 5 ângulos prontos por briefing, editor com safe zones do Meta e fase de escala automática.
+              Os segredos dos criativos de alta conversão em uma plataforma. Feed de ações, panorama do nicho, 5 ângulos por briefing, editor com safe zones do Meta e fase de escala.
             </p>
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
               <Link to="/login" search={{ redirect: "/app/onboarding" }}>
