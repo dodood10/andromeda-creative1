@@ -8,7 +8,8 @@ import { getProjectPerformanceContext } from "./project-performance-context";
 import { getProjectGeneralIntelText } from "./project-reference-intel";
 import { buildOfferSnapshot, formatOfferSnapshotBlock } from "./offer-snapshot";
 import { checkOfferCongruence } from "./congruence-check";
-import { goalToSchwartzRange, ensureAnguloCopyDiversityHint } from "./schwartz-angulo";
+import { goalToSchwartzRange, ensureAnguloCopyDiversityHint, formatSchwartzPreferenciaBlock, validateAngulosResult } from "./schwartz-angulo";
+import { NivelConscienciaModoSchema, NivelConscienciaAlvoSchema } from "./types/enums";
 import { TomCalibracaoSchema } from "./types/enums";
 import { ResultadoAngulosSchema, type RecomendacaoFormato, type ResultadoAngulos } from "./schemas/angulos.schema";
 import { HttpUrlSchema } from "./security-url";
@@ -119,6 +120,10 @@ const InputSchema = z.object({
   perguntaCirurgica: z.string().optional().default(""),
   respostaCirurgica: z.string().min(1, "Resposta cirúrgica obrigatória"),
   tomCalibracao: TomCalibracaoSchema.optional().default("direto"),
+  nivelConscienciaModo: NivelConscienciaModoSchema.optional().default("ia"),
+  nivelConscienciaNivel: NivelConscienciaAlvoSchema.optional(),
+  nivelConscienciaMin: NivelConscienciaAlvoSchema.optional(),
+  nivelConscienciaMax: NivelConscienciaAlvoSchema.optional(),
   projectId: z.string().uuid().optional(),
   organizationId: z.string().uuid().optional(),
 });
@@ -325,6 +330,15 @@ export const gerarAngulos = createServerFn({ method: "POST" })
     }[data.tomCalibracao];
 
     const schwartzGoal = goalToSchwartzRange(data.goal ?? "conv");
+    const schwartzPref = formatSchwartzPreferenciaBlock(
+      {
+        modo: data.nivelConscienciaModo,
+        nivel: data.nivelConscienciaNivel,
+        min: data.nivelConscienciaMin,
+        max: data.nivelConscienciaMax,
+      },
+      schwartzGoal,
+    );
 
     let projectContextBlock = "";
     let offerSnapshot = null;
@@ -357,6 +371,7 @@ Tipo de produto: ${data.productType}
 Objetivo da campanha: ${data.goal}
 Faixa Schwartz recomendada para este objetivo: níveis ${schwartzGoal.min}–${schwartzGoal.max}
 ${schwartzGoal.hint}
+${schwartzPref}
 Contexto adicional: ${data.context || "(nenhum)"}
 Pergunta cirúrgica feita: ${data.perguntaCirurgica || "(não feita)"}
 Resposta do usuário à pergunta cirúrgica: ${data.respostaCirurgica || "(não respondida)"}
@@ -364,49 +379,62 @@ Calibração de tom: ${tomLabel}${projectContextBlock}
 
 Execute o processo completo: visite a URL com web_search, pesquise o que escala agora no nicho, mapeie persona e micropersonas, identifique variáveis fixas vs exploráveis, e devolva o JSON especificado com diagnóstico + 5 ângulos. Aplique as REGRAS DE CALIBRAÇÃO DE TOM POR BLOCO. Inclua nivel_conspiracao, saturacao_hook, janela_relevancia e recomendacao_formato em cada ângulo. Inclua panorama_formatos_nicho no diagnóstico.`;
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 8192,
-        system: SYSTEM_PROMPT,
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
-        messages: [{ role: "user", content: userMsg }],
-      }),
-    });
+    async function callAngulos(extraHint = ""): Promise<ResultadoAngulos> {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 8192,
+          system: SYSTEM_PROMPT,
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
+          messages: [{ role: "user", content: userMsg + extraHint }],
+        }),
+      });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
-      throw new Error(`Anthropic ${res.status}: ${errText}`);
+      if (!res.ok) {
+        const errText = await res.text();
+        trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
+        throw new Error(`Anthropic ${res.status}: ${errText}`);
+      }
+
+      const payload = (await res.json()) as {
+        content: Array<{ type: string; text?: string }>;
+      };
+      const text = payload.content
+        .filter((b) => b.type === "text" && b.text)
+        .map((b) => b.text as string)
+        .join("\n")
+        .trim();
+
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("Resposta sem JSON: " + text.slice(0, 200));
+
+      const parsed = ResultadoAngulosSchema.safeParse(JSON.parse(jsonMatch[0]));
+      if (!parsed.success) {
+        trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
+        throw new Error("JSON inválido: " + parsed.error.message.slice(0, 200));
+      }
+      return parsed.data;
     }
 
-    const payload = (await res.json()) as {
-      content: Array<{ type: string; text?: string }>;
-    };
-    const text = payload.content
-      .filter((b) => b.type === "text" && b.text)
-      .map((b) => b.text as string)
-      .join("\n")
-      .trim();
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("Resposta sem JSON: " + text.slice(0, 200));
-
-    const parsed = ResultadoAngulosSchema.safeParse(JSON.parse(jsonMatch[0]));
-    if (!parsed.success) {
-      trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
-      throw new Error("JSON inválido: " + parsed.error.message.slice(0, 200));
+    let parsedData = await callAngulos();
+    let validation = validateAngulosResult(parsedData);
+    if (!validation.ok) {
+      parsedData = await callAngulos(
+        `\n\nCORREÇÃO OBRIGATÓRIA: a resposta anterior falhou na validação (${validation.issues.join("; ")}). Regenere os 5 ângulos com pelo menos 4 angulo_copy distintos e 4 micropersonas distintas.`,
+      );
+      validation = validateAngulosResult(parsedData);
     }
+
     const normalized: ResultadoAngulos = {
-      ...parsed.data,
+      ...parsedData,
       angulos: await Promise.all(
-        parsed.data.angulos.map(async (a) => {
+        parsedData.angulos.map(async (a) => {
           const angulo = normalizeAngulo(a);
           if (!offerSnapshot) return angulo;
           const congruence = await checkOfferCongruence({

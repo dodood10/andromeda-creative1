@@ -8,8 +8,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { TrendingUp, AlertTriangle, Sparkles, ArrowRight, Flame, Eye, Zap, Loader2, Brain, Upload } from "lucide-react";
-import { getDashboardStats } from "@/lib/criativos.functions";
+import { TrendingUp, AlertTriangle, Sparkles, ArrowRight, Flame, Eye, Zap, Loader2, Brain, Upload, Film } from "lucide-react";
+import { getDashboardStats, getVslDashboardStats } from "@/lib/criativos.functions";
 import { getPlanUsage } from "@/lib/plan.functions";
 import { getNicheDailyIntel } from "@/lib/niche-intel.functions";
 import { useAuth } from "@/hooks/use-auth";
@@ -64,14 +64,21 @@ function greetingForHour() {
 
 function Dashboard() {
   const { profile } = useAuth();
-  const { projectId, currentProject, organizationId, loading: wsLoading } = useWorkspace();
+  const { projectId, currentProject, organizationId, loading: wsLoading, currentOrg } = useWorkspace();
   const fetchStats = useServerFn(getDashboardStats);
+  const fetchVslStats = useServerFn(getVslDashboardStats);
   const fetchPlanUsage = useServerFn(getPlanUsage);
   const fetchNicheIntel = useServerFn(getNicheDailyIntel);
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ["dashboard-stats", projectId],
     queryFn: () => fetchStats({ data: { projectId: projectId! } }),
+    enabled: !!projectId,
+  });
+
+  const { data: vslStats } = useQuery({
+    queryKey: ["vsl-dashboard-stats", projectId],
+    queryFn: () => fetchVslStats({ data: { projectId: projectId! } }),
     enabled: !!projectId,
   });
 
@@ -107,7 +114,6 @@ function Dashboard() {
   const volumeAtual = stats?.ativos ?? 0;
   const volumePct = Math.min(100, Math.round((volumeAtual / volumeTarget) * 100));
 
-  const feedItems = stats?.feed ?? [];
   const nextAction = stats?.nextAction;
   const [calibrationDismissed, setCalibrationDismissed] = useState(false);
 
@@ -197,6 +203,44 @@ function Dashboard() {
       ].filter((step) => step.id !== "csv" || (stats.exportados ?? 0) > 0)
     : [];
 
+  const vslActivationSteps =
+    vslStats && (vslStats.total ?? 0) < 5
+      ? [
+          {
+            id: "vsl-gerar",
+            label: "Gerar sua primeira VSL curta",
+            done: (vslStats.total ?? 0) > 0,
+            action: { to: "/app/vsl/gerador" as const, label: "Gerar VSL" },
+          },
+          {
+            id: "vsl-export",
+            label: "Exportar VSL no editor",
+            done: (vslStats.exportados ?? 0) > 0,
+            action: vslStats.firstExportPendingId
+              ? {
+                  to: "/app/vsl/editor" as const,
+                  search: { criativoId: vslStats.firstExportPendingId, focus: "audio" as const },
+                  label: "Exportar",
+                }
+              : { to: "/app/vsl/gerador" as const, label: "Criar VSL" },
+          },
+          {
+            id: "vsl-pipeline",
+            label: "Marcar como Subiu no pipeline",
+            done: (vslStats.exportados ?? 0) > 0 && (vslStats.performando ?? 0) > 0,
+            action: { to: "/app/historico" as const, search: { formato: "vsl_curta" as const }, label: "Pipeline VSL" },
+          },
+        ]
+      : [];
+
+  const combinedFeed = [
+    ...(stats?.feed ?? []),
+    ...(vslStats?.feed ?? []).filter(
+      (vf) => !(stats?.feed ?? []).some((f) => f.title === vf.title),
+    ),
+  ];
+  const feedItems = combinedFeed;
+
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-7xl space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -212,6 +256,84 @@ function Dashboard() {
           </Button>
         </Link>
       </div>
+
+      {stats && vslStats && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Seus produtos</h2>
+          <div className="grid sm:grid-cols-2 gap-4">
+          <Card className="glass p-5 border-border/50">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="size-5 text-primary-glow" />
+              <h2 className="font-display font-semibold">Criativo curto</h2>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center text-sm mb-3">
+              <div>
+                <p className="text-2xl font-bold">{stats.rascunhos ?? stats.semExport ?? 0}</p>
+                <p className="text-xs text-muted-foreground">Rascunhos</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats.exportados}</p>
+                <p className="text-xs text-muted-foreground">Exportados</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-success">{stats.performando ?? stats.counts?.Performando ?? 0}</p>
+                <p className="text-xs text-muted-foreground">Performando</p>
+              </div>
+            </div>
+            {stats.nextAction && (
+              <p className="text-xs text-muted-foreground mb-3">{stats.nextAction.label}</p>
+            )}
+            <div className="flex gap-2">
+              <Link to={stats.nextAction?.to ?? "/app/gerador"} search={stats.nextAction?.search} className="flex-1">
+                <Button variant="outline" size="sm" className="w-full">
+                  {stats.nextAction ? "Próximo passo" : "Gerar criativo"} <ArrowRight className="size-3.5 ml-1" />
+                </Button>
+              </Link>
+              <Link to="/app/historico" className="flex-1">
+                <Button variant="ghost" size="sm" className="w-full">Pipeline</Button>
+              </Link>
+            </div>
+          </Card>
+          <Card className="glass p-5 border-border/50">
+            <div className="flex items-center gap-2 mb-3">
+              <Film className="size-5 text-primary-glow" />
+              <h2 className="font-display font-semibold">VSL curta</h2>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center text-sm mb-3">
+              <div>
+                <p className="text-2xl font-bold">{vslStats.rascunhos ?? vslStats.semExport ?? 0}</p>
+                <p className="text-xs text-muted-foreground">Rascunhos</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{vslStats.exportados}</p>
+                <p className="text-xs text-muted-foreground">Exportados</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-success">{vslStats.performando}</p>
+                <p className="text-xs text-muted-foreground">Performando</p>
+              </div>
+            </div>
+            {vslStats.nextAction && (
+              <p className="text-xs text-muted-foreground mb-3">{vslStats.nextAction.label}</p>
+            )}
+            <div className="flex gap-2">
+              <Link
+                to={vslStats.nextAction?.to ?? "/app/vsl/gerador"}
+                search={vslStats.nextAction?.search}
+                className="flex-1"
+              >
+                <Button variant="outline" size="sm" className="w-full">
+                  {vslStats.nextAction ? "Próximo passo" : "Gerar VSL"} <ArrowRight className="size-3.5 ml-1" />
+                </Button>
+              </Link>
+              <Link to="/app/vsl" className="flex-1">
+                <Button variant="ghost" size="sm" className="w-full">Cockpit VSL</Button>
+              </Link>
+            </div>
+          </Card>
+          </div>
+        </div>
+      )}
 
       {nextAction && (
         <Card className="glass bg-gradient-card border-primary/30 p-6 shadow-glow">
@@ -295,7 +417,20 @@ function Dashboard() {
       )}
 
       {planUsage && !planUsage.canGerar && (
-        <UpgradeBanner message="Você atingiu o limite de gerações do plano grátis este mês." upgradeTo="/app/plano" />
+        <UpgradeBanner
+          message="Você atingiu o limite de gerações do plano grátis este mês."
+          upgradeTo="/app/plano"
+          organizationId={organizationId ?? undefined}
+          canCheckout={currentOrg?.role === "owner"}
+        />
+      )}
+      {planUsage && !planUsage.canExport && planUsage.canGerar && (
+        <UpgradeBanner
+          message={`Limite de exports atingido (${planUsage.exportsMes}/${planUsage.limits.exportsMes} este mês).`}
+          upgradeTo="/app/plano"
+          organizationId={organizationId ?? undefined}
+          canCheckout={currentOrg?.role === "owner"}
+        />
       )}
 
       <ContinueWizardBanner />
@@ -353,6 +488,9 @@ function Dashboard() {
       )}
 
       {stats && activationSteps.length > 0 && <ActivationChecklist steps={activationSteps} />}
+      {vslActivationSteps.length > 0 && (
+        <ActivationChecklist steps={vslActivationSteps} title="Primeiros passos — VSL" />
+      )}
 
       {stats?.total === 0 && !isLoading && (
         <Card className="glass p-8 text-center space-y-4 border border-primary/20">

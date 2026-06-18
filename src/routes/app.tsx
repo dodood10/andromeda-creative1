@@ -34,13 +34,16 @@ import {
   Plus,
   CreditCard,
   Shield,
+  Film,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useAuth } from "@/hooks/use-auth";
 import { WorkspaceProvider, useWorkspace } from "@/contexts/workspace-context";
 import { EditorNavLink } from "@/components/editor-nav-link";
-import { getDashboardStats } from "@/lib/criativos.functions";
+import { BatchDraftChecklistHost } from "@/components/batch-draft-checklist-host";
+import { getDashboardStats, getVslDashboardStats } from "@/lib/criativos.functions";
+import { productModeFromPathname, getProductConfig } from "@/lib/product-mode";
 import { safeLoginRedirect } from "@/lib/utils";
 
 export const Route = createFileRoute("/app")({
@@ -55,11 +58,18 @@ export const Route = createFileRoute("/app")({
 
 type NavItem = { title: string; url: string; icon: typeof Sparkles; exact?: boolean };
 
-const navGroups: Array<{ label: string; items: NavItem[]; showEditor?: boolean }> = [
+const navGroups: Array<{ label: string; items: NavItem[]; showEditor?: boolean; editorMode?: "criativo" | "vsl" }> = [
   {
     label: "Criar",
     items: [{ title: "Criar ângulos", url: "/app/gerador", icon: Wand2 }],
     showEditor: true,
+    editorMode: "criativo",
+  },
+  {
+    label: "VSL",
+    items: [{ title: "VSL curta", url: "/app/vsl", icon: Film }],
+    showEditor: true,
+    editorMode: "vsl",
   },
   {
     label: "Operar",
@@ -210,7 +220,14 @@ function AppShell() {
   const { currentOrg } = useWorkspace();
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const isOwner = currentOrg?.role === "owner";
-  const showFab = pathname.startsWith("/app") && pathname !== "/app/gerador";
+  const productMode = productModeFromPathname(pathname);
+  const productConfig = getProductConfig(productMode);
+  const geradorPath = productConfig.geradorPath;
+  const showFab =
+    pathname.startsWith("/app") &&
+    pathname !== geradorPath &&
+    pathname !== "/app/vsl/gerador";
+  const fabLabel = productMode === "vsl" ? "Nova VSL" : "Novo criativo";
 
   return (
     <SidebarProvider>
@@ -255,10 +272,11 @@ function AppShell() {
           </header>
           <main className="flex-1 overflow-auto">
             <Outlet />
+            <BatchDraftChecklistHost />
           </main>
           {showFab && (
             <Link
-              to="/app/gerador"
+              to={geradorPath}
               className="fixed bottom-4 right-4 z-40 md:bottom-6 md:right-6"
             >
               <Button
@@ -266,7 +284,7 @@ function AppShell() {
                 className="rounded-full shadow-glow bg-gradient-primary border-0 min-h-12 min-w-12 px-4"
               >
                 <Plus className="size-5 mr-1" />
-                <span className="hidden sm:inline">Novo criativo</span>
+                <span className="hidden sm:inline">{fabLabel}</span>
               </Button>
             </Link>
           )}
@@ -284,6 +302,8 @@ function AppSidebar({ isOwner }: { isOwner: boolean }) {
   const isActive = (url: string, exact?: boolean) =>
     exact ? pathname === url : pathname === url || pathname.startsWith(url + "/");
 
+  const fetchVslStats = useServerFn(getVslDashboardStats);
+
   const { data: dashStats } = useQuery({
     queryKey: ["dashboard-stats-nav", projectId],
     queryFn: () => fetchStats({ data: { projectId: projectId! } }),
@@ -291,9 +311,20 @@ function AppSidebar({ isOwner }: { isOwner: boolean }) {
     staleTime: 60_000,
   });
 
+  const { data: vslStats } = useQuery({
+    queryKey: ["vsl-dashboard-stats-nav", projectId],
+    queryFn: () => fetchVslStats({ data: { projectId: projectId! } }),
+    enabled: !!projectId,
+    staleTime: 60_000,
+  });
+
   const showEscala =
-    (dashStats?.counts?.Performando ?? 0) > 0 || !!dashStats?.firstPerformandoId;
+    (dashStats?.counts?.Performando ?? 0) > 0 ||
+    !!dashStats?.firstPerformandoId ||
+    (vslStats?.performando ?? 0) > 0 ||
+    !!vslStats?.firstPerformandoId;
   const pendingExports = dashStats?.semExport ?? 0;
+  const pendingVslExports = vslStats?.semExport ?? 0;
   const isPlatformAdmin = !!(profile as { is_platform_admin?: boolean } | null)?.is_platform_admin;
 
   return (
@@ -324,8 +355,9 @@ function AppSidebar({ isOwner }: { isOwner: boolean }) {
                 ))}
                 {group.showEditor && (
                   <EditorNavLink
-                    isActive={isActive("/app/editor")}
-                    pendingExports={pendingExports}
+                    mode={group.editorMode ?? "criativo"}
+                    isActive={isActive(group.editorMode === "vsl" ? "/app/vsl/editor" : "/app/editor")}
+                    pendingExports={group.editorMode === "vsl" ? pendingVslExports : pendingExports}
                   />
                 )}
               </SidebarMenu>

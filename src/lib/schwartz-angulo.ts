@@ -125,6 +125,59 @@ export function ensureAnguloCopyDiversityHint(): string {
   return `Os 5 ângulos DEVEM usar pelo menos 4 tipos distintos de angulo_copy entre: ${ALL_COPY_TIPOS.join(", ")}.`;
 }
 
+export type NivelConscienciaPreferencia = {
+  modo: import("./types/enums").NivelConscienciaModo;
+  nivel?: NivelConscienciaAlvo;
+  min?: NivelConscienciaAlvo;
+  max?: NivelConscienciaAlvo;
+};
+
+export function formatSchwartzPreferenciaBlock(
+  pref: NivelConscienciaPreferencia,
+  goalHint: { min: number; max: number; hint: string },
+): string {
+  switch (pref.modo) {
+    case "nivel":
+      return `Preferência do usuário: PRIORIZAR nível ${pref.nivel ?? 3} de consciência Schwartz em todos os 5 ângulos (ajuste hook e CTA ao nível). Ainda use micropersonas distintas.`;
+    case "faixa":
+      return `Preferência do usuário: níveis de consciência entre ${pref.min ?? goalHint.min} e ${pref.max ?? goalHint.max}. Distribua os 5 ângulos dentro dessa faixa com diversidade.`;
+    case "funil":
+      return `Preferência do usuário: PACOTE FUNIL — exatamente 1 ângulo por nível Schwartz (1, 2, 3, 4, 5), cada um com micropersona distinta.`;
+    default:
+      return `Nível de consciência: IA decide com base no objetivo (faixa sugerida ${goalHint.min}–${goalHint.max}). Mantenha diversidade entre os 5 ângulos quando possível.`;
+  }
+}
+
+export type AngulosValidation = {
+  ok: boolean;
+  issues: string[];
+  distinctCopy: number;
+  distinctPersonas: number;
+};
+
+export function validateAngulosResult(resultado: ResultadoAngulos): AngulosValidation {
+  const issues: string[] = [];
+  const copySet = new Set(resultado.angulos.map((a) => a.angulo_copy).filter(Boolean));
+  const personaSet = new Set(
+    resultado.angulos.map((a) => a.micropersona?.nome ?? a.nome).filter(Boolean),
+  );
+  if (resultado.angulos.length !== 5) {
+    issues.push(`Esperados 5 ângulos, recebidos ${resultado.angulos.length}`);
+  }
+  if (copySet.size < 4) {
+    issues.push(`Apenas ${copySet.size} angulo_copy distintos (mínimo 4)`);
+  }
+  if (personaSet.size < 4) {
+    issues.push(`Apenas ${personaSet.size} micropersonas distintas (mínimo 4)`);
+  }
+  return {
+    ok: issues.length === 0,
+    issues,
+    distinctCopy: copySet.size,
+    distinctPersonas: personaSet.size,
+  };
+}
+
 const GENERIC_HOOK_PATTERNS =
   /\b(transforme sua vida|resultados incr[ií]veis|voc[eê] precisa ver|n[aã]o perca|oportunidade [uú]nica)\b/i;
 

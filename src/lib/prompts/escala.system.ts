@@ -60,6 +60,42 @@ Responda APENAS JSON válido sem markdown:
 
 Português do Brasil.`;
 
+export const ESCALA_VARIACAO_SYSTEM_VSL = `Você gera UMA variação de VSL curta campeã para escala Andromeda.
+Mantenha a estrutura de 6 blocos VSL (hook 0-3s, problema, mecanismo, prova, objeções, CTA).
+Mantenha pontos de força intactos. Mude apenas o que a variação exige.
+No bloco 1 (hook): inclua hook_visual quando aplicável.
+No bloco 5 (objeções): preserve formato de quebra de objeção.
+Para hook-t: inclua utm_suggestion para tracking A/B no Meta (slug curto, sem espaços).
+Responda APENAS JSON:
+{
+  "variacao_id": "string",
+  "nome": "string",
+  "nivel_risco": "string",
+  "instrucao_producao": "string",
+  "diff_vs_original": "string — 1 frase: o que mudou vs campeão",
+  "utm_suggestion": "string opcional — só para hook-t",
+  "roteiro": [{"tempo":"string","conteudo":"string","tipo":"string","hook_visual":"opcional"}],
+  "estilo_producao": "texto_animado|clipes_texto ou omitir",
+  "sinais_esperados": { "hook_rate_estimado": "string", "feedback_negativo_esperado": "string", "fatia_leilao": "string" }
+}
+Exatamente 6 blocos. Texto falado completo em cada bloco. Português do Brasil.`;
+
+export function escalaAnaliseSystemFor(formatoSaida: string | null | undefined): string {
+  if (formatoSaida === "vsl_curta") {
+    return `${ESCALA_ANALISE_SYSTEM}
+
+REGRAS VSL CURTA:
+- Roteiro tem 6 blocos fixos (hook, problema, mecanismo, prova, objeções, CTA)
+- Identifique hook_visual e taxa de retenção estimada por bloco
+- Variações devem preservar estrutura de 6 blocos; objeções no bloco 5`;
+  }
+  return ESCALA_ANALISE_SYSTEM;
+}
+
+export function escalaVariacaoSystemFor(formatoSaida: string | null | undefined): string {
+  return formatoSaida === "vsl_curta" ? ESCALA_VARIACAO_SYSTEM_VSL : ESCALA_VARIACAO_SYSTEM;
+}
+
 export const ESCALA_VARIACAO_SYSTEM = `Você gera UMA variação de criativo campeão para escala Andromeda.
 Mantenha pontos de força intactos. Mude apenas o que a variação exige.
 Para hook-t: inclua utm_suggestion para tracking A/B no Meta (slug curto, sem espaços).

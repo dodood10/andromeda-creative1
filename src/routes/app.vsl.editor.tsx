@@ -1,15 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { EditorPage, editorSearchSchema } from "@/pages/editor-page";
 
-export const Route = createFileRoute("/app/editor")({
+export const Route = createFileRoute("/app/vsl/editor")({
   validateSearch: editorSearchSchema,
   head: () => ({
-    meta: [{ title: "Editor de vídeo · Andromeda" }],
+    meta: [{ title: "Editor VSL · Andromeda" }],
   }),
-  component: EditorRoute,
+  component: VslEditorRoute,
 });
 
-function EditorRoute() {
+function VslEditorRoute() {
   const search = Route.useSearch();
-  return <EditorPage mode="criativo" search={search} />;
+  return <EditorPage mode="vsl" search={search} />;
 }

@@ -1,3 +1,5 @@
+import { getVslBlocksPreview } from "@/lib/vsl-duration";
+
 /** Links tipados para navegação no app (TanStack Router search params). */
 export type AppLink = {
   to:
@@ -8,7 +10,11 @@ export type AppLink = {
     | "/app/projetos"
     | "/app/escala"
     | "/app/inteligencia"
-    | "/app/plano";
+    | "/app/plano"
+    | "/app/vsl"
+    | "/app/vsl/gerador"
+    | "/app/vsl/editor"
+    | "/app/vsl/pipeline";
   search?: Record<string, string | undefined>;
 };
 
@@ -21,8 +27,6 @@ export function appLinkToHref(link: AppLink): string {
   const q = params.toString();
   return q ? `${link.to}?${q}` : link.to;
 }
-
-import { getVslBlocksPreview } from "@/lib/vsl-duration";
 
 /** Preview estático 120s — use getVslBlocksPreview(duracao) para duração dinâmica */
 export const VSL_BLOCKS_PREVIEW = getVslBlocksPreview(120);

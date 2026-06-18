@@ -66,8 +66,9 @@ const areas = [
   },
   {
     icon: Film,
-    title: "VSL curta no gerador",
-    desc: "Roteiro de 2 minutos em 6 blocos fixos — ative o formato VSL no gerador de ângulos.",
+    title: "VSL curta",
+    desc: "Produto dedicado: roteiro de 2 minutos em 6 blocos — gerador, editor e pipeline próprios.",
+    href: "/app/vsl",
   },
   {
     icon: TrendingUp,
@@ -234,20 +235,33 @@ function Landing() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {areas.map((a, i) => (
+          {areas.map((a, i) => {
+            const card = (
             <div
-              key={a.title}
               className={`glass bg-gradient-card rounded-2xl p-6 hover:shadow-glow transition-all duration-300 ${
                 i === 0 ? "lg:col-span-2 lg:row-span-2" : ""
-              }`}
+              } ${"href" in a && a.href ? "cursor-pointer" : ""}`}
             >
               <div className="size-10 rounded-lg bg-primary/15 flex items-center justify-center mb-4">
                 <a.icon className="size-5 text-primary-glow" />
               </div>
               <h3 className="font-display text-lg font-semibold">{a.title}</h3>
               <p className="mt-2 text-sm text-muted-foreground">{a.desc}</p>
+              {"href" in a && a.href && (
+                <p className="mt-3 text-xs text-primary-glow font-medium">Abrir produto VSL →</p>
+              )}
             </div>
-          ))}
+            );
+            return (
+              <div key={a.title}>
+                {"href" in a && a.href ? (
+                  <Link to={a.href}>{card}</Link>
+                ) : (
+                  card
+                )}
+              </div>
+            );
+          })}
         </div>
       </section>
 

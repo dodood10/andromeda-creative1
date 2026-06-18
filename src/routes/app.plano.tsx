@@ -1,6 +1,6 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { Card } from "@/components/ui/card";
@@ -9,9 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Loader2, Sparkles, Check, CreditCard } from "lucide-react";
 import { toast } from "sonner";
-import { getPlanUsage } from "@/lib/plan.functions";
+import { getPlanUsage, createStripeCheckout } from "@/lib/plan.functions";
 import { PLAN_LIMITS, PLAN_LABELS, formatLimit } from "@/lib/plan-quota";
 import { useWorkspace } from "@/contexts/workspace-context";
+import { trackMetaInitiateCheckout } from "@/lib/meta-pixel";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 const searchSchema = z.object({
@@ -31,7 +32,20 @@ function PlanoPage() {
   const { checkout } = Route.useSearch();
   const navigate = useNavigate();
   const fetchUsage = useServerFn(getPlanUsage);
+  const runCheckout = useServerFn(createStripeCheckout);
   const isOwner = currentOrg?.role === "owner";
+
+  const checkoutMutation = useMutation({
+    mutationFn: () => {
+      if (!organizationId) throw new Error("Workspace não carregado");
+      trackMetaInitiateCheckout();
+      return runCheckout({ data: { organizationId, tier: "pro" } });
+    },
+    onSuccess: (data) => {
+      window.location.href = data.checkoutUrl;
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Checkout indisponível"),
+  });
 
   const { data: usage, isLoading } = useQuery({
     queryKey: ["plan-usage", organizationId],
@@ -40,6 +54,11 @@ function PlanoPage() {
   });
 
   useEffect(() => {
+    if (checkout === "success") {
+      toast.success("Pagamento recebido! Seu plano Pro será ativado em instantes.");
+    } else if (checkout === "cancel") {
+      toast.info("Checkout cancelado.");
+    }
     if (checkout === "success" || checkout === "cancel") {
       navigate({ to: "/app/plano", search: {}, replace: true });
     }
@@ -149,10 +168,25 @@ function PlanoPage() {
                 </li>
               </ul>
               <p className="text-sm text-muted-foreground">
-                Pagamento online em breve. {isOwner ? "Enquanto isso, fale conosco para liberar o Pro manualmente." : "Fale com o owner do workspace para upgrade."}
+                {isOwner
+                  ? "Assine online com cartão ou solicite liberação manual se preferir."
+                  : "Fale com o owner do workspace para assinar o Pro."}
               </p>
+              {isOwner && organizationId ? (
+                <Button
+                  className="bg-gradient-primary border-0"
+                  onClick={() => checkoutMutation.mutate()}
+                  disabled={checkoutMutation.isPending}
+                >
+                  {checkoutMutation.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    "Assinar Pro — checkout seguro"
+                  )}
+                </Button>
+              ) : null}
               <a href="mailto:suporte@andromeda.app?subject=Upgrade%20Pro">
-                <Button variant="outline">Solicitar upgrade Pro</Button>
+                <Button variant="outline">Solicitar upgrade manual</Button>
               </a>
             </Card>
           )}

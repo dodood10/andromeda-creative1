@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { callAnthropicJson, extractJsonFromAnthropicText } from "./anthropic-json";
-import { ESCALA_ANALISE_SYSTEM, ESCALA_VARIACAO_SYSTEM } from "./prompts/escala.system";
+import { escalaAnaliseSystemFor, escalaVariacaoSystemFor } from "./prompts/escala.system";
 import {
   EscalaAnaliseSchema,
   EscalaVariacaoOutputSchema,
@@ -20,6 +20,8 @@ import {
 import { formatTranscriptionForPrompt } from "./export-transcription";
 import { ensureExportTranscription } from "./transcribe-export";
 import type { ExportTranscricaoSnapshot } from "./export-transcription";
+import { buildOfferSnapshot, formatOfferSnapshotBlock } from "./offer-snapshot";
+import { runWithConcurrency } from "./gerador-helpers";
 
 const VARIACAO_IDS = ["hook-v", "hook-t", "avatar", "formato", "empilha", "benef", "cta"] as const;
 
@@ -113,6 +115,7 @@ async function executeAnalisarCampeao(params: {
 
   const transcricaoExport = formatTranscriptionForPrompt({ ...campeao, angulo_json: aj });
   let geracaoContext = "";
+  let offerBlock = "";
   if (campeao.geracao_id) {
     const { data: geracao } = await supabase
       .from("geracoes")
@@ -121,6 +124,13 @@ async function executeAnalisarCampeao(params: {
       .single();
     if (geracao) {
       geracaoContext = `URL: ${geracao.url}\nProduto: ${geracao.product_type}\nObjetivo: ${geracao.goal}\nContexto: ${geracao.context ?? ""}\nDiagnóstico: ${JSON.stringify(geracao.diagnostico)}`;
+      if (geracao.url) {
+        try {
+          offerBlock = formatOfferSnapshotBlock(await buildOfferSnapshot(geracao.url, apiKey));
+        } catch {
+          /* URL inacessível */
+        }
+      }
     }
   }
 
@@ -140,13 +150,14 @@ ANGULO_JSON:
 ${JSON.stringify(aj, null, 2)}
 
 ${geracaoContext}
+${offerBlock}
 ${await buildEscalaPerformanceBlock(supabase, campeao.id, campeao.project_id)}
 
 Execute as 4 operações e devolva o menu completo das 7 variações.`;
 
   const text = await callAnthropicJson({
     apiKey,
-    system: ESCALA_ANALISE_SYSTEM,
+    system: escalaAnaliseSystemFor(campeao.formato_saida),
     userMessage: userMsg,
     maxTokens: 8192,
   });
@@ -246,11 +257,35 @@ export const gerarVariacoesEscala = createServerFn({ method: "POST" })
       hook: string;
       criativoId?: string;
       angulo: string;
+      erro?: string;
     }> = [];
+    const falhas: Array<{ variacaoId: string; erro: string }> = [];
 
-    for (const req of data.variacoes) {
+    let offerBlock = "";
+    if (campeao.geracao_id) {
+      const { data: geracao } = await supabase
+        .from("geracoes")
+        .select("url")
+        .eq("id", campeao.geracao_id)
+        .single();
+      if (geracao?.url) {
+        try {
+          offerBlock = formatOfferSnapshotBlock(await buildOfferSnapshot(geracao.url, apiKey));
+        } catch {
+          /* URL inacessível */
+        }
+      }
+    }
+
+    const perfBlock = await buildEscalaPerformanceBlock(supabase, data.criativoId, campeao.project_id);
+    const variacaoSystem = escalaVariacaoSystemFor(campeao.formato_saida);
+
+    const tasks = data.variacoes.map((req) => async () => {
       const menuItem = analise.menu_variacoes.find((m) => m.id === req.variacaoId);
-      if (!menuItem) continue;
+      if (!menuItem) {
+        falhas.push({ variacaoId: req.variacaoId, erro: "Variação não encontrada no menu" });
+        return;
+      }
 
       let extraHook = "";
       if (req.variacaoId === "hook-t" && menuItem.opcoes_hook_textual?.length) {
@@ -268,19 +303,30 @@ VARIAÇÃO A GERAR: ${req.variacaoId} — ${menuItem.nome}
 O que muda: ${menuItem.o_que_muda}
 O que permanece: ${menuItem.o_que_permanece}
 ${extraHook}
-${await buildEscalaPerformanceBlock(supabase, data.criativoId, campeao.project_id)}
+${offerBlock}
+${perfBlock}
 
 Gere roteiro COMPLETO com a variação aplicada. Mantenha corpo idêntico exceto onde a variação exige mudança.`;
 
       try {
         const text = await callAnthropicJson({
           apiKey,
-          system: ESCALA_VARIACAO_SYSTEM,
+          system: variacaoSystem,
           userMessage: userMsg,
           maxTokens: 6144,
         });
         const parsed = EscalaVariacaoOutputSchema.safeParse(extractJsonFromAnthropicText(text));
-        if (!parsed.success) continue;
+        if (!parsed.success) {
+          const msg = parsed.error.message.slice(0, 120);
+          falhas.push({ variacaoId: req.variacaoId, erro: msg });
+          variacoesGeradas.push({
+            tipo: req.variacaoId,
+            hook: "",
+            angulo: `${campeao.angulo} · var ${req.variacaoId}`,
+            erro: msg,
+          });
+          return;
+        }
 
         const out = parsed.data;
         const estiloAlt =
@@ -326,18 +372,28 @@ Gere roteiro COMPLETO com a variação aplicada. Mantenha corpo idêntico exceto
           criativoId: draft?.id,
           angulo: `${campeao.angulo} · var ${req.variacaoId}`,
         });
-      } catch {
-        continue;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message.slice(0, 120) : "Erro desconhecido";
+        falhas.push({ variacaoId: req.variacaoId, erro: msg });
+        variacoesGeradas.push({
+          tipo: req.variacaoId,
+          hook: "",
+          angulo: `${campeao.angulo} · var ${req.variacaoId}`,
+          erro: msg,
+        });
       }
-    }
+    });
+
+    await runWithConcurrency(tasks, 2);
 
     trackApiUsage({
       userId,
       organizationId: data.organizationId,
       eventType: "gerar_variacoes",
       tokensEstimated: data.variacoes.length * 4000,
-      success: variacoesGeradas.length > 0,
+      success: variacoesGeradas.some((v) => !!v.criativoId),
     });
 
-    return { variacoes: variacoesGeradas };
+    const sucesso = variacoesGeradas.filter((v) => v.criativoId);
+    return { variacoes: sucesso, falhas };
   });

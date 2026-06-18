@@ -11,6 +11,7 @@ import {
   type EstiloProducao,
   type ProjectFormatContext,
 } from "./formato-recomendacao";
+import type { ProductMode } from "./product-mode";
 
 /** Executa tarefas com concorrência limitada. */
 export async function runWithConcurrency<T>(
@@ -146,14 +147,18 @@ export function buildAbTestFormatoMap(
   angulos: ResultadoAngulos["angulos"],
   indices: number[],
   ctx: ProjectFormatContext | null,
+  productMode: ProductMode = "criativo",
 ): Record<number, FormatoOverride> {
   const map = buildFormatoPorAngulo(angulos, indices);
   if (!ctx || indices.length === 0) return map;
 
   const formatoQueue: FormatoSaida[] = [];
-  if (!ctx.formatosTestados.includes("vsl_curta")) formatoQueue.push("vsl_curta");
-  if (!ctx.formatosTestados.includes("criativo_curto")) formatoQueue.push("criativo_curto");
-  formatoQueue.push("vsl_curta", "criativo_curto");
+  if (productMode === "vsl") {
+    formatoQueue.push("vsl_curta");
+  } else {
+    formatoQueue.push("criativo_curto");
+    if (!ctx.formatosTestados.includes("criativo_curto")) formatoQueue.push("criativo_curto");
+  }
 
   const estiloQueue: EstiloProducao[] = [];
   if (!ctx.estilosTestados.includes("ugc_avatar")) estiloQueue.push("ugc_avatar");

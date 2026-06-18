@@ -33,6 +33,10 @@ import { Route as AdminIaRouteImport } from './routes/admin.ia'
 import { Route as AdminCriativosRouteImport } from './routes/admin.criativos'
 import { Route as AdminAvaliacaoRouteImport } from './routes/admin.avaliacao'
 import { Route as AdminAuditoriaRouteImport } from './routes/admin.auditoria'
+import { Route as AppVslIndexRouteImport } from './routes/app.vsl.index'
+import { Route as AppVslPipelineRouteImport } from './routes/app.vsl.pipeline'
+import { Route as AppVslGeradorRouteImport } from './routes/app.vsl.gerador'
+import { Route as AppVslEditorRouteImport } from './routes/app.vsl.editor'
 
 const PlanosRoute = PlanosRouteImport.update({
   id: '/planos',
@@ -154,6 +158,26 @@ const AdminAuditoriaRoute = AdminAuditoriaRouteImport.update({
   path: '/auditoria',
   getParentRoute: () => AdminRoute,
 } as any)
+const AppVslIndexRoute = AppVslIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppVslRoute,
+} as any)
+const AppVslPipelineRoute = AppVslPipelineRouteImport.update({
+  id: '/pipeline',
+  path: '/pipeline',
+  getParentRoute: () => AppVslRoute,
+} as any)
+const AppVslGeradorRoute = AppVslGeradorRouteImport.update({
+  id: '/gerador',
+  path: '/gerador',
+  getParentRoute: () => AppVslRoute,
+} as any)
+const AppVslEditorRoute = AppVslEditorRouteImport.update({
+  id: '/editor',
+  path: '/editor',
+  getParentRoute: () => AppVslRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -177,9 +201,13 @@ export interface FileRoutesByFullPath {
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/plano': typeof AppPlanoRoute
   '/app/projetos': typeof AppProjetosRoute
-  '/app/vsl': typeof AppVslRoute
+  '/app/vsl': typeof AppVslRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/app/vsl/editor': typeof AppVslEditorRoute
+  '/app/vsl/gerador': typeof AppVslGeradorRoute
+  '/app/vsl/pipeline': typeof AppVslPipelineRoute
+  '/app/vsl/': typeof AppVslIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -201,9 +229,12 @@ export interface FileRoutesByTo {
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/plano': typeof AppPlanoRoute
   '/app/projetos': typeof AppProjetosRoute
-  '/app/vsl': typeof AppVslRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
+  '/app/vsl/editor': typeof AppVslEditorRoute
+  '/app/vsl/gerador': typeof AppVslGeradorRoute
+  '/app/vsl/pipeline': typeof AppVslPipelineRoute
+  '/app/vsl': typeof AppVslIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -228,9 +259,13 @@ export interface FileRoutesById {
   '/app/onboarding': typeof AppOnboardingRoute
   '/app/plano': typeof AppPlanoRoute
   '/app/projetos': typeof AppProjetosRoute
-  '/app/vsl': typeof AppVslRoute
+  '/app/vsl': typeof AppVslRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/app/vsl/editor': typeof AppVslEditorRoute
+  '/app/vsl/gerador': typeof AppVslGeradorRoute
+  '/app/vsl/pipeline': typeof AppVslPipelineRoute
+  '/app/vsl/': typeof AppVslIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -259,6 +294,10 @@ export interface FileRouteTypes {
     | '/app/vsl'
     | '/admin/'
     | '/app/'
+    | '/app/vsl/editor'
+    | '/app/vsl/gerador'
+    | '/app/vsl/pipeline'
+    | '/app/vsl/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -280,9 +319,12 @@ export interface FileRouteTypes {
     | '/app/onboarding'
     | '/app/plano'
     | '/app/projetos'
-    | '/app/vsl'
     | '/admin'
     | '/app'
+    | '/app/vsl/editor'
+    | '/app/vsl/gerador'
+    | '/app/vsl/pipeline'
+    | '/app/vsl'
   id:
     | '__root__'
     | '/'
@@ -309,6 +351,10 @@ export interface FileRouteTypes {
     | '/app/vsl'
     | '/admin/'
     | '/app/'
+    | '/app/vsl/editor'
+    | '/app/vsl/gerador'
+    | '/app/vsl/pipeline'
+    | '/app/vsl/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -490,6 +536,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminAuditoriaRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/app/vsl/': {
+      id: '/app/vsl/'
+      path: '/'
+      fullPath: '/app/vsl/'
+      preLoaderRoute: typeof AppVslIndexRouteImport
+      parentRoute: typeof AppVslRoute
+    }
+    '/app/vsl/pipeline': {
+      id: '/app/vsl/pipeline'
+      path: '/pipeline'
+      fullPath: '/app/vsl/pipeline'
+      preLoaderRoute: typeof AppVslPipelineRouteImport
+      parentRoute: typeof AppVslRoute
+    }
+    '/app/vsl/gerador': {
+      id: '/app/vsl/gerador'
+      path: '/gerador'
+      fullPath: '/app/vsl/gerador'
+      preLoaderRoute: typeof AppVslGeradorRouteImport
+      parentRoute: typeof AppVslRoute
+    }
+    '/app/vsl/editor': {
+      id: '/app/vsl/editor'
+      path: '/editor'
+      fullPath: '/app/vsl/editor'
+      preLoaderRoute: typeof AppVslEditorRouteImport
+      parentRoute: typeof AppVslRoute
+    }
   }
 }
 
@@ -515,6 +589,23 @@ const AdminRouteChildren: AdminRouteChildren = {
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
+interface AppVslRouteChildren {
+  AppVslEditorRoute: typeof AppVslEditorRoute
+  AppVslGeradorRoute: typeof AppVslGeradorRoute
+  AppVslPipelineRoute: typeof AppVslPipelineRoute
+  AppVslIndexRoute: typeof AppVslIndexRoute
+}
+
+const AppVslRouteChildren: AppVslRouteChildren = {
+  AppVslEditorRoute: AppVslEditorRoute,
+  AppVslGeradorRoute: AppVslGeradorRoute,
+  AppVslPipelineRoute: AppVslPipelineRoute,
+  AppVslIndexRoute: AppVslIndexRoute,
+}
+
+const AppVslRouteWithChildren =
+  AppVslRoute._addFileChildren(AppVslRouteChildren)
+
 interface AppRouteChildren {
   AppConfiguracoesRoute: typeof AppConfiguracoesRoute
   AppEditorRoute: typeof AppEditorRoute
@@ -525,7 +616,7 @@ interface AppRouteChildren {
   AppOnboardingRoute: typeof AppOnboardingRoute
   AppPlanoRoute: typeof AppPlanoRoute
   AppProjetosRoute: typeof AppProjetosRoute
-  AppVslRoute: typeof AppVslRoute
+  AppVslRoute: typeof AppVslRouteWithChildren
   AppIndexRoute: typeof AppIndexRoute
 }
 
@@ -539,7 +630,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppOnboardingRoute: AppOnboardingRoute,
   AppPlanoRoute: AppPlanoRoute,
   AppProjetosRoute: AppProjetosRoute,
-  AppVslRoute: AppVslRoute,
+  AppVslRoute: AppVslRouteWithChildren,
   AppIndexRoute: AppIndexRoute,
 }
 

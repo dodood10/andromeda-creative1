@@ -49,6 +49,9 @@ export type AnguloCopyTipo = z.infer<typeof AnguloCopyTipoSchema>;
 export type NivelConscienciaAlvo = z.infer<typeof NivelConscienciaAlvoSchema>;
 export type TomCalibracao = z.infer<typeof TomCalibracaoSchema>;
 
+export const NivelConscienciaModoSchema = z.enum(["ia", "nivel", "faixa", "funil"]);
+export type NivelConscienciaModo = z.infer<typeof NivelConscienciaModoSchema>;
+
 export type IntelReviewStatus = Database["public"]["Enums"]["intel_review_status"];
 export type AdminReviewVerdict = Database["public"]["Enums"]["admin_review_verdict"];
 

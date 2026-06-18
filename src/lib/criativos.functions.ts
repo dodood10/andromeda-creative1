@@ -118,15 +118,23 @@ const ProjectScopeSchema = z.object({
 export const listCriativos = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({ projectId: z.string().uuid() }).parse(input),
+    z
+      .object({
+        projectId: z.string().uuid(),
+        formatoSaida: z.enum(["criativo_curto", "vsl_curta"]).optional(),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
-    const { data: rows, error } = await supabase
+    let q = supabase
       .from("criativos")
       .select("*")
-      .eq("project_id", data.projectId)
-      .order("created_at", { ascending: false });
+      .eq("project_id", data.projectId);
+    if (data.formatoSaida) {
+      q = q.eq("formato_saida", data.formatoSaida);
+    }
+    const { data: rows, error } = await q.order("created_at", { ascending: false });
 
     if (error) throw new Error(error.message);
     return rows as CriativoRow[];
@@ -490,7 +498,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
-    const { data: criativos, error } = await supabase
+    const { data: allCriativos, error } = await supabase
       .from("criativos")
       .select(
         "status, angulo, formato_saida, export_status, id, performando_intel_status, updated_at, status_rodando_at, angulo_json",
@@ -498,6 +506,10 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       .eq("project_id", data.projectId);
 
     if (error) throw new Error(error.message);
+
+    const criativos = (allCriativos ?? []).filter(
+      (c) => !c.formato_saida || c.formato_saida === "criativo_curto",
+    );
 
     const counts = {
       Gerado: 0,
@@ -654,14 +666,6 @@ export const getDashboardStats = createServerFn({ method: "POST" })
           : { to: "/app/historico", search: { export: "pendente" } },
       });
     }
-    if (!formatosTestados.has("vsl_curta") && total > 0) {
-      feed.push({
-        tag: "Oportunidade",
-        title: "Você ainda não testou VSL curta",
-        desc: "A IA gera roteiro completo de 2 min (6 blocos) com hook visual, objeções e CTA com valor.",
-        action: { to: "/app/gerador", search: { formato: "vsl_curta" } },
-      });
-    }
     if (angulosTestados.size < 3 && total > 0) {
       feed.push({
         tag: "Diversidade",
@@ -796,6 +800,8 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       counts,
       total,
       exportados,
+      rascunhos: semExport,
+      performando: counts.Performando,
       geracoesCount: geracoesCount ?? 0,
       marcouSubiu,
       ativos,
@@ -822,12 +828,129 @@ export const getDashboardStats = createServerFn({ method: "POST" })
           ? "Comece gerando seus primeiros 5 ângulos Andromeda."
           : angulosTestados.size < 3
             ? `Você testou ${angulosTestados.size} ângulos — diversifique para encontrar o campeão.`
-            : !formatosTestados.has("vsl_curta")
-              ? "Você ainda não testou VSL curta neste projeto."
-              : "Continue escalando os criativos que estão performando.",
+            : "Continue escalando os criativos que estão performando.",
       temCsvImport,
       showCsvReminder,
       calibrationNotice,
+    };
+  });
+
+export const getVslDashboardStats = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+
+    const { data: criativos, error } = await supabase
+      .from("criativos")
+      .select("status, export_status, id, updated_at")
+      .eq("project_id", data.projectId)
+      .eq("formato_saida", "vsl_curta");
+
+    if (error) throw new Error(error.message);
+
+    const { data: resultadosProjeto } = await supabase
+      .from("resultados")
+      .select("observacao")
+      .eq("project_id", data.projectId);
+
+    const temCsvImport = (resultadosProjeto ?? []).some((r) =>
+      r.observacao?.includes("Import CSV"),
+    );
+    const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+
+    const rows = criativos ?? [];
+    const total = rows.length;
+    const exportados = rows.filter((c) => c.export_status === "pronto").length;
+    const semExportList = rows.filter(
+      (c) => c.export_status !== "pronto" && c.status !== "Pausado",
+    );
+    const semExport = semExportList.length;
+    const firstExportPendingId = semExportList[0]?.id ?? null;
+    const performandoRows = rows.filter((c) => c.status === "Performando");
+    const performando = performandoRows.length;
+    const firstPerformandoId = performandoRows[0]?.id ?? null;
+    const exportSubiuReminder = rows.find(
+      (c) => c.export_status === "pronto" && c.status === "Gerado",
+    );
+
+    const showCsvReminder =
+      !temCsvImport &&
+      exportados > 0 &&
+      rows.some(
+        (c) =>
+          c.export_status === "pronto" &&
+          c.updated_at &&
+          new Date(c.updated_at).getTime() < threeDaysAgo,
+      );
+
+    const nextAction: AppLink & { label: string } =
+      total === 0
+        ? { label: "Gerar sua primeira VSL", to: "/app/vsl/gerador" }
+        : semExport > 0
+          ? {
+              label: `Exportar ${semExport} VSL(s) pendente(s)`,
+              to: "/app/vsl/editor",
+              search: firstExportPendingId ? { criativoId: firstExportPendingId } : undefined,
+            }
+          : performando > 0 && firstPerformandoId
+            ? {
+                label: `Escalar ${performando} VSL(s) performando`,
+                to: "/app/escala",
+                search: { criativoId: firstPerformandoId },
+              }
+            : performando > 0
+              ? { label: "Ver VSLs performando", to: "/app/historico", search: { status: "Performando", formato: "vsl_curta" } }
+              : { label: "Gerar nova VSL", to: "/app/vsl/gerador" };
+
+    const feed: Array<{ tag: string; title: string; desc: string; action: AppLink }> = [];
+    if (total === 0) {
+      feed.push({
+        tag: "Começar",
+        title: "Crie sua primeira VSL curta",
+        desc: "Roteiro de 2 min em 6 blocos — hook visual, objeções e CTA com valor.",
+        action: { to: "/app/vsl/gerador" },
+      });
+    }
+    if (exportSubiuReminder) {
+      feed.push({
+        tag: "Pipeline",
+        title: "VSL pronta — marque como Subiu",
+        desc: "Após subir no Meta, atualize o status no pipeline VSL.",
+        action: { to: "/app/historico", search: { criativoId: exportSubiuReminder.id, formato: "vsl_curta" } },
+      });
+    }
+    if (performando > 0 && firstPerformandoId) {
+      feed.push({
+        tag: "Escala",
+        title: `${performando} VSL(s) performando`,
+        desc: "Gere variações do campeão para escalar o que já validou.",
+        action: { to: "/app/escala", search: { criativoId: firstPerformandoId } },
+      });
+    }
+    if (showCsvReminder) {
+      feed.push({
+        tag: "Métricas",
+        title: "Importe o CSV do Meta (VSL)",
+        desc: "Com 3+ dias no ar, o CSV com utm_content calibra hook rate e retenção das VSLs.",
+        action: { to: "/app/historico", search: { formato: "vsl_curta", export: "pronto" } },
+      });
+    }
+
+    return {
+      total,
+      rascunhos: semExport,
+      exportados,
+      semExport,
+      performando,
+      firstPerformandoId,
+      firstExportPendingId,
+      exportSubiuReminderId: exportSubiuReminder?.id ?? null,
+      showCsvReminder,
+      nextAction,
+      feed,
     };
   });
 
@@ -838,6 +961,7 @@ export const getLatestCriativo = createServerFn({ method: "POST" })
       .object({
         projectId: z.string().uuid(),
         currentCriativoId: z.string().uuid().optional(),
+        formatoSaida: z.enum(["criativo_curto", "vsl_curta"]).optional(),
       })
       .parse(input),
   )
@@ -845,22 +969,25 @@ export const getLatestCriativo = createServerFn({ method: "POST" })
     const { supabase } = context;
 
     if (data.currentCriativoId) {
-      const { data: current } = await supabase
+      let currentQ = supabase
         .from("criativos")
         .select("id, export_status")
         .eq("id", data.currentCriativoId)
-        .eq("project_id", data.projectId)
-        .maybeSingle();
+        .eq("project_id", data.projectId);
+      if (data.formatoSaida) currentQ = currentQ.eq("formato_saida", data.formatoSaida);
+      const { data: current } = await currentQ.maybeSingle();
       if (current && current.export_status !== "pronto") {
         return { criativoId: current.id };
       }
     }
 
-    const { data: pending } = await supabase
+    let pendingQ = supabase
       .from("criativos")
       .select("id")
       .eq("project_id", data.projectId)
-      .neq("export_status", "pronto")
+      .neq("export_status", "pronto");
+    if (data.formatoSaida) pendingQ = pendingQ.eq("formato_saida", data.formatoSaida);
+    const { data: pending } = await pendingQ
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
@@ -868,25 +995,96 @@ export const getLatestCriativo = createServerFn({ method: "POST" })
     if (pending) return { criativoId: pending.id };
 
     if (data.currentCriativoId) {
-      const { data: current } = await supabase
+      let curQ = supabase
         .from("criativos")
         .select("id")
         .eq("id", data.currentCriativoId)
-        .eq("project_id", data.projectId)
-        .maybeSingle();
+        .eq("project_id", data.projectId);
+      if (data.formatoSaida) curQ = curQ.eq("formato_saida", data.formatoSaida);
+      const { data: current } = await curQ.maybeSingle();
       if (current) return { criativoId: current.id };
     }
 
-    const { data: row, error } = await supabase
+    let lastQ = supabase
       .from("criativos")
       .select("id")
-      .eq("project_id", data.projectId)
+      .eq("project_id", data.projectId);
+    if (data.formatoSaida) lastQ = lastQ.eq("formato_saida", data.formatoSaida);
+    const { data: row, error } = await lastQ
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
     if (error) throw new Error(error.message);
     return { criativoId: row?.id ?? null };
+  });
+
+export const saveProjectDraftQueue = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        projectId: z.string().uuid(),
+        criativoIds: z.array(z.string().uuid()),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("projects")
+      .update({ draft_queue: data.criativoIds })
+      .eq("id", data.projectId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const loadProjectDraftQueue = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { data: row, error } = await context.supabase
+      .from("projects")
+      .select("draft_queue")
+      .eq("id", data.projectId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const raw = row?.draft_queue;
+    if (!Array.isArray(raw)) return { criativoIds: [] as string[] };
+    return {
+      criativoIds: raw.filter((id): id is string => typeof id === "string"),
+    };
+  });
+
+export const advanceProjectDraftQueue = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        projectId: z.string().uuid(),
+        currentCriativoId: z.string().uuid(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { data: row, error: loadErr } = await context.supabase
+      .from("projects")
+      .select("draft_queue")
+      .eq("id", data.projectId)
+      .maybeSingle();
+    if (loadErr) throw new Error(loadErr.message);
+    const queue = Array.isArray(row?.draft_queue)
+      ? (row!.draft_queue as string[]).filter((id) => typeof id === "string")
+      : [];
+    const idx = queue.indexOf(data.currentCriativoId);
+    const remaining = idx >= 0 ? queue.slice(idx + 1) : queue;
+    const { error } = await context.supabase
+      .from("projects")
+      .update({ draft_queue: remaining })
+      .eq("id", data.projectId);
+    if (error) throw new Error(error.message);
+    return { nextCriativoId: remaining[0] ?? null, remaining };
   });
 
 export const exportZipCriativos = createServerFn({ method: "POST" })
@@ -1082,10 +1280,14 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
           hook_rate_estimado?: string;
           feedback_negativo_esperado?: string;
         };
+        vsl_sinais?: { hook_rate_estimado?: string };
         export_transcricao?: { source?: string };
         importado?: boolean;
       } | null;
-      const sinais = aj?.sinais_andromeda;
+      const sinais =
+        c.formato_saida === "vsl_curta" && aj?.vsl_sinais?.hook_rate_estimado
+          ? { hook_rate_estimado: aj.vsl_sinais.hook_rate_estimado }
+          : aj?.sinais_andromeda;
       if (sinais?.hook_rate_estimado) {
         const nums = sinais.hook_rate_estimado.match(/\d+/g)?.map(Number) ?? [];
         if (nums.length) {

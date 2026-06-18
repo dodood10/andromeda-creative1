@@ -30,6 +30,7 @@ import { getPlanUsage } from "@/lib/plan.functions";
 import { EscalaLimitModal } from "@/components/escala-limit-modal";
 import type { EscalaAnalise } from "@/lib/schemas/escala.schema";
 import { useWorkspace } from "@/contexts/workspace-context";
+import { editorPathForFormato } from "@/lib/product-mode";
 
 const searchSchema = z.object({
   criativoId: z.string().uuid().optional(),
@@ -190,13 +191,19 @@ function Escala() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      if (data.falhas?.length) {
+        toast.warning(
+          `${data.falhas.length} variação(ões) falharam: ${data.falhas.map((f) => f.variacaoId).join(", ")}`,
+        );
+      }
       if (data.variacoes.length === 0) {
         toast.error("Nenhuma variação gerada — verifique ANTHROPIC_API_KEY");
         return;
       }
       if (data.variacoes.length === 1 && data.variacoes[0].criativoId) {
         toast.success("1 variação criada");
-        navigate({ to: "/app/editor", search: { criativoId: data.variacoes[0].criativoId } });
+        const editorPath = editorPathForFormato(campeao?.formato_saida);
+        navigate({ to: editorPath, search: { criativoId: data.variacoes[0].criativoId } });
       } else {
         setVariacoesCriadas(data.variacoes);
         toast.success(`${data.variacoes.length} variações criadas`);
@@ -273,6 +280,7 @@ function Escala() {
                 <SelectContent>
                   {performandoRows.map((r) => (
                     <SelectItem key={r.id} value={r.id}>
+                      {r.formato_saida === "vsl_curta" ? "[VSL] " : "[Curto] "}
                       {r.angulo} · {r.produto}
                     </SelectItem>
                   ))}
@@ -589,7 +597,7 @@ function Escala() {
               v.criativoId ? (
                 <Link
                   key={v.criativoId}
-                  to="/app/editor"
+                  to={editorPathForFormato(campeao?.formato_saida)}
                   search={{ criativoId: v.criativoId }}
                   onClick={() => setVariacoesCriadas(null)}
                 >

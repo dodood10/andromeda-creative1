@@ -41,6 +41,7 @@ export type PostExportContentProps = {
   onOpenTestPlan?: () => void;
   onNextDraft?: () => void;
   showHistoricoLink?: boolean;
+  historicoSearch?: Record<string, string>;
   criativoStatus?: string;
 };
 
@@ -55,6 +56,7 @@ export function PostExportContent({
   onOpenTestPlan,
   onNextDraft,
   showHistoricoLink = true,
+  historicoSearch,
   criativoStatus,
 }: PostExportContentProps) {
   const suggestSubiu = criativoStatus === "Gerado";
@@ -77,6 +79,22 @@ export function PostExportContent({
           <span>Estes MP4 são placeholders de desenvolvimento. Não suba no Meta até configurar o serviço FFmpeg.</span>
         </div>
       )}
+      {exportPaths.length > 0 && (() => {
+        const mp4Path = exportPaths.find((p) => /9.?16|vertical/i.test(p)) ?? exportPaths[0];
+        const mp4Url = downloadUrls[mp4Path];
+        return mp4Url ? (
+          <div className="rounded-xl border border-border overflow-hidden bg-black/90">
+            <p className="text-xs text-muted-foreground px-3 py-2 border-b border-border/50">
+              Preview do export (MP4 real)
+            </p>
+            <video
+              src={mp4Url}
+              controls
+              className="w-full max-h-[420px] aspect-[9/16] mx-auto object-contain"
+            />
+          </div>
+        ) : null;
+      })()}
       <div className="grid md:grid-cols-3 gap-4 text-sm">
         <div className="space-y-2">
           <p className="font-medium">Downloads</p>
@@ -127,7 +145,7 @@ export function PostExportContent({
           </Button>
         )}
         {showHistoricoLink && (
-          <Link to="/app/historico">
+          <Link to="/app/historico" search={historicoSearch}>
             <Button variant="outline">Ir ao pipeline</Button>
           </Link>
         )}
@@ -161,6 +179,7 @@ export function PostExportBanner({
   userId,
   onNextDraft,
   criativoStatus,
+  historicoSearch,
 }: PostExportBannerProps) {
   const [testPlanOpen, setTestPlanOpen] = useState(false);
 
@@ -218,6 +237,7 @@ export function PostExportBanner({
           onOpenTestPlan={() => setTestPlanOpen(true)}
           onNextDraft={onNextDraft}
           criativoStatus={criativoStatus}
+          historicoSearch={historicoSearch}
         />
       </div>
     </>

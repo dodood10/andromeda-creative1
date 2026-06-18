@@ -11,7 +11,7 @@ export type ActivationStep = {
   action?: AppLink & { label?: string };
 };
 
-export function ActivationChecklist({ steps }: { steps: ActivationStep[] }) {
+export function ActivationChecklist({ steps, title = "Primeiros passos" }: { steps: ActivationStep[]; title?: string }) {
   const doneCount = steps.filter((s) => s.done).length;
   if (doneCount === steps.length) return null;
 
@@ -21,7 +21,7 @@ export function ActivationChecklist({ steps }: { steps: ActivationStep[] }) {
     <Card className="glass p-5 border border-primary/30 bg-primary/5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold">Primeiros passos</p>
+          <p className="text-sm font-semibold">{title}</p>
           <p className="text-xs text-muted-foreground mt-1">
             {doneCount} de {steps.length} concluídos — complete para extrair valor do Andromeda
           </p>

@@ -5,6 +5,7 @@ import {
   inferAnguloCopyFromText,
   pickFunnelSchwartzPackage,
   parseNivelConscienciaAlvo,
+  validateAngulosResult,
 } from "./schwartz-angulo";
 import type { ResultadoAngulos } from "./schemas/angulos.schema";
 
@@ -84,5 +85,39 @@ describe("schwartz-angulo", () => {
       "conv",
     );
     expect(strong.score).toBeGreaterThan(weak.score);
+  });
+
+  it("validateAngulosResult exige 5 ângulos e diversidade", () => {
+    const resultado: ResultadoAngulos = {
+      diagnostico: {
+        mecanismo: "m",
+        nivel_consciencia: "3",
+        sofisticacao_mercado: "intermediario",
+        variavel_oportunidade: "v",
+      },
+      angulos: [
+        mockAngulo(0, 1, "curiosidade"),
+        mockAngulo(1, 2, "problema_solucao"),
+        mockAngulo(2, 3, "novo_mecanismo"),
+        mockAngulo(3, 4, "autoridade_prova"),
+        mockAngulo(4, 5, "direto"),
+      ],
+    };
+    const v = validateAngulosResult(resultado);
+    expect(v.ok).toBe(true);
+    expect(v.distinctCopy).toBeGreaterThanOrEqual(4);
+  });
+
+  it("validateAngulosResult falha com copy repetido", () => {
+    const resultado: ResultadoAngulos = {
+      diagnostico: {
+        mecanismo: "m",
+        nivel_consciencia: "3",
+        sofisticacao_mercado: "intermediario",
+        variavel_oportunidade: "v",
+      },
+      angulos: Array.from({ length: 5 }, (_, i) => mockAngulo(i, 3, "curiosidade")),
+    };
+    expect(validateAngulosResult(resultado).ok).toBe(false);
   });
 });
