@@ -1,8 +1,8 @@
 # Deploy do microserviço FFmpeg (Andromeda)
 
-## Secrets no Cloudflare Worker (app principal)
+## Secrets no app principal (Lovable / variáveis de ambiente do servidor)
 
-Configure no painel Cloudflare → Workers → Settings → Variables:
+Configure no painel do projeto (Lovable → Settings → Secrets) ou equivalente:
 
 | Secret | Obrigatório para |
 |--------|------------------|
@@ -31,7 +31,7 @@ Endpoints:
 
 Header: `Authorization: Bearer <FFMPEG_SERVICE_SECRET>`
 
-Após deploy, atualize `FFMPEG_SERVICE_URL` no Worker para a URL pública (ex. `https://ffmpeg-seu-app.onrender.com`).
+Após deploy, atualize `FFMPEG_SERVICE_URL` nas variáveis de ambiente do app (Lovable) para a URL pública (ex. `https://ffmpeg-seu-app.onrender.com`).
 
 ## Smoke test
 

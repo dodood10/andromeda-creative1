@@ -9,7 +9,6 @@
     "build:worker": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
-    "deploy": "npm run build && npx wrangler deploy",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
