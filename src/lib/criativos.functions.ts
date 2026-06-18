@@ -13,6 +13,7 @@ import {
   type ChampionMetric,
 } from "./project-performance-context";
 import { buildEscalaLineage } from "./escala-lineage";
+import { buildFormatoIntelSegment } from "./intel-formato-segment";
 import { refreshProjectCalibration, loadProjectIntelSettings } from "./sinais-calibration";
 import {
   parseMetaAdsCsv,
@@ -845,7 +846,7 @@ export const getVslDashboardStats = createServerFn({ method: "POST" })
 
     const { data: criativos, error } = await supabase
       .from("criativos")
-      .select("status, export_status, id, updated_at")
+      .select("status, export_status, id, updated_at, angulo, angulo_json")
       .eq("project_id", data.projectId)
       .eq("formato_saida", "vsl_curta");
 
@@ -939,6 +940,16 @@ export const getVslDashboardStats = createServerFn({ method: "POST" })
       });
     }
 
+    const escalaLineage = buildEscalaLineage(
+      (criativos ?? []).map((c) => ({
+        id: c.id,
+        angulo: c.angulo ?? "VSL",
+        status: c.status,
+        export_status: c.export_status,
+        angulo_json: c.angulo_json,
+      })),
+    ).filter((l) => l.variacoes.length > 0);
+
     return {
       total,
       rascunhos: semExport,
@@ -951,6 +962,7 @@ export const getVslDashboardStats = createServerFn({ method: "POST" })
       showCsvReminder,
       nextAction,
       feed,
+      escalaLineage,
     };
   });
 
@@ -1280,13 +1292,18 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
           hook_rate_estimado?: string;
           feedback_negativo_esperado?: string;
         };
-        vsl_sinais?: { hook_rate_estimado?: string };
+        vsl_sinais?: {
+          hook_rate_estimado?: string;
+          hold_rate_30s?: string;
+          taxa_conclusao_estimada?: string;
+          feedback_negativo_esperado?: string;
+        };
         export_transcricao?: { source?: string };
         importado?: boolean;
       } | null;
       const sinais =
-        c.formato_saida === "vsl_curta" && aj?.vsl_sinais?.hook_rate_estimado
-          ? { hook_rate_estimado: aj.vsl_sinais.hook_rate_estimado }
+        c.formato_saida === "vsl_curta" && aj?.vsl_sinais
+          ? aj.vsl_sinais
           : aj?.sinais_andromeda;
       if (sinais?.hook_rate_estimado) {
         const nums = sinais.hook_rate_estimado.match(/\d+/g)?.map(Number) ?? [];
@@ -1519,6 +1536,10 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         performando: performandoPendentes,
         resultados: resultadosPendentes,
       },
+      porFormato: {
+        criativo_curto: buildFormatoIntelSegment(criativos ?? [], "criativo_curto"),
+        vsl_curta: buildFormatoIntelSegment(criativos ?? [], "vsl_curta"),
+      },
       nextAction,
     };
   });
@@ -1674,6 +1695,88 @@ export const fetchProjectFormatContext = createServerFn({ method: "POST" })
   });
 
 const DEFAULT_ETA = { angulosSec: 60, vslSec: 45, draftSec: 15, exportSec: 45, brollSec: 300 };
+
+export const getProjectFunnelKpis = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    z.object({
+      projectId: z.string().uuid(),
+      organizationId: z.string().uuid().optional(),
+    }),
+  )
+  .handler(async ({ data, context }) => {
+    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: criativos } = await context.supabase
+      .from("criativos")
+      .select("id, export_status, status, created_at, updated_at, angulo")
+      .eq("project_id", data.projectId);
+
+    const rows = criativos ?? [];
+    const rascunhos = rows.length;
+    const exportados = rows.filter((c) => c.export_status === "pronto").length;
+    const subiu = rows.filter((c) => c.status === "Subiu" || c.status === "Rodando" || c.status === "Performando").length;
+    const taxaExportRascunho = rascunhos > 0 ? Math.round((exportados / rascunhos) * 100) : null;
+    const taxaSubiuExport = exportados > 0 ? Math.round((subiu / exportados) * 100) : null;
+
+    const variacoesEscala = rows.filter((c) => c.angulo.includes(" · var ")).length;
+    const campeoes = rows.filter((c) => c.status === "Performando").length;
+    const variacoesPorCampeao =
+      campeoes > 0 ? Math.round((variacoesEscala / campeoes) * 10) / 10 : null;
+
+    let validacaoFalhou = 0;
+    let ttfeMedioSec: number | null = null;
+    if (data.organizationId) {
+      const { count } = await supabaseAdmin
+        .from("funnel_events")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", data.organizationId)
+        .eq("event_type", "angulos_validacao_falhou")
+        .gte("created_at", since30d);
+      validacaoFalhou = count ?? 0;
+
+      const { data: ttfeEvents } = await supabaseAdmin
+        .from("funnel_events")
+        .select("duration_ms")
+        .eq("organization_id", data.organizationId)
+        .eq("event_type", "export_pronto")
+        .eq("success", true)
+        .gte("created_at", since30d)
+        .not("duration_ms", "is", null)
+        .limit(50);
+
+      const durations = (ttfeEvents ?? []).map((e) => e.duration_ms!).filter(Boolean);
+      if (durations.length) {
+        ttfeMedioSec = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length / 1000);
+      }
+    }
+
+    const { count: angulosGerados } = await supabaseAdmin
+      .from("funnel_events")
+      .select("id", { count: "exact", head: true })
+      .eq("event_type", "angulos_gerados")
+      .eq("success", true)
+      .gte("created_at", since30d);
+
+    const diversidadeOkPct =
+      angulosGerados && validacaoFalhou >= 0
+        ? Math.max(0, Math.round(((angulosGerados - validacaoFalhou) / angulosGerados) * 100))
+        : null;
+
+    return {
+      rascunhos,
+      exportados,
+      subiu,
+      taxaExportRascunho,
+      taxaSubiuExport,
+      variacoesEscala,
+      variacoesPorCampeao,
+      validacaoFalhou,
+      diversidadeOkPct,
+      ttfeMedioSec,
+      periodo: "30d",
+    };
+  });
 
 export const getGeradorEtaEstimates = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])

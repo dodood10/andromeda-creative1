@@ -132,6 +132,7 @@ function Escala() {
   const [variacoesCriadas, setVariacoesCriadas] = useState<
     Array<{ tipo: string; hook: string; criativoId?: string; angulo: string }> | null
   >(null);
+  const [escalaFalhas, setEscalaFalhas] = useState<Array<{ variacaoId: string; erro: string }>>([]);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
@@ -191,6 +192,7 @@ function Escala() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["criativos"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      setEscalaFalhas(data.falhas ?? []);
       if (data.falhas?.length) {
         toast.warning(
           `${data.falhas.length} variação(ões) falharam: ${data.falhas.map((f) => f.variacaoId).join(", ")}`,
@@ -501,6 +503,18 @@ function Escala() {
           {analise && step === "geracao" && (
             <div className="space-y-4">
               <h2 className="font-display text-xl font-semibold">Passo 2 — Gerar variações selecionadas</h2>
+              {escalaFalhas.length > 0 && (
+                <Card className="glass p-4 border border-destructive/30 bg-destructive/5 space-y-2">
+                  <p className="text-sm font-medium text-destructive">Variações que falharam na última geração</p>
+                  <ul className="text-xs space-y-1 text-muted-foreground">
+                    {escalaFalhas.map((f) => (
+                      <li key={f.variacaoId}>
+                        <span className="font-mono text-foreground">{f.variacaoId}</span> — {f.erro}
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              )}
               <div className="grid grid-cols-1 gap-3">
                 {analise.menu_variacoes.map((item) => (
                   <Card key={item.id} className="glass p-4 space-y-3">

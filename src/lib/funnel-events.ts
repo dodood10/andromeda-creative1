@@ -3,6 +3,7 @@ import { trackApiUsage, type ApiUsageEventType } from "./api-usage";
 
 export type FunnelEventType =
   | "angulos_gerados"
+  | "angulos_validacao_falhou"
   | "wizard_step"
   | "draft_created"
   | "editor_opened"
@@ -15,6 +16,7 @@ export type FunnelEventType =
 
 const FUNNEL_AS_API: Record<FunnelEventType, ApiUsageEventType> = {
   angulos_gerados: "gerar_angulos",
+  angulos_validacao_falhou: "gerar_angulos",
   wizard_step: "gerar_angulos",
   draft_created: "gerar_angulos",
   editor_opened: "export",

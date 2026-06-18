@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { TrendingUp, AlertTriangle, Sparkles, ArrowRight, Flame, Eye, Zap, Loader2, Brain, Upload, Film } from "lucide-react";
-import { getDashboardStats, getVslDashboardStats } from "@/lib/criativos.functions";
+import { getDashboardStats, getVslDashboardStats, getProjectFunnelKpis } from "@/lib/criativos.functions";
 import { getPlanUsage } from "@/lib/plan.functions";
 import { getNicheDailyIntel } from "@/lib/niche-intel.functions";
 import { useAuth } from "@/hooks/use-auth";
@@ -69,6 +69,7 @@ function Dashboard() {
   const fetchVslStats = useServerFn(getVslDashboardStats);
   const fetchPlanUsage = useServerFn(getPlanUsage);
   const fetchNicheIntel = useServerFn(getNicheDailyIntel);
+  const fetchFunnelKpis = useServerFn(getProjectFunnelKpis);
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ["dashboard-stats", projectId],
@@ -95,6 +96,13 @@ function Dashboard() {
     queryFn: () => fetchNicheIntel({ data: { nicho: nichoRaw } }),
     enabled: nichoRaw.length > 2,
     staleTime: 6 * 60 * 60 * 1000,
+  });
+
+  const { data: funnelKpis } = useQuery({
+    queryKey: ["project-funnel-kpis", projectId, organizationId],
+    queryFn: () =>
+      fetchFunnelKpis({ data: { projectId: projectId!, organizationId: organizationId ?? undefined } }),
+    enabled: !!projectId,
   });
 
   const hoje = format(new Date(), "d 'de' MMMM 'de' yyyy", { locale: ptBR });
@@ -434,6 +442,37 @@ function Dashboard() {
       )}
 
       <ContinueWizardBanner />
+
+      {funnelKpis && funnelKpis.rascunhos > 0 && (
+        <Card className="glass p-5 border border-border/50 space-y-4">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            Métricas do funil (30 dias)
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <p className="text-2xl font-bold">{funnelKpis.taxaExportRascunho ?? "—"}%</p>
+              <p className="text-xs text-muted-foreground">Export / rascunho</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{funnelKpis.taxaSubiuExport ?? "—"}%</p>
+              <p className="text-xs text-muted-foreground">Subiu / exportado</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{funnelKpis.diversidadeOkPct ?? "—"}%</p>
+              <p className="text-xs text-muted-foreground">Gerações válidas (Schwartz)</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{funnelKpis.variacoesPorCampeao ?? "—"}</p>
+              <p className="text-xs text-muted-foreground">Variações / campeão</p>
+            </div>
+          </div>
+          {funnelKpis.ttfeMedioSec != null && (
+            <p className="text-xs text-muted-foreground">
+              TTFE médio estimado: ~{funnelKpis.ttfeMedioSec}s (org, últimos 30d)
+            </p>
+          )}
+        </Card>
+      )}
 
       {stats?.exportSubiuReminderId && stats.exportSubiuReminderId !== stats.staleExportReminderId && (
         <Card className="glass p-4 border border-primary/30 bg-primary/5 flex flex-wrap items-center justify-between gap-3">

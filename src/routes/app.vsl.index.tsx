@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { getVslDashboardStats } from "@/lib/criativos.functions";
 import { useWorkspace } from "@/contexts/workspace-context";
+import { EscalaLineageCard } from "@/components/escala-lineage-card";
 
 export const Route = createFileRoute("/app/vsl/")({
   component: VslCockpit,
@@ -129,6 +130,10 @@ function VslCockpit() {
             </Card>
           ))}
         </div>
+      )}
+
+      {(stats?.escalaLineage?.length ?? 0) > 0 && (
+        <EscalaLineageCard lineage={stats!.escalaLineage!} />
       )}
 
       <Card className="glass p-6 flex items-center gap-4">

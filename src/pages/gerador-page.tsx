@@ -12,6 +12,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Wand2, Sparkles, ArrowRight, Brain, Loader2, Target, Gauge,
@@ -25,7 +35,7 @@ import {
 } from "@/lib/anthropic.functions";
 import { saveGeracao, createCriativoDraft, getGeracaoResultado, getInteligenciaNicho, getChampionsForRanking, fetchProjectFormatContext, getGeradorEtaEstimates } from "@/lib/criativos.functions";
 import { getPlanUsage } from "@/lib/plan.functions";
-import { GeradorStepper } from "@/components/gerador-stepper";
+import { GeradorStepper, type GeradorStepId } from "@/components/gerador-stepper";
 import { UpgradeBanner } from "@/components/upgrade-banner";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -105,6 +115,7 @@ type WizardPersisted = {
   wizardStep: WizardStep;
   formatoPorAngulo: Record<number, FormatoOverride>;
   backgroundMediaPath: string | null;
+  productMode?: ProductMode;
 };
 
 const tipoColor: Record<string, string> = {
@@ -203,6 +214,20 @@ export function GeradorPage({
   const [modoRapido, setModoRapido] = useState(false);
   const [refNudgeDismissed, setRefNudgeDismissed] = useState(true);
   const [loadingOverlayDismissed, setLoadingOverlayDismissed] = useState(false);
+  const [showProjectSwitchDialog, setShowProjectSwitchDialog] = useState(false);
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
+  const [showRegenerateDialog, setShowRegenerateDialog] = useState(false);
+  const [showMediaFallbackDialog, setShowMediaFallbackDialog] = useState(false);
+  const [mediaFallbackIndices, setMediaFallbackIndices] = useState<number[]>([]);
+  const [showCongruenceDialog, setShowCongruenceDialog] = useState(false);
+  const [congruenceLowIndices, setCongruenceLowIndices] = useState<number[]>([]);
+  const congruenceBypassRef = useRef(false);
+  const [ttfeDraft, setTtfeDraft] = useState<{
+    criativoId: string;
+    anguloNome: string;
+    idx: number;
+  } | null>(null);
+  const skipProjectResetRef = useRef(false);
   const mediaRef = useRef<HTMLInputElement>(null);
   const prevProjectRef = useRef<string | null>(null);
   const pendingAutoDraft = useRef(false);
@@ -373,9 +398,16 @@ export function GeradorPage({
   );
 
   useEffect(() => {
+    if (skipProjectResetRef.current) {
+      skipProjectResetRef.current = false;
+      prevProjectRef.current = projectId;
+      return;
+    }
     if (prevProjectRef.current && prevProjectRef.current !== projectId) {
       const hadProgress = etapa !== "input" || resultado !== null;
-      if (hadProgress && !window.confirm("Trocar de projeto vai descartar o progresso atual. Continuar?")) {
+      if (hadProgress) {
+        setPendingProjectId(projectId);
+        setShowProjectSwitchDialog(true);
         if (organizationId) setWorkspace(organizationId, prevProjectRef.current);
         return;
       }
@@ -409,12 +441,13 @@ export function GeradorPage({
         wizardStep: patch.wizardStep ?? wizardStep,
         formatoPorAngulo: patch.formatoPorAngulo ?? formatoPorAngulo,
         backgroundMediaPath: patch.backgroundMediaPath !== undefined ? patch.backgroundMediaPath : backgroundMediaPath,
+        productMode: mode,
       };
       localStorage.setItem(WIZARD_STORAGE_KEY, JSON.stringify(next));
     } catch {
       /* ignore */
     }
-  }, [geracaoId, selectedAngulos, wizardStep, formatoPorAngulo, backgroundMediaPath]);
+  }, [geracaoId, selectedAngulos, wizardStep, formatoPorAngulo, backgroundMediaPath, mode]);
 
   useEffect(() => {
     if (urlStep === "wizard" && geracaoId) {
@@ -499,7 +532,14 @@ export function GeradorPage({
     setLoadingPergunta(true);
     try {
       const data = await askQuestion({
-        data: { url, productType, goal, context, organizationId: organizationId ?? undefined },
+        data: {
+          url,
+          productType,
+          goal,
+          context,
+          organizationId: organizationId ?? undefined,
+          projectId: projectId ?? undefined,
+        },
       });
       setPergunta(data);
       setEtapa("respondendo");
@@ -668,11 +708,11 @@ export function GeradorPage({
     const used = planUsage?.geracoesMes ?? 0;
     const remaining =
       limit != null && limit !== Infinity ? Math.max(0, limit - used) : null;
-    const confirmMsg =
-      remaining != null
-        ? `Regenerar consome 1 geração (${remaining} restante(s) este mês). Continuar?`
-        : "Regenerar substitui os 5 ângulos atuais. Continuar?";
-    if (!window.confirm(confirmMsg)) return;
+    setShowRegenerateDialog(true);
+  }
+
+  async function confirmRegenerateAngles() {
+    setShowRegenerateDialog(false);
     setSelectedAngulos(new Set());
     await runGerarAngulos(!!context.trim(), geracaoId);
   }
@@ -740,10 +780,14 @@ export function GeradorPage({
       trackMetaAddToCart(angulosData.angulos[idx]?.nome ?? `angulo-${idx}`);
       toast.success(
         hookAudioGenerated
-          ? "Rascunho criado com hook narrado — abrindo o editor"
-          : "Rascunho criado — abrindo o editor",
+          ? "Rascunho criado com hook narrado"
+          : "Rascunho criado no modo rápido",
       );
-      navigate({ to: config.editorPath, search: { criativoId, focus: "audio" } });
+      setTtfeDraft({
+        criativoId,
+        anguloNome: angulosData.angulos[idx]?.nome ?? `Ângulo ${idx + 1}`,
+        idx,
+      });
       return true;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao criar rascunho automático");
@@ -755,11 +799,7 @@ export function GeradorPage({
     }
   }
 
-  async function applyMediaFallback(mediaIndices: number[]): Promise<Record<number, FormatoOverride> | null> {
-    const useFallback = window.confirm(
-      "Sem mídia de fundo, clipes+texto tende a performar mal no Meta.\n\nUsar texto animado como fallback para esses ângulos?",
-    );
-    if (!useFallback) return null;
+  function applyMediaFallbackSync(mediaIndices: number[]): Record<number, FormatoOverride> {
     const next = { ...formatoPorAngulo };
     for (const idx of mediaIndices) {
       if (next[idx]) {
@@ -771,10 +811,33 @@ export function GeradorPage({
     return next;
   }
 
+  function getLowCongruenceIndices(data: ResultadoAngulos, indices: number[]): number[] {
+    return indices.filter((idx) => {
+      const score = data.angulos[idx]?.congruencia_oferta?.score;
+      return score != null && score < 70;
+    });
+  }
+
+  function handleStepperClick(stepId: GeradorStepId) {
+    if (stepId === "input") setEtapa("input");
+    else if (stepId === "resultado" && resultado) setEtapa("resultado");
+    else if (stepId === "wizard" && resultado) setEtapa("wizard");
+  }
+
   async function handleCreateDrafts() {
     if (!geracaoId || !organizationId || !projectId || selectedAngulos.size === 0) {
       toast.error("Selecione ao menos um ângulo");
       return;
+    }
+
+    const indices = [...selectedAngulos].sort((a, b) => a - b);
+    if (resultado && !congruenceBypassRef.current) {
+      const low = getLowCongruenceIndices(resultado, indices);
+      if (low.length > 0) {
+        setCongruenceLowIndices(low);
+        setShowCongruenceDialog(true);
+        return;
+      }
     }
 
     let fmtMap = formatoPorAngulo;
@@ -782,15 +845,18 @@ export function GeradorPage({
       ? needsMediaUpload(resultado.angulos, selectedAngulos, fmtMap)
       : [];
     if (mediaIndices.length > 0 && !backgroundMediaPath) {
-      const fallback = await applyMediaFallback(mediaIndices);
-      if (!fallback) {
-        toast.error("Envie mídia de fundo ou aceite o fallback para texto animado");
-        setWizardStep("midia");
-        return;
-      }
-      fmtMap = fallback;
+      setMediaFallbackIndices(mediaIndices);
+      setShowMediaFallbackDialog(true);
+      return;
     }
 
+    await executeCreateDrafts(fmtMap);
+  }
+
+  async function executeCreateDrafts(fmtMapOverride?: Record<number, FormatoOverride>) {
+    if (!geracaoId || !organizationId || !projectId) return;
+
+    let fmtMap = fmtMapOverride ?? formatoPorAngulo;
     setCreatingDrafts(true);
     const indices = [...selectedAngulos].sort((a, b) => a - b);
     const vslTotal = indices.filter((idx) => fmtMap[idx]?.formatoSaida === "vsl_curta").length;
@@ -902,6 +968,7 @@ export function GeradorPage({
       setCreatingDrafts(false);
       setCreatingVsl(false);
       setDraftProgress(null);
+      congruenceBypassRef.current = false;
     }
   }
 
@@ -1023,7 +1090,9 @@ export function GeradorPage({
         </div>
       )}
 
-      {(etapa !== "input" || modoRapido || resultado) && <GeradorStepper etapa={etapa} />}
+      {(etapa !== "input" || modoRapido || resultado) && (
+        <GeradorStepper etapa={etapa} onStepClick={handleStepperClick} />
+      )}
 
       {unsavedResultado && (
         <div className="flex items-center justify-between gap-3 p-4 rounded-lg border border-warning/40 bg-warning/10 text-sm">
@@ -2269,6 +2338,140 @@ export function GeradorPage({
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={showProjectSwitchDialog} onOpenChange={setShowProjectSwitchDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Trocar de projeto?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O progresso atual do gerador será descartado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingProjectId(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingProjectId && organizationId) {
+                  skipProjectResetRef.current = true;
+                  setWorkspace(organizationId, pendingProjectId);
+                }
+                setShowProjectSwitchDialog(false);
+                setPendingProjectId(null);
+              }}
+            >
+              Continuar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showRegenerateDialog} onOpenChange={setShowRegenerateDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Regenerar ângulos?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {planUsage && planUsage.limits.geracoesMes !== Infinity
+                ? `Consome 1 geração (${Math.max(0, planUsage.limits.geracoesMes - planUsage.geracoesMes)} restante(s) este mês).`
+                : "Substitui os 5 ângulos atuais."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmRegenerateAngles()}>
+              Regenerar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showMediaFallbackDialog} onOpenChange={setShowMediaFallbackDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Usar texto animado?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Sem mídia de fundo, clipes+texto tende a performar mal no Meta. Usar texto animado como fallback?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                toast.error("Envie mídia de fundo ou aceite o fallback");
+                setWizardStep("midia");
+              }}
+            >
+              Voltar à mídia
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const fmt = applyMediaFallbackSync(mediaFallbackIndices);
+                setShowMediaFallbackDialog(false);
+                void executeCreateDrafts(fmt);
+              }}
+            >
+              Usar fallback
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showCongruenceDialog} onOpenChange={setShowCongruenceDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Congruência com a oferta baixa</AlertDialogTitle>
+            <AlertDialogDescription>
+              {congruenceLowIndices.length} ângulo(s) com score &lt; 70% de alinhamento com a landing.
+              Criar rascunhos mesmo assim pode gerar criativos desalinhados.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Revisar ângulos</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                congruenceBypassRef.current = true;
+                setShowCongruenceDialog(false);
+                void handleCreateDrafts();
+              }}
+            >
+              Criar mesmo assim
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!ttfeDraft} onOpenChange={(open) => !open && setTtfeDraft(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Modo rápido — ângulo escolhido</AlertDialogTitle>
+            <AlertDialogDescription>
+              Rascunho criado a partir de <strong>{ttfeDraft?.anguloNome}</strong>. Você pode abrir o editor
+              ou voltar para escolher outro ângulo entre os 5 gerados.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setEtapa("resultado");
+                if (ttfeDraft) setSelectedAngulos(new Set([ttfeDraft.idx]));
+                setTtfeDraft(null);
+              }}
+            >
+              Ver outros ângulos
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!ttfeDraft) return;
+                navigate({
+                  to: config.editorPath,
+                  search: { criativoId: ttfeDraft.criativoId, focus: "audio" },
+                });
+                setTtfeDraft(null);
+              }}
+            >
+              Abrir editor
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

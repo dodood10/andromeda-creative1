@@ -15,6 +15,7 @@ import { ResultadoAngulosSchema, type RecomendacaoFormato, type ResultadoAngulos
 import { HttpUrlSchema } from "./security-url";
 import { rateLimitGerarAngulos } from "./security-rate-limit";
 import { assertCanGerar } from "./plan-enforcement";
+import { trackFunnelEvent } from "./funnel-events";
 
 const PRODUCT_QUESTION_RULES: Record<string, string> = {
   ecom: "qual é a principal objeção que impede a compra deste produto específico",
@@ -34,6 +35,7 @@ const PerguntaInputSchema = z.object({
   goal: z.string().optional().default("conv"),
   context: z.string().optional().default(""),
   organizationId: z.string().uuid().optional(),
+  projectId: z.string().uuid().optional(),
 });
 
 const PERGUNTA_SYSTEM = `Você é estrategista da metodologia Andromeda 2026.
@@ -59,14 +61,35 @@ export const gerarPerguntaCirurgica = createServerFn({ method: "POST" })
     const regra =
       PRODUCT_QUESTION_RULES[data.productType] ?? PRODUCT_QUESTION_RULES.info;
 
+    let contextBlocks = "";
+    if (data.projectId) {
+      const [generalIntel, perfCtx] = await Promise.all([
+        getProjectGeneralIntelText(context.supabase, data.projectId),
+        getProjectPerformanceContext(context.supabase, data.projectId, { approvedOnly: true }),
+      ]);
+      if (generalIntel) {
+        contextBlocks += `\n\nCONTEXTO DO PROJETO (transcrições de referência):\n${generalIntel}`;
+      }
+      if (perfCtx?.summaryText) {
+        contextBlocks += `\n\nPERFORMANCE VALIDADA DO PROJETO:\n${perfCtx.summaryText}`;
+      }
+    }
+    try {
+      const snap = await buildOfferSnapshot(data.url, apiKey);
+      contextBlocks += `\n\n${formatOfferSnapshotBlock(snap)}`;
+    } catch {
+      /* offer opcional */
+    }
+
     const userMsg = `URL: ${data.url}
 Tipo de produto: ${data.productType}
 Objetivo: ${data.goal}
 Contexto adicional: ${data.context || "(nenhum)"}
 
 Regra para este tipo de produto: ${regra}.
+${contextBlocks}
 
-Gere a pergunta cirúrgica adaptada a este produto específico (não genérica) seguindo a regra acima.`;
+Gere a pergunta cirúrgica adaptada a este produto específico (não genérica) seguindo a regra acima. Use o contexto do projeto quando disponível para evitar perguntas óbvias já respondidas pelos dados.`;
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -424,11 +447,29 @@ Execute o processo completo: visite a URL com web_search, pesquise o que escala 
 
     let parsedData = await callAngulos();
     let validation = validateAngulosResult(parsedData);
-    if (!validation.ok) {
-      parsedData = await callAngulos(
-        `\n\nCORREÇÃO OBRIGATÓRIA: a resposta anterior falhou na validação (${validation.issues.join("; ")}). Regenere os 5 ângulos com pelo menos 4 angulo_copy distintos e 4 micropersonas distintas.`,
-      );
+    const correctionHint = (issues: string[]) =>
+      `\n\nCORREÇÃO OBRIGATÓRIA: a resposta anterior falhou na validação (${issues.join("; ")}). Regenere os 5 ângulos com pelo menos 4 angulo_copy distintos e 4 micropersonas distintas.`;
+
+    let attempts = 1;
+    const maxAttempts = 3;
+    while (!validation.ok && attempts < maxAttempts) {
+      parsedData = await callAngulos(correctionHint(validation.issues));
       validation = validateAngulosResult(parsedData);
+      attempts++;
+    }
+
+    if (!validation.ok) {
+      trackFunnelEvent({
+        userId: context.userId,
+        organizationId: data.organizationId,
+        event: "angulos_validacao_falhou",
+        success: false,
+        metadata: { issues: validation.issues, attempts },
+      });
+      trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
+      throw new Error(
+        `Validação dos ângulos falhou após ${attempts} tentativa(s): ${validation.issues.join("; ")}`,
+      );
     }
 
     const normalized: ResultadoAngulos = {

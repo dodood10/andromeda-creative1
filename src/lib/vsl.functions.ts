@@ -14,6 +14,7 @@ import {
 } from "./vsl-duration";
 import { formatCalibrationBiasInstruction, loadProjectIntelSettings } from "./sinais-calibration";
 import { getProjectGeneralIntelText } from "./project-reference-intel";
+import { getProjectPerformanceContext } from "./project-performance-context";
 import { buildOfferSnapshot, formatOfferSnapshotBlock } from "./offer-snapshot";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
@@ -80,12 +81,16 @@ export async function generateVslFromAngulo(params: {
   }
 
   if (params.supabase && params.projectId) {
-    const [generalIntel, settings] = await Promise.all([
+    const [generalIntel, settings, perfCtx] = await Promise.all([
       getProjectGeneralIntelText(params.supabase, params.projectId),
       loadProjectIntelSettings(params.supabase, params.projectId),
+      getProjectPerformanceContext(params.supabase, params.projectId, { approvedOnly: true }),
     ]);
     if (generalIntel) {
       contextBlocks += `\n\nCONTEXTO DE INTELIGÊNCIA GERAL (transcrições de referência):\n${generalIntel}`;
+    }
+    if (perfCtx?.summaryText) {
+      contextBlocks += `\n\nCONTEXTO DE PERFORMANCE VALIDADA (campeões VSL e criativos do projeto):\n${perfCtx.summaryText}`;
     }
     const calibrationBlock = formatCalibrationBiasInstruction(settings);
     if (calibrationBlock) {

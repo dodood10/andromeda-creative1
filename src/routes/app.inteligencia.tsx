@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { format } from "date-fns";
@@ -24,6 +25,8 @@ import { ColarTranscricaoButton } from "@/components/colar-transcricao-dialog";
 import { ReferenceTranscriptionsList } from "@/components/reference-transcriptions-list";
 import { ReferenceComboPanel } from "@/components/reference-combo-panel";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { FormatoIntelPanel } from "@/components/formato-intel-panel";
 
 export const Route = createFileRoute("/app/inteligencia")({
   head: () => ({
@@ -36,6 +39,7 @@ const FEED_ICONS = [Sparkles, TrendingUp, AlertTriangle] as const;
 
 function Inteligencia() {
   const { projectId, currentProject, loading: wsLoading } = useWorkspace();
+  const [formatoTab, setFormatoTab] = useState<"criativo_curto" | "vsl_curta" | "todos">("todos");
   const fetchIntel = useServerFn(getInteligenciaNicho);
   const fetchReviewStatus = useServerFn(getIntelReviewStatus);
 
@@ -164,6 +168,29 @@ function Inteligencia() {
               sub="métricas validadas"
             />
           </div>
+
+          <Tabs value={formatoTab} onValueChange={(v) => setFormatoTab(v as typeof formatoTab)}>
+            <TabsList className="mb-4">
+              <TabsTrigger value="todos">Visão geral</TabsTrigger>
+              <TabsTrigger value="criativo_curto">Criativo curto</TabsTrigger>
+              <TabsTrigger value="vsl_curta">VSL</TabsTrigger>
+            </TabsList>
+            <TabsContent value="todos" className="space-y-6 mt-0">
+              <p className="text-sm text-muted-foreground">
+                Métricas agregadas do projeto. Use as abas para comparar criativo curto vs VSL.
+              </p>
+            </TabsContent>
+            <TabsContent value="criativo_curto" className="mt-0">
+              {data.porFormato?.criativo_curto && (
+                <FormatoIntelPanel segment={data.porFormato.criativo_curto} label="criativo curto" />
+              )}
+            </TabsContent>
+            <TabsContent value="vsl_curta" className="mt-0">
+              {data.porFormato?.vsl_curta && (
+                <FormatoIntelPanel segment={data.porFormato.vsl_curta} label="VSL curta" />
+              )}
+            </TabsContent>
+          </Tabs>
 
           {(data.intelSettings?.cpa_medio_validado != null ||
             data.intelSettings?.roas_medio_validado != null) && (
