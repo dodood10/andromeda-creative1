@@ -25,7 +25,7 @@ type WorkspaceContextValue = {
   currentProject: WorkspaceOrg["projects"][0] | null;
   loading: boolean;
   setWorkspace: (organizationId: string, projectId: string) => void;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<{ organizationId: string | null; projectId: string | null }>;
 };
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -73,6 +73,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setOrganizationId(orgId);
     setProjectId(projId);
     if (orgId && projId) saveStored({ organizationId: orgId, projectId: projId });
+    return { organizationId: orgId, projectId: projId };
   }, [fetchWorkspaces]);
 
   useEffect(() => {

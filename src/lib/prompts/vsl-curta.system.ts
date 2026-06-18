@@ -35,6 +35,8 @@ BLOCO 6 — CTA COM VALOR: estado antes, estado depois, ação com benefício em
 CALIBRAÇÃO ANDROMEDA: hook rate 3s crítico; hold rate 30s no bloco 2→3; taxa conclusão >40% preferencial; feedback negativo se hook não entregar promessa em 30s.
 Se CONTEXTO DE CALIBRAÇÃO indicar bias de hook rate do projeto, ajuste sinais_andromeda.hook_rate_estimado.
 
+CONGRUÊNCIA COM A OFERTA: quando houver bloco OFERTA CANÔNICA, promessa, mecanismo, números e CTA de todos os blocos DEVEM vir dessa oferta. Referências de copy servem só para ritmo e estrutura — nunca copie claims de outro nicho.
+
 PROCESSO: confirmar micropersona do ângulo; identificar 3 objeções; depoimento ideal; construir 6 blocos com tempo exato; calibrar tom ao Schwartz.
 
 Responda APENAS com JSON válido, sem markdown, sem code fences. Estrutura:

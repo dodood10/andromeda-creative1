@@ -9,7 +9,8 @@ export type FunnelEventType =
   | "export_pronto"
   | "render_started"
   | "render_done"
-  | "render_failed";
+  | "render_failed"
+  | "test_plan_viewed";
 
 const FUNNEL_AS_API: Record<FunnelEventType, ApiUsageEventType> = {
   angulos_gerados: "gerar_angulos",
@@ -20,6 +21,7 @@ const FUNNEL_AS_API: Record<FunnelEventType, ApiUsageEventType> = {
   render_started: "export",
   render_done: "export",
   render_failed: "export",
+  test_plan_viewed: "export",
 };
 
 /** Rastreio de funil em funnel_events + api_usage_events (legado). */

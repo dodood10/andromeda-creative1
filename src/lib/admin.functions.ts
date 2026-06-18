@@ -12,6 +12,11 @@ import {
   scoreFromJson,
   SubmitAdminCriativoReviewSchema,
 } from "@/lib/types/intel-review";
+import {
+  computeQueuePriorityScore,
+  hasWhisperTranscriptionFromAnguloJson,
+  priorityLabelFromScore,
+} from "@/lib/intel-queue-priority";
 
 const adminMiddleware = [requireSupabaseAuth, requirePlatformAdmin] as const;
 
@@ -766,9 +771,11 @@ export const listAdminAvaliacaoQueue = createServerFn({ method: "POST" })
     const [performandoRes, resultadosRes] = await Promise.all([
       supabaseAdmin
         .from("criativos")
-        .select("id, produto, angulo, user_id, organization_id, performando_intel_submitted_at")
+        .select(
+          "id, produto, angulo, user_id, organization_id, performando_intel_submitted_at, source, angulo_json",
+        )
         .eq("performando_intel_status", "pending")
-        .order("performando_intel_submitted_at", { ascending: false })
+        .order("performando_intel_submitted_at", { ascending: true })
         .limit(100),
       supabaseAdmin
         .from("resultados_reportados")
@@ -776,7 +783,7 @@ export const listAdminAvaliacaoQueue = createServerFn({ method: "POST" })
           "id, criativo_id, user_id, tipo, metrica, valor, observacao, created_at, criativos(produto, angulo, organization_id)",
         )
         .eq("intel_review_status", "pending")
-        .order("created_at", { ascending: false })
+        .order("created_at", { ascending: true })
         .limit(100),
     ]);
 
@@ -794,28 +801,65 @@ export const listAdminAvaliacaoQueue = createServerFn({ method: "POST" })
         .filter(Boolean) as string[],
     ];
 
+    const performandoIds = (performandoRes.data ?? []).map((c) => c.id);
+    const { data: linkedResultados } = performandoIds.length
+      ? await supabaseAdmin
+          .from("resultados_reportados")
+          .select("criativo_id, metrica, observacao")
+          .in("criativo_id", performandoIds)
+          .order("created_at", { ascending: false })
+      : { data: [] };
+
+    const linkedByCriativo = new Map<string, { metrica?: string | null; observacao?: string | null }>();
+    for (const r of linkedResultados ?? []) {
+      if (!linkedByCriativo.has(r.criativo_id)) {
+        linkedByCriativo.set(r.criativo_id, { metrica: r.metrica, observacao: r.observacao });
+      }
+    }
+
     const [emails, orgNames] = await Promise.all([
       resolveUserEmails(userIds),
       resolveOrgNames(orgIds),
     ]);
 
-    const performandoItems = (performandoRes.data ?? []).map((c) => ({
-      kind: "performando" as const,
-      criativoId: c.id,
-      produto: c.produto,
-      angulo: c.angulo,
-      organizationName: c.organization_id ? (orgNames[c.organization_id] ?? "—") : "—",
-      userEmail: emails[c.user_id] ?? "",
-      submittedAt: c.performando_intel_submitted_at ?? "",
-    }));
+    const performandoItems = (performandoRes.data ?? []).map((c) => {
+      const linked = linkedByCriativo.get(c.id);
+      const priorityScore = computeQueuePriorityScore({
+        kind: "performando",
+        observacao: linked?.observacao,
+        metrica: linked?.metrica,
+        source: c.source,
+        hasWhisperTranscription: hasWhisperTranscriptionFromAnguloJson(c.angulo_json),
+      });
+      return {
+        kind: "performando" as const,
+        criativoId: c.id,
+        produto: c.produto,
+        angulo: c.angulo,
+        organizationName: c.organization_id ? (orgNames[c.organization_id] ?? "—") : "—",
+        userEmail: emails[c.user_id] ?? "",
+        submittedAt: c.performando_intel_submitted_at ?? "",
+        priorityScore,
+        priorityLabel: priorityLabelFromScore(priorityScore),
+      };
+    });
 
     const resultadoItems = (resultadosRes.data ?? []).map((r) => {
       const criativo = r.criativos as {
         produto?: string;
         angulo?: string;
         organization_id?: string;
+        source?: string;
+        angulo_json?: { export_transcricao?: string } | null;
       } | null;
       const orgId = criativo?.organization_id;
+      const priorityScore = computeQueuePriorityScore({
+        kind: "resultado",
+        observacao: r.observacao,
+        metrica: r.metrica,
+        source: criativo?.source,
+        hasWhisperTranscription: hasWhisperTranscriptionFromAnguloJson(criativo?.angulo_json),
+      });
       return {
         kind: "resultado" as const,
         resultadoId: r.id,
@@ -829,12 +873,15 @@ export const listAdminAvaliacaoQueue = createServerFn({ method: "POST" })
         valor: r.valor,
         observacao: r.observacao,
         submittedAt: r.created_at,
+        priorityScore,
+        priorityLabel: priorityLabelFromScore(priorityScore),
       };
     });
 
-    const items = [...performandoItems, ...resultadoItems].sort(
-      (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
-    );
+    const items = [...performandoItems, ...resultadoItems].sort((a, b) => {
+      if (b.priorityScore !== a.priorityScore) return b.priorityScore - a.priorityScore;
+      return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+    });
 
     await logAdminAction({
       actorUserId: context.userId,

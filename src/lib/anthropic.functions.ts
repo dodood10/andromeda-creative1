@@ -5,6 +5,11 @@ import { trackApiUsage } from "./api-usage";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getProjectFormatContext, normalizeAngulo } from "./formato-recomendacao";
 import { getProjectPerformanceContext } from "./project-performance-context";
+import { getProjectGeneralIntelText } from "./project-reference-intel";
+import { buildOfferSnapshot, formatOfferSnapshotBlock } from "./offer-snapshot";
+import { checkOfferCongruence } from "./congruence-check";
+import { goalToSchwartzRange, ensureAnguloCopyDiversityHint } from "./schwartz-angulo";
+import { TomCalibracaoSchema } from "./types/enums";
 import { ResultadoAngulosSchema, type RecomendacaoFormato, type ResultadoAngulos } from "./schemas/angulos.schema";
 import { HttpUrlSchema } from "./security-url";
 import { rateLimitGerarAngulos } from "./security-rate-limit";
@@ -113,10 +118,7 @@ const InputSchema = z.object({
   context: z.string().optional().default(""),
   perguntaCirurgica: z.string().optional().default(""),
   respostaCirurgica: z.string().min(1, "Resposta cirúrgica obrigatória"),
-  tomCalibracao: z
-    .enum(["direto", "empatico", "autoritativo"])
-    .optional()
-    .default("direto"),
+  tomCalibracao: TomCalibracaoSchema.optional().default("direto"),
   projectId: z.string().uuid().optional(),
   organizationId: z.string().uuid().optional(),
 });
@@ -148,6 +150,17 @@ MODELO MENTAL 5 — ESTRUTURA INVISÍVEL (Anthony Carreiro)
 Psicologia primeiro, comunicação depois.
 
 MODELO MENTAL 6 — 5 NÍVEIS DE CONSCIÊNCIA (Schwartz)
+Cada ângulo DEVE declarar nivel_consciencia_alvo (1–5) e angulo_copy. Regras por nível:
+- Nível 1 (inconsciente): hook educa que existe problema — NÃO assume que o prospect sabe a dor. Evite CTA de compra.
+- Nível 2 (consciente do problema): agita dor + mostra que existe caminho — ainda sem vender produto direto.
+- Nível 3 (consciente da solução): apresenta categoria/mecanismo — compara caminhos, posiciona sua solução.
+- Nível 4 (consciente do produto): prova social, reduz risco, diferencia SEU produto.
+- Nível 5 (mais consciente): oferta direta, promoção, CTA forte com benefício — prospect já decidiu comprar.
+
+ÂNGULO DE COPY (angulo_copy) — distinto do campo tipo (Previsibilidade/Escala/Orgânico):
+direto | historia | problema_solucao | contrario | curiosidade | novo_mecanismo | autoridade_prova
+Os 5 ângulos devem cobrir pelo menos 4 angulo_copy distintos. Hook (0–3s) é a frase que fisga; angulo_copy é a estratégia de abordagem.
+
 Em mercados saturados a maioria está entre 3 e 4 — exige mecanismo único e prova concreta.
 
 MODELO MENTAL 7 — SOFISTICAÇÃO DE MERCADO
@@ -159,17 +172,19 @@ Reciprocidade, Autoridade, Prova social, Escassez real, Urgência (custo da espe
 MODELO MENTAL 9 — SISTEMA ANDROMEDA 2026
 Hook rate >=40%, hold rate >=20%, feedback negativo é o mais penalizador, consistência pós-clique, diversidade criativa real.
 
+Quando o contexto do projeto incluir conversion_bias_notes (CPA/ROAS histórico validado), ajuste ênfase em prova social, urgência e CTA conforme essas notas — CPA alto exige mais prova; ROAS alto permite hook mais direto.
+
 ---
 
 REGRAS DE CALIBRAÇÃO DE TOM POR BLOCO
 
-A calibração escolhida pelo usuário (direto / empático / autoritativo) NÃO se aplica uniformemente. Aplique bloco a bloco:
+A calibração escolhida pelo usuário (direto / empático / autoritativo / urgente) NÃO se aplica uniformemente. Aplique bloco a bloco:
 
 - 0-3s (HOOK): SEMPRE linguagem exata da micropersona. Ignora a calibração escolhida.
-- 3-10s (AGITAÇÃO DA DOR): aplica a calibração no MÁXIMO da intensidade escolhida.
+- 3-10s (AGITAÇÃO DA DOR): aplica a calibração no MÁXIMO da intensidade escolhida. Tom urgente: custo da espera real, sem escassez falsa.
 - 10-20s (MECANISMO): SEMPRE técnico/preciso. Ignora a calibração.
 - 20-30s (PROVA/CONSEQUÊNCIA): aplica a calibração no nível MÉDIO.
-- 30-45s (CTA): SEMPRE direto. Ignora a calibração.
+- 30-45s (CTA): SEMPRE direto. Tom urgente permitido só aqui se nivel_consciencia_alvo >= 4.
 
 ---
 
@@ -180,7 +195,8 @@ PROCESSO
 3) Mapear persona em 6 camadas + 3 micropersonas distintas.
 4) Separar variáveis fixas vs exploráveis.
 5) Diagnóstico em 4 pontos.
-6) Gerar 5 ângulos — CADA UM para micropersona DIFERENTE, cada um explorando UMA variável diferente.
+6) Gerar 5 ângulos — CADA UM para micropersona DIFERENTE, cada um explorando UMA variável diferente, cada um com angulo_copy e nivel_consciencia_alvo distintos quando possível.
+${ensureAnguloCopyDiversityHint()}
 
 ---
 
@@ -220,7 +236,9 @@ Responda APENAS com JSON válido. Sem markdown. Sem texto antes ou depois. Sem c
       "tipo": "Previsibilidade" | "Escala" | "Orgânico",
       "micropersona": { "nome": "string", "papel_temido": "string" },
       "variavel_explorada": "string",
-      "nivel_schwartz": "string",
+      "angulo_copy": "direto" | "historia" | "problema_solucao" | "contrario" | "curiosidade" | "novo_mecanismo" | "autoridade_prova",
+      "nivel_consciencia_alvo": 1 | 2 | 3 | 4 | 5,
+      "nivel_schwartz": "string — resumo textual do nível (ex: '3 — consciente da solução')",
       "nivel_conspiracao": "sem" | "leve" | "forte",
       "hook": "string — máx 2 frases, linguagem da micropersona",
       "estrutura": [
@@ -283,6 +301,11 @@ recomendacao_formato — OBRIGATÓRIO em cada ângulo:
 - requer_midia_usuario DEVE ser true quando estilo_producao for clipes_texto ou ugc_avatar com produto em cena.
 - Se CONTEXTO DO PROJETO indicar formatos não testados, priorize diversidade quando coerente com o ângulo.
 
+CONGRUÊNCIA COM A OFERTA (inviolável)
+- Quando houver bloco OFERTA CANÔNICA no contexto, TODOS os claims, números, mecanismo e CTA dos ângulos DEVEM vir dessa oferta — nunca de referências externas.
+- Transcrições de referência e combos servem APENAS para ritmo, estrutura, formato visual e tipo de ângulo — nunca copie literal promessas de outro nicho ou produto.
+- Se uma referência citar glicemia, emagrecimento ou outro nicho diferente da oferta, adapte a ESTRUTURA mantendo o vocabulário e mecanismo da URL.
+
 Sempre EXATAMENTE 5 ângulos, cada um para micropersona diferente. Português do Brasil.`;
 
 export const gerarAngulos = createServerFn({ method: "POST" })
@@ -298,14 +321,29 @@ export const gerarAngulos = createServerFn({ method: "POST" })
       direto: "Direto e agressivo",
       empatico: "Empático e suave",
       autoritativo: "Autoritativo e técnico",
+      urgente: "Urgente e persuasivo (sem escassez falsa)",
     }[data.tomCalibracao];
 
+    const schwartzGoal = goalToSchwartzRange(data.goal ?? "conv");
+
     let projectContextBlock = "";
+    let offerSnapshot = null;
+    try {
+      offerSnapshot = await buildOfferSnapshot(data.url, apiKey);
+      projectContextBlock += `\n\n${formatOfferSnapshotBlock(offerSnapshot)}`;
+    } catch {
+      /* URL inacessível — gerador usa web_search */
+    }
+
     if (data.projectId) {
-      const [formatCtx, perfCtx] = await Promise.all([
+      const [formatCtx, generalIntel, perfCtx] = await Promise.all([
         getProjectFormatContext(context.supabase, data.projectId),
+        getProjectGeneralIntelText(context.supabase, data.projectId),
         getProjectPerformanceContext(context.supabase, data.projectId),
       ]);
+      if (generalIntel) {
+        projectContextBlock += `\n\nCONTEXTO DE INTELIGÊNCIA GERAL (transcrições de referência):\n${generalIntel}`;
+      }
       if (formatCtx) {
         projectContextBlock += `\n\nCONTEXTO DO PROJETO (diversidade de leilão):\n${formatCtx.summaryText}`;
       }
@@ -317,6 +355,8 @@ export const gerarAngulos = createServerFn({ method: "POST" })
     const userMsg = `URL analisada: ${data.url}
 Tipo de produto: ${data.productType}
 Objetivo da campanha: ${data.goal}
+Faixa Schwartz recomendada para este objetivo: níveis ${schwartzGoal.min}–${schwartzGoal.max}
+${schwartzGoal.hint}
 Contexto adicional: ${data.context || "(nenhum)"}
 Pergunta cirúrgica feita: ${data.perguntaCirurgica || "(não feita)"}
 Resposta do usuário à pergunta cirúrgica: ${data.respostaCirurgica || "(não respondida)"}
@@ -365,7 +405,27 @@ Execute o processo completo: visite a URL com web_search, pesquise o que escala 
     }
     const normalized: ResultadoAngulos = {
       ...parsed.data,
-      angulos: parsed.data.angulos.map((a) => normalizeAngulo(a)),
+      angulos: await Promise.all(
+        parsed.data.angulos.map(async (a) => {
+          const angulo = normalizeAngulo(a);
+          if (!offerSnapshot) return angulo;
+          const congruence = await checkOfferCongruence({
+            offerSnapshot,
+            hook: angulo.hook,
+            cta: angulo.cta,
+            roteiroResumo: angulo.estrutura.map((b) => b.conteudo).join(" ").slice(0, 1500),
+            apiKey: undefined,
+          });
+          return {
+            ...angulo,
+            congruencia_oferta: {
+              score: congruence.score,
+              alinhado: congruence.alinhado,
+              divergencias: congruence.divergencias,
+            },
+          };
+        }),
+      ),
     };
     trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: true });
     return normalized;
@@ -378,12 +438,28 @@ export const refinarBloco = createServerFn({ method: "POST" })
       conteudoAtual: z.string().max(5000),
       instrucao: z.string().min(1).max(4000),
       tempo: z.string().max(64),
-      tomCalibracao: z.enum(["direto", "empatico", "autoritativo"]).optional(),
+      tomCalibracao: TomCalibracaoSchema.optional(),
+      projectId: z.string().uuid().optional(),
+      offerUrl: HttpUrlSchema.optional(),
     }),
   )
   .handler(async ({ data, context }) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
+
+    const generalIntel = data.projectId
+      ? await getProjectGeneralIntelText(context.supabase, data.projectId)
+      : null;
+
+    let offerBlock: string | null = null;
+    if (data.offerUrl) {
+      try {
+        const snap = await buildOfferSnapshot(data.offerUrl, apiKey);
+        offerBlock = formatOfferSnapshotBlock(snap);
+      } catch {
+        /* ignore */
+      }
+    }
 
     try {
       const conteudo = await refineBlockWithAI(
@@ -392,6 +468,8 @@ export const refinarBloco = createServerFn({ method: "POST" })
         data.instrucao,
         data.tempo,
         data.tomCalibracao ?? "direto",
+        generalIntel,
+        offerBlock,
       );
       trackApiUsage({ userId: context.userId, eventType: "refinar_bloco", success: true });
       return { conteudo };

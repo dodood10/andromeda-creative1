@@ -3,7 +3,9 @@ import type { Database } from "@/integrations/supabase/types";
 import type { EstiloProducao, FormatoSaida } from "./types/enums";
 import { parseNumericMetric } from "./meta-csv-parser";
 import {
+  computeConversionCalibration,
   formatCalibrationBiasInstruction,
+  formatConversionContextBlock,
   loadProjectIntelSettings,
   refreshProjectCalibration,
 } from "./sinais-calibration";
@@ -29,6 +31,7 @@ export type ProjectPerformanceContext = {
     formato: FormatoSaida | string;
     estilo: EstiloProducao | string;
     metrics: ChampionMetric[];
+    source?: "andromeda" | "importado";
   }>;
   failedPatterns: Array<{ estilo: string; count: number; performando: number }>;
   variationFailures: Array<{ variacaoId: string; count: number }>;
@@ -45,9 +48,14 @@ export type ChampionPerformanceContext = {
   summaryText: string;
 };
 
-function normalizeAnguloBase(angulo: string): string {
+export function normalizeAnguloBase(angulo: string): string {
   return angulo.split(" · ")[0]?.trim() ?? angulo;
 }
+
+export type PerformanceContextOptions = {
+  /** Quando true (padrão), só campeões e padrões validados pela equipe entram no prompt. */
+  approvedOnly?: boolean;
+};
 
 function parseMetricValue(valor: string | null): string {
   if (!valor) return "—";
@@ -77,7 +85,7 @@ async function fetchMetricsBundle(
   const { data: criativos } = await supabase
     .from("criativos")
     .select(
-      "id, angulo, formato_saida, estilo_producao, status, performando_intel_status, angulo_json",
+      "id, angulo, formato_saida, estilo_producao, status, performando_intel_status, angulo_json, source",
     )
     .eq("project_id", projectId);
 
@@ -186,7 +194,9 @@ export function pickBestPerformandoCriativoId(
   }>,
   metricsByCriativo: Map<string, ChampionMetric[]>,
 ): string | null {
-  const performando = criativos.filter((c) => c.status === "Performando");
+  const performando = criativos.filter(
+    (c) => c.status === "Performando" && c.performando_intel_status === "approved",
+  );
   if (!performando.length) return null;
 
   const score = (id: string) => {
@@ -206,21 +216,32 @@ export function pickBestPerformandoCriativoId(
   return ranked[0]?.id ?? null;
 }
 
+function isApprovedChampion(c: { status: string; performando_intel_status: string | null }): boolean {
+  return c.status === "Performando" && c.performando_intel_status === "approved";
+}
+
 export async function getProjectPerformanceContext(
   supabase: SupabaseClient<Database>,
   projectId: string,
+  options: PerformanceContextOptions = {},
 ): Promise<ProjectPerformanceContext | null> {
+  const approvedOnly = options.approvedOnly !== false;
+  const intelSettings = await loadProjectIntelSettings(supabase, projectId);
   const { criativos, metricsByCriativo } = await fetchMetricsBundle(supabase, projectId);
+
   if (criativos.length === 0) return null;
 
   const champions = criativos
-    .filter((c) => c.status === "Performando")
+    .filter((c) =>
+      approvedOnly ? isApprovedChampion(c) : c.status === "Performando",
+    )
     .map((c) => ({
       criativoId: c.id,
       angulo: normalizeAnguloBase(c.angulo),
       formato: c.formato_saida ?? "—",
       estilo: c.estilo_producao ?? "—",
       metrics: metricsByCriativo.get(c.id) ?? [],
+      source: (c as { source?: "andromeda" | "importado" }).source ?? "andromeda",
     }))
     .slice(0, 5);
 
@@ -229,7 +250,10 @@ export async function getProjectPerformanceContext(
     const estilo = c.estilo_producao ?? "desconhecido";
     const stat = estiloStats.get(estilo) ?? { count: 0, performando: 0 };
     stat.count++;
-    if (c.status === "Performando") stat.performando++;
+    const countsAsPerformando = approvedOnly
+      ? isApprovedChampion(c)
+      : c.status === "Performando";
+    if (countsAsPerformando) stat.performando++;
     estiloStats.set(estilo, stat);
   }
 
@@ -269,7 +293,6 @@ export async function getProjectPerformanceContext(
     if (mp && !recentAnguloNames.includes(mp)) recentAnguloNames.push(mp);
   }
 
-  const intelSettings = await loadProjectIntelSettings(supabase, projectId);
   const calibrationBias = formatCalibrationBiasInstruction(intelSettings);
 
   const lines: string[] = [];
@@ -281,9 +304,17 @@ export async function getProjectPerformanceContext(
   if (champions.length > 0) {
     const champLines = champions.slice(0, 3).map((c) => {
       const m = formatMetricsLine(c.metrics);
-      return `- Campeão "${c.angulo}" (${c.formato}/${c.estilo})${m ? `: ${m}` : " (sem métricas reportadas ainda)"}`;
+      const label = c.source === "importado" ? "Campeão importado" : "Campeão";
+      return `- ${label} "${c.angulo}" (${c.formato}/${c.estilo})${m ? `: ${m}` : " (sem métricas reportadas ainda)"}`;
     });
-    lines.push("PERFORMANCE REAL DO PROJETO (Meta Ads / CSV / reportes):", ...champLines);
+    lines.push("PERFORMANCE REAL DO PROJETO (Meta Ads / CSV / importações / reportes):", ...champLines);
+
+    const conversionComputed = computeConversionCalibration(champions.map((c) => c.metrics));
+    const conversionBlock = formatConversionContextBlock({
+      ...intelSettings,
+      ...(conversionComputed ?? {}),
+    });
+    if (conversionBlock) lines.push(conversionBlock);
   }
 
   if (sinaisCalibration.length > 0) {
@@ -322,8 +353,13 @@ export async function getProjectPerformanceContext(
 
   if (lines.length === 0) return null;
 
-  if (sinaisCalibration.length > 0) {
-    await refreshProjectCalibration(supabase, projectId, sinaisCalibration).catch(() => {
+  if (sinaisCalibration.length > 0 || champions.length > 0) {
+    await refreshProjectCalibration(
+      supabase,
+      projectId,
+      sinaisCalibration,
+      champions.map((c) => c.metrics),
+    ).catch(() => {
       /* coluna intel_settings pode não existir em dev sem migration */
     });
   }

@@ -24,6 +24,31 @@ export const SaturacaoHookStatusSchema = z.enum(["saturado", "neutro", "sub_expl
 export const JanelaRelevanciaTipoSchema = z.enum(["atemporal", "media", "curta"]);
 export const SofisticacaoMercadoSchema = z.enum(["novo", "intermediario", "sofisticado"]);
 
+/** Tipos de ângulo de copy (estratégia de abordagem — distinto de tipo Previsibilidade/Escala). */
+export const AnguloCopyTipoSchema = z.enum([
+  "direto",
+  "historia",
+  "problema_solucao",
+  "contrario",
+  "curiosidade",
+  "novo_mecanismo",
+  "autoridade_prova",
+]);
+
+export const NivelConscienciaAlvoSchema = z.union([
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+  z.literal(4),
+  z.literal(5),
+]);
+
+export const TomCalibracaoSchema = z.enum(["direto", "empatico", "autoritativo", "urgente"]);
+
+export type AnguloCopyTipo = z.infer<typeof AnguloCopyTipoSchema>;
+export type NivelConscienciaAlvo = z.infer<typeof NivelConscienciaAlvoSchema>;
+export type TomCalibracao = z.infer<typeof TomCalibracaoSchema>;
+
 export type IntelReviewStatus = Database["public"]["Enums"]["intel_review_status"];
 export type AdminReviewVerdict = Database["public"]["Enums"]["admin_review_verdict"];
 

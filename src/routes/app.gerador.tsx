@@ -22,19 +22,30 @@ import {
   gerarPerguntaCirurgica,
   type ResultadoAngulos,
 } from "@/lib/anthropic.functions";
-import { saveGeracao, createCriativoDraft, getGeracaoResultado, getInteligenciaNicho, fetchProjectFormatContext, getGeradorEtaEstimates } from "@/lib/criativos.functions";
+import { saveGeracao, createCriativoDraft, getGeracaoResultado, getInteligenciaNicho, getChampionsForRanking, fetchProjectFormatContext, getGeradorEtaEstimates } from "@/lib/criativos.functions";
 import { getPlanUsage } from "@/lib/plan.functions";
 import { GeradorStepper } from "@/components/gerador-stepper";
 import { UpgradeBanner } from "@/components/upgrade-banner";
 import { Switch } from "@/components/ui/switch";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   pickRecommendedAngulos,
   pickAbTestPackage,
+  pickFunnelSchwartzPackage,
   formatAnthropicError,
   angleIntelBadge,
+  explainAnguloRank,
   buildAbTestFormatoMap,
   runWithConcurrency,
+  type ChampionRankingContext,
 } from "@/lib/gerador-helpers";
+import { ANGULO_COPY_LABELS, NIVEL_CONSCIENCIA_LABELS } from "@/lib/schwartz-angulo";
+import type { TomCalibracao } from "@/lib/types/enums";
 import { searchPexelsMedia, downloadPexelsToStorage } from "@/lib/stock-media.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
 import {
@@ -42,7 +53,7 @@ import {
   trackMetaRascunhoCriado,
   trackMetaAddToCart,
 } from "@/lib/meta-pixel";
-import { validateHttpUrl } from "@/lib/security-url";
+import { validateHttpUrl, HttpUrlSchema } from "@/lib/security-url";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { useNavigate } from "@tanstack/react-router";
@@ -154,7 +165,7 @@ function Gerador() {
   const [productType, setProductType] = useState("info");
   const [goal, setGoal] = useState("conv");
   const [context, setContext] = useState("");
-  const [tomCalibracao, setTomCalibracao] = useState<"direto" | "empatico" | "autoritativo">("direto");
+  const [tomCalibracao, setTomCalibracao] = useState<TomCalibracao>("direto");
 
   const [etapa, setEtapa] = useState<Etapa>("input");
   const [pergunta, setPergunta] = useState<{ pergunta: string; justificativa: string } | null>(null);
@@ -191,6 +202,7 @@ function Gerador() {
   const { user } = useAuth();
 
   const fetchIntel = useServerFn(getInteligenciaNicho);
+  const fetchChampions = useServerFn(getChampionsForRanking);
   const fetchFormatCtx = useServerFn(fetchProjectFormatContext);
   const fetchEta = useServerFn(getGeradorEtaEstimates);
   const runPexelsSearch = useServerFn(searchPexelsMedia);
@@ -229,6 +241,10 @@ function Gerador() {
     enabled: !!projectId && !!resultado,
     staleTime: 120_000,
   });
+
+  const championCtx: ChampionRankingContext | null = intelNicho?.championsForRanking?.length
+    ? { champions: intelNicho.championsForRanking }
+    : null;
 
   const { data: geracaoRestored, isLoading: loadingGeracao, isError: geracaoRestoreError } = useQuery({
     queryKey: ["geracao-resultado", geracaoId],
@@ -621,7 +637,18 @@ function Gerador() {
     gId: string,
   ): Promise<boolean> {
     if (!organizationId || !projectId) return false;
-    const [idx] = pickRecommendedAngulos(angulosData, 1);
+
+    let draftChampionCtx = championCtx;
+    if (!draftChampionCtx?.champions.length) {
+      try {
+        const { champions } = await fetchChampions({ data: { projectId } });
+        if (champions.length) draftChampionCtx = { champions };
+      } catch {
+        /* segue sem campeões */
+      }
+    }
+
+    const [idx] = pickRecommendedAngulos(angulosData, 1, draftChampionCtx);
     const fmtMap = initFormatoPorAngulo([idx], "criativo_curto");
     const fmt = fmtMap[idx];
     if (!fmt) return false;
@@ -971,10 +998,11 @@ function Gerador() {
                 <SelectItem value="direto">Direto e agressivo</SelectItem>
                 <SelectItem value="empatico">Empático e suave</SelectItem>
                 <SelectItem value="autoritativo">Autoritativo e técnico</SelectItem>
+                <SelectItem value="urgente">Urgente e persuasivo</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground mt-1">
-              Aplicado bloco a bloco: hook usa linguagem da micropersona, mecanismo é sempre técnico, CTA sempre direto.
+              Aplicado bloco a bloco: hook usa linguagem da micropersona; urgente só em dor/CTA (sem escassez falsa).
             </p>
           </div>
         </div>
@@ -1093,6 +1121,15 @@ function Gerador() {
                 </div>
               ))}
             </div>
+            {HttpUrlSchema.safeParse(url.trim()).success && (
+              <p className="text-xs text-muted-foreground mt-4 p-3 rounded-lg border border-border/40 bg-background/30">
+                URL informada: após criar rascunhos,{" "}
+                <Link to="/app/historico" className="text-primary-glow underline">
+                  abra o editor
+                </Link>{" "}
+                para <strong className="text-foreground">checar alinhamento hook ↔ landing</strong> antes de exportar.
+              </p>
+            )}
           </Card>
 
           <div>
@@ -1103,7 +1140,7 @@ function Gerador() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    const picks = pickRecommendedAngulos(resultado, 2);
+                    const picks = pickRecommendedAngulos(resultado, 2, championCtx);
                     setSelectedAngulos(new Set(picks));
                     toast.success("2 ângulos recomendados selecionados");
                   }}
@@ -1114,7 +1151,18 @@ function Gerador() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    const picks = pickAbTestPackage(resultado);
+                    const picks = pickFunnelSchwartzPackage(resultado);
+                    setSelectedAngulos(new Set(picks));
+                    toast.success("Pacote funil Schwartz: 1 ângulo por nível de consciência");
+                  }}
+                >
+                  <Target className="size-3.5 mr-1" /> Funil Schwartz
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const picks = pickAbTestPackage(resultado, championCtx);
                     setSelectedAngulos(new Set(picks));
                     const map = buildAbTestFormatoMap(resultado.angulos, picks, formatCtx ?? null);
                     const globalFmt = pendingFormato ?? urlFormato;
@@ -1156,11 +1204,48 @@ function Gerador() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-10" />
-                    <TableHead>Ângulo</TableHead>
-                    <TableHead>Hook</TableHead>
+                    <TableHead>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex items-center gap-1 cursor-help">
+                              Ângulo <HelpCircle className="size-3" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Nome do ângulo — rótulo interno do criativo.</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableHead>
+                    <TableHead>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex items-center gap-1 cursor-help">
+                              Hook <HelpCircle className="size-3" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Fisga nos primeiros 0–3s — frase que para o scroll.</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableHead>
                     <TableHead>Schwartz</TableHead>
+                    <TableHead>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex items-center gap-1 cursor-help">
+                              Ângulo copy <HelpCircle className="size-3" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Abordagem estratégica (direto, história, contrário…) — distinta do hook.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableHead>
                     <TableHead>Formato IA</TableHead>
                     <TableHead>Saturação</TableHead>
+                    <TableHead>Congruência</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1175,7 +1260,15 @@ function Gerador() {
                         onClick={() => {
                           const next = new Set(selectedAngulos);
                           if (next.has(i)) next.delete(i);
-                          else next.add(i);
+                          else {
+                            next.add(i);
+                            const cong = a.congruencia_oferta;
+                            if (cong && cong.score < 50) {
+                              toast.warning(
+                                "Hook pode não bater com a oferta — revise antes de escalar",
+                              );
+                            }
+                          }
                           setSelectedAngulos(next);
                         }}
                       >
@@ -1187,6 +1280,12 @@ function Gerador() {
                               if (checked) {
                                 next.add(i);
                                 trackMetaAddToCart(a.nome);
+                                const cong = a.congruencia_oferta;
+                                if (cong && cong.score < 50) {
+                                  toast.warning(
+                                    "Hook pode não bater com a oferta — revise antes de escalar",
+                                  );
+                                }
                               } else next.delete(i);
                               setSelectedAngulos(next);
                             }}
@@ -1199,12 +1298,45 @@ function Gerador() {
                         </TableCell>
                         <TableCell className="text-sm">{a.nivel_schwartz}</TableCell>
                         <TableCell className="text-sm">
+                          {a.angulo_copy ? (
+                            <Badge variant="outline" className="text-[10px]">
+                              {ANGULO_COPY_LABELS[a.angulo_copy] ?? a.angulo_copy}
+                            </Badge>
+                          ) : (
+                            "—"
+                          )}
+                          {a.nivel_consciencia_alvo != null && (
+                            <span className="block text-[10px] text-muted-foreground mt-0.5">
+                              {NIVEL_CONSCIENCIA_LABELS[a.nivel_consciencia_alvo]}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm">
                           {rec ? formatoBadgeLabel(overrideFromRecomendacao(rec), rec.duracao_alvo_seg) : "—"}
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={`${sat.color} text-[10px]`}>
                             <SatIcon className="size-3 mr-1" /> {sat.label}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {a.congruencia_oferta ? (
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] ${
+                                a.congruencia_oferta.score >= 70
+                                  ? "border-success/40 text-success"
+                                  : a.congruencia_oferta.score >= 50
+                                    ? "border-warning/40 text-warning"
+                                    : "border-destructive/40 text-destructive"
+                              }`}
+                              title={a.congruencia_oferta.divergencias.join(" · ") || undefined}
+                            >
+                              {a.congruencia_oferta.score}%
+                            </Badge>
+                          ) : (
+                            "—"
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -1220,9 +1352,16 @@ function Gerador() {
                 const fmtBadge = rec
                   ? formatoBadgeLabel(overrideFromRecomendacao(rec), rec.duracao_alvo_seg)
                   : null;
-                const intelBadge = intelNicho?.topAngulos
-                  ? angleIntelBadge(a.nome, intelNicho.topAngulos)
-                  : null;
+                const rankBadges =
+                  championCtx?.champions.length
+                    ? explainAnguloRank(a, championCtx.champions)
+                    : [];
+                const intelBadge = rankBadges.length
+                  ? rankBadges[0]
+                  : intelNicho?.topAngulos
+                    ? angleIntelBadge(a.nome, intelNicho.topAngulos)
+                    : null;
+                const extraBadges = rankBadges.slice(1);
                 return (
                   <AccordionItem key={i} value={`a${i}`} className="glass bg-gradient-card rounded-xl border-0 overflow-hidden">
                     <div className="flex items-center gap-3 px-5 pt-4">
@@ -1251,6 +1390,15 @@ function Gerador() {
                               {intelBadge}
                             </Badge>
                           )}
+                          {extraBadges.map((badge) => (
+                            <Badge
+                              key={badge}
+                              variant="outline"
+                              className="mt-1 ml-1 text-[10px] bg-primary/10 border-primary/30"
+                            >
+                              {badge}
+                            </Badge>
+                          ))}
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                           {fmtBadge && (

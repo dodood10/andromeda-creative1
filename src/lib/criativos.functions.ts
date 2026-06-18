@@ -8,6 +8,7 @@ import { normalizeAngulo, getProjectFormatContext } from "./formato-recomendacao
 import {
   getChampionPerformanceContext,
   getProjectPerformanceContext,
+  normalizeAnguloBase,
   pickBestPerformandoCriativoId,
   type ChampionMetric,
 } from "./project-performance-context";
@@ -16,14 +17,37 @@ import { refreshProjectCalibration, loadProjectIntelSettings } from "./sinais-ca
 import {
   parseMetaAdsCsv,
   csvRowIndicatesStrongPerformance,
+  parseNumericMetric,
 } from "./meta-csv-parser";
 import type { AppLink } from "./app-links";
 import { buildVslRoteiroFromAngulo } from "./vsl-roteiro";
 import { generateVslFromAngulo } from "./vsl.functions";
 import { gerarVariacoesEscala } from "./escala.functions";
+import { loadNicheDailyInsights } from "./niche-intel.functions";
 import { trackApiUsage } from "./api-usage";
 import { HttpUrlSchema } from "./security-url";
 import { assertUserOwnedMediaPath } from "./security-storage";
+import { assertCanImportCampeoes } from "./plan-enforcement";
+import { executeImportCriativoCampeao } from "./import-creative.functions";
+import {
+  appendProjectReferenceTranscription,
+  appendProjectReferenceTranscriptionsBatch,
+  getProjectGeneralIntelText,
+  removeProjectReferenceTranscription,
+  saveProjectReferenceCombo,
+} from "./project-reference-intel";
+import { analyzeReferenceTranscription } from "./reference-transcription-analyze";
+import { TomCalibracaoSchema } from "./types/enums";
+import { championFromCriativoRow, type ChampionForRanking } from "./champion-angle-ranking";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/integrations/supabase/types";
+import type { ProjectPerformanceContext } from "./project-performance-context";
+import {
+  computeQueuePriorityScore,
+  hasWhisperTranscriptionFromAnguloJson,
+  priorityHintForUser,
+  priorityLabelFromScore,
+} from "./intel-queue-priority";
 import {
   CriativoStatusSchema,
   type CriativoStatus,
@@ -39,6 +63,40 @@ import type { Enums } from "@/integrations/supabase/types";
 type ResultadoTipo = Enums<"resultado_tipo">;
 
 export type { CriativoRow } from "./types/criativo-json";
+
+async function buildChampionsForRanking(
+  supabase: SupabaseClient<Database>,
+  projectId: string,
+): Promise<ChampionForRanking[]> {
+  const projPerf = await getProjectPerformanceContext(supabase, projectId, { approvedOnly: true });
+  if (!projPerf?.champions.length) return [];
+  const approvedChampionIds = new Set(projPerf.champions.map((c) => c.criativoId));
+  const { data: criativos } = await supabase
+    .from("criativos")
+    .select("id, angulo, formato_saida, estilo_producao, angulo_json")
+    .eq("project_id", projectId)
+    .in("id", [...approvedChampionIds]);
+  return (criativos ?? [])
+    .filter((c) => approvedChampionIds.has(c.id))
+    .map((c) => championFromCriativoRow(c));
+}
+
+async function syncProjectCalibration(
+  supabase: SupabaseClient<Database>,
+  projectId: string,
+  perf: ProjectPerformanceContext | null,
+): Promise<void> {
+  if (!perf) return;
+  const hasHook = perf.sinaisCalibration.length > 0;
+  const hasConversion = perf.champions.some((c) => c.metrics.length > 0);
+  if (!hasHook && !hasConversion) return;
+  await refreshProjectCalibration(
+    supabase,
+    projectId,
+    perf.sinaisCalibration,
+    perf.champions.map((c) => c.metrics),
+  );
+}
 
 const ProjectScopeSchema = z.object({
   projectId: z.string().uuid(),
@@ -263,7 +321,7 @@ const CreateDraftSchema = z.object({
   backgroundMediaPath: z.string().optional(),
   projectId: z.string().uuid(),
   organizationId: z.string().uuid(),
-  tomCalibracao: z.enum(["direto", "empatico", "autoritativo"]).optional().default("direto"),
+  tomCalibracao: TomCalibracaoSchema.optional().default("direto"),
 });
 
 export const createCriativoDraft = createServerFn({ method: "POST" })
@@ -758,50 +816,63 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
 
+    const { data: project } = await supabase
+      .from("projects")
+      .select("nicho")
+      .eq("id", data.projectId)
+      .maybeSingle();
+
     const { data: criativos, error: cErr } = await supabase
       .from("criativos")
-      .select("id, angulo, status, formato_saida, angulo_json, export_status, performando_intel_status")
+      .select(
+        "id, angulo, status, formato_saida, estilo_producao, angulo_json, export_status, performando_intel_status, source",
+      )
       .eq("project_id", data.projectId);
 
     if (cErr) throw new Error(cErr.message);
 
-    const { data: resultadosRaw, error: rErr } = await supabase
-      .from("resultados_reportados")
-      .select("*, criativos(id, angulo, project_id)")
-      .order("created_at", { ascending: false })
-      .limit(100);
+    const criativoIds = (criativos ?? []).map((c) => c.id);
+    const { data: resultadosRaw, error: rErr } = criativoIds.length
+      ? await supabase
+          .from("resultados_reportados")
+          .select("*, criativos(id, angulo, project_id)")
+          .in("criativo_id", criativoIds)
+          .order("created_at", { ascending: false })
+          .limit(200)
+      : { data: [], error: null };
 
     if (rErr) throw new Error(rErr.message);
 
-    const resultados = (resultadosRaw ?? []).filter((r) => {
-      const c = r.criativos as { project_id?: string } | null;
-      if (c?.project_id !== data.projectId) return false;
+    const resultadosAprovados = (resultadosRaw ?? []).filter((r) => {
       if (r.intel_review_status === "approved") return true;
       return !!(r.observacao?.includes("Import CSV") && r.intel_review_status === "pending");
     });
 
-    const resultadosPendentes = (resultadosRaw ?? []).filter((r) => {
-      const c = r.criativos as { project_id?: string } | null;
-      return (
-        c?.project_id === data.projectId &&
+    const resultadosPendentes = (resultadosRaw ?? []).filter(
+      (r) =>
         r.intel_review_status === "pending" &&
-        !r.observacao?.includes("Import CSV")
-      );
-    }).length;
+        !r.observacao?.includes("Import CSV"),
+    ).length;
 
     const performando = (criativos ?? []).filter((c) => c.status === "Performando");
     const performandoValidados = performando.filter(
       (c) => c.performando_intel_status === "approved",
     );
-    const performandoPendentes = (criativos ?? []).filter(
-      (c) => c.status === "Performando" && c.performando_intel_status === "pending",
+    const performandoPendentes = performando.filter(
+      (c) => c.performando_intel_status === "pending",
     ).length;
     const rodando = (criativos ?? []).filter((c) => c.status === "Rodando");
     const exportados = (criativos ?? []).filter((c) => c.export_status === "pronto");
+    const importados = (criativos ?? []).filter((c) => c.source === "importado");
 
-    const hookRates: number[] = [];
+    const hookRatesEstimados: number[] = [];
+    const hookRatesReais: number[] = [];
     const feedbackCounts = { baixo: 0, medio: 0, alto: 0 };
     const anguloPerformance: Record<string, { performando: number; total: number }> = {};
+    const estiloApproved: Record<string, number> = {};
+
+    let importComTranscricao = 0;
+    let importParcial = 0;
 
     for (const c of criativos ?? []) {
       const aj = c.angulo_json as {
@@ -809,28 +880,57 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
           hook_rate_estimado?: string;
           feedback_negativo_esperado?: string;
         };
+        export_transcricao?: { source?: string };
+        importado?: boolean;
       } | null;
       const sinais = aj?.sinais_andromeda;
       if (sinais?.hook_rate_estimado) {
         const nums = sinais.hook_rate_estimado.match(/\d+/g)?.map(Number) ?? [];
-        if (nums.length) hookRates.push(nums.length > 1 ? (nums[0] + nums[1]) / 2 : nums[0]);
+        if (nums.length) {
+          hookRatesEstimados.push(nums.length > 1 ? (nums[0] + nums[1]) / 2 : nums[0]);
+        }
       }
       const fb = sinais?.feedback_negativo_esperado?.toLowerCase();
       if (fb === "baixo" || fb === "medio" || fb === "médio" || fb === "alto") {
         const key = fb === "médio" ? "medio" : fb;
         feedbackCounts[key as keyof typeof feedbackCounts]++;
       }
-      if (!anguloPerformance[c.angulo]) anguloPerformance[c.angulo] = { performando: 0, total: 0 };
-      anguloPerformance[c.angulo].total++;
-      if (c.status === "Performando") {
-        anguloPerformance[c.angulo].performando++;
+
+      const base = normalizeAnguloBase(c.angulo);
+      if (!anguloPerformance[base]) anguloPerformance[base] = { performando: 0, total: 0 };
+      anguloPerformance[base].total++;
+      if (c.status === "Performando" && c.performando_intel_status === "approved") {
+        anguloPerformance[base].performando++;
+      }
+
+      if (
+        c.status === "Performando" &&
+        c.performando_intel_status === "approved" &&
+        c.estilo_producao
+      ) {
+        estiloApproved[c.estilo_producao] = (estiloApproved[c.estilo_producao] ?? 0) + 1;
+      }
+
+      if (c.source === "importado") {
+        const txSource = aj?.export_transcricao?.source;
+        if (txSource === "whisper" || txSource === "paste") importComTranscricao++;
+        else importParcial++;
       }
     }
 
-    const projPerf = await getProjectPerformanceContext(supabase, data.projectId);
+    for (const r of resultadosAprovados) {
+      if (r.metrica === "hook_rate" && r.valor) {
+        const n = parseNumericMetric(r.valor);
+        if (n != null) hookRatesReais.push(n);
+      }
+    }
+
+    const projPerf = await getProjectPerformanceContext(supabase, data.projectId, {
+      approvedOnly: true,
+    });
 
     const metricsByCriativoIntel = new Map<string, ChampionMetric[]>();
-    for (const r of resultados ?? []) {
+    for (const r of resultadosAprovados) {
       if (!r.criativo_id || !r.metrica) continue;
       const list = metricsByCriativoIntel.get(r.criativo_id) ?? [];
       if (!list.some((x) => x.metrica === r.metrica)) {
@@ -844,12 +944,15 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
       }
     }
 
-    const firstPerformandoCriativoId =
-      pickBestPerformandoCriativoId(criativos ?? [], metricsByCriativoIntel) ??
-      performando[0]?.id ??
-      null;
+    const firstPerformandoCriativoId = pickBestPerformandoCriativoId(
+      criativos ?? [],
+      metricsByCriativoIntel,
+    );
+
+    const championsForRanking = await buildChampionsForRanking(supabase, data.projectId);
+
     const metricasAgg: Record<string, string[]> = {};
-    for (const r of resultados ?? []) {
+    for (const r of resultadosAprovados) {
       if (r.metrica && r.valor) {
         const list = metricasAgg[r.metrica] ?? [];
         list.push(r.valor);
@@ -864,21 +967,89 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
       .map(([angulo, v]) => ({ angulo, performando: v.performando, total: v.total }));
 
     const formatos = [...new Set((criativos ?? []).map((c) => c.formato_saida).filter(Boolean))];
-
     const intelSettings = await loadProjectIntelSettings(supabase, data.projectId);
+
+    const rodandoSemMetrica = rodando.filter(
+      (c) => !metricsByCriativoIntel.has(c.id),
+    ).length;
+
+    const nextAction = (() => {
+      if (performandoPendentes > 0) {
+        return {
+          label: `${performandoPendentes} Performando aguardando validação da equipe`,
+          description:
+            "Claims não validados não entram no gerador. A equipe Andromeda revisa para proteger a inteligência do projeto.",
+          to: "/app/historico" as const,
+          search: { status: "Performando" as const },
+        };
+      }
+      if (resultadosPendentes > 0) {
+        return {
+          label: `${resultadosPendentes} métrica(s) aguardando validação`,
+          description: "Somente métricas aprovadas pela equipe alimentam calibração e geração.",
+          to: "/app/historico" as const,
+        };
+      }
+      if (rodandoSemMetrica > 0) {
+        return {
+          label: `Reportar métricas de ${rodandoSemMetrica} criativo(s) rodando`,
+          description: "CPA, ROAS e hook rate validados melhoram a calibração do projeto.",
+          to: "/app/historico" as const,
+          search: { status: "Rodando" as const },
+        };
+      }
+      if (firstPerformandoCriativoId) {
+        return {
+          label: "Escalar campeão validado",
+          description: "Use variações de escala a partir do criativo com melhor performance aprovada.",
+          to: "/app/escala" as const,
+          search: { criativoId: firstPerformandoCriativoId },
+        };
+      }
+      if ((criativos?.length ?? 0) === 0) {
+        return {
+          label: "Importar campeões ou gerar ângulos",
+          description: "Comece alimentando a inteligência com dados reais do projeto.",
+          to: "/app/gerador" as const,
+        };
+      }
+      return {
+        label: "Gerar novos ângulos diversificados",
+        description: "A IA evita micropersonas já testadas e formatos que falharam no projeto.",
+        to: "/app/gerador" as const,
+      };
+    })();
+
+    let nicheInsights: Awaited<ReturnType<typeof loadNicheDailyInsights>> | null = null;
+    if (project?.nicho?.trim()) {
+      nicheInsights = await loadNicheDailyInsights(supabase, project.nicho.trim());
+    }
+
+    const [generalContextPreview, performanceContextPreview] = await Promise.all([
+      getProjectGeneralIntelText(supabase, data.projectId),
+      getProjectPerformanceContext(supabase, data.projectId, { approvedOnly: true }).then(
+        (ctx) => ctx?.summaryText ?? null,
+      ),
+    ]);
 
     return {
       resumo: {
         total: criativos?.length ?? 0,
+        importados: importados.length,
+        geradosNaPlataforma: (criativos?.length ?? 0) - importados.length,
         performando: performando.length,
         performandoValidados: performandoValidados.length,
         rodando: rodando.length,
         exportados: exportados.length,
-        resultadosReportados: resultados?.length ?? 0,
+        resultadosReportados: resultadosAprovados.length,
         resultadosPendentes,
         performandoPendentes,
-        hookRateMedio: hookRates.length
-          ? Math.round(hookRates.reduce((a, b) => a + b, 0) / hookRates.length)
+        referenciasTranscricao: intelSettings?.reference_transcriptions?.length ?? 0,
+        hookRateMedioEstimado: hookRatesEstimados.length
+          ? Math.round(hookRatesEstimados.reduce((a, b) => a + b, 0) / hookRatesEstimados.length)
+          : null,
+        hookRateMedioReal: hookRatesReais.length
+          ? Math.round(hookRatesReais.reduce((a, b) => a + b, 0) / hookRatesReais.length)
           : null,
       },
       feedbackDistribuicao: feedbackCounts,
@@ -889,11 +1060,35 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         exemplos: valores.slice(0, 3),
       })),
       topAngulos,
+      championsForRanking,
+      estilosCampeoes: Object.entries(estiloApproved)
+        .sort((a, b) => b[1] - a[1])
+        .map(([estilo, count]) => ({ estilo, count })),
       firstPerformandoCriativoId,
       sinaisCalibration: projPerf?.sinaisCalibration ?? [],
       intelSettings,
       formatosTestados: formatos,
-      resultadosRecentes: (resultados ?? []).slice(0, 8).map((r) => ({
+      contextPreview: generalContextPreview,
+      performanceContextPreview,
+      referenceTranscriptions: (intelSettings?.reference_transcriptions ?? []).map((r) => ({
+        id: r.id,
+        preview: r.text.length > 160 ? `${r.text.slice(0, 160)}…` : r.text,
+        added_at: r.added_at,
+        charCount: r.text.length,
+        label: r.label,
+        analysis: r.analysis,
+      })),
+      referenceCombo: intelSettings?.reference_combo ?? null,
+      variationFailures: projPerf?.variationFailures ?? [],
+      failedPatterns: projPerf?.failedPatterns ?? [],
+      micropersonasEvitar: projPerf?.recentAnguloNames ?? [],
+      importQuality:
+        importados.length > 0
+          ? { total: importados.length, comTranscricao: importComTranscricao, parcial: importParcial }
+          : null,
+      nicheInsights: nicheInsights?.insights ?? [],
+      nicheInsightsCached: nicheInsights?.cached ?? false,
+      resultadosRecentes: resultadosAprovados.slice(0, 8).map((r) => ({
         angulo: (r.criativos as { angulo?: string })?.angulo ?? "—",
         tipo: r.tipo,
         metrica: r.metrica,
@@ -905,7 +1100,144 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         performando: performandoPendentes,
         resultados: resultadosPendentes,
       },
+      nextAction,
     };
+  });
+
+export const getIntelReviewStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(z.object({ projectId: z.string().uuid() }))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+
+    const { data: criativos } = await supabase
+      .from("criativos")
+      .select(
+        "id, angulo, produto, status, performando_intel_status, performando_intel_submitted_at, source, angulo_json",
+      )
+      .eq("project_id", data.projectId);
+
+    const criativoIds = (criativos ?? []).map((c) => c.id);
+    const { data: allResultados } = criativoIds.length
+      ? await supabase
+          .from("resultados_reportados")
+          .select("id, criativo_id, metrica, observacao, created_at, intel_review_status")
+          .in("criativo_id", criativoIds)
+      : { data: [] };
+
+    const resultadosRaw = (allResultados ?? []).filter((r) => r.intel_review_status === "pending");
+
+    const performandoPending = (criativos ?? []).filter(
+      (c) => c.status === "Performando" && c.performando_intel_status === "pending",
+    );
+    const resultadosPending = (resultadosRaw ?? []).filter(
+      (r) => !r.observacao?.includes("Import CSV"),
+    );
+
+    const pendingItems: Array<{
+      kind: "performando" | "resultado";
+      criativoId: string;
+      angulo: string;
+      produto: string;
+      submittedAt: string;
+      priorityScore: number;
+      priorityLabel: ReturnType<typeof priorityLabelFromScore>;
+      priorityHint: string;
+    }> = [];
+
+    const linkedByCriativo = new Map<string, { metrica?: string | null; observacao?: string | null }>();
+    for (const r of allResultados ?? []) {
+      if (!linkedByCriativo.has(r.criativo_id)) {
+        linkedByCriativo.set(r.criativo_id, { metrica: r.metrica, observacao: r.observacao });
+      }
+    }
+
+    for (const c of performandoPending) {
+      const linked = linkedByCriativo.get(c.id);
+      const score = computeQueuePriorityScore({
+        kind: "performando",
+        observacao: linked?.observacao,
+        metrica: linked?.metrica,
+        source: c.source,
+        hasWhisperTranscription: hasWhisperTranscriptionFromAnguloJson(c.angulo_json),
+      });
+      pendingItems.push({
+        kind: "performando",
+        criativoId: c.id,
+        angulo: c.angulo,
+        produto: c.produto,
+        submittedAt: c.performando_intel_submitted_at ?? "",
+        priorityScore: score,
+        priorityLabel: priorityLabelFromScore(score),
+        priorityHint: priorityHintForUser(score),
+      });
+    }
+
+    const criativoById = new Map((criativos ?? []).map((c) => [c.id, c]));
+    for (const r of resultadosPending) {
+      const c = criativoById.get(r.criativo_id);
+      const score = computeQueuePriorityScore({
+        kind: "resultado",
+        observacao: r.observacao,
+        metrica: r.metrica,
+        source: c?.source,
+        hasWhisperTranscription: hasWhisperTranscriptionFromAnguloJson(c?.angulo_json),
+      });
+      pendingItems.push({
+        kind: "resultado",
+        criativoId: r.criativo_id,
+        angulo: c?.angulo ?? "—",
+        produto: c?.produto ?? "—",
+        submittedAt: r.created_at,
+        priorityScore: score,
+        priorityLabel: priorityLabelFromScore(score),
+        priorityHint: priorityHintForUser(score),
+      });
+    }
+
+    pendingItems.sort((a, b) => {
+      if (b.priorityScore !== a.priorityScore) return b.priorityScore - a.priorityScore;
+      return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+    });
+
+    const totalPending = performandoPending.length + resultadosPending.length;
+
+    const priorityByCriativoId: Record<
+      string,
+      { priorityScore: number; priorityLabel: ReturnType<typeof priorityLabelFromScore>; priorityHint: string }
+    > = {};
+    for (const item of pendingItems) {
+      priorityByCriativoId[item.criativoId] = {
+        priorityScore: item.priorityScore,
+        priorityLabel: item.priorityLabel,
+        priorityHint: item.priorityHint,
+      };
+    }
+
+    return {
+      totalPending,
+      performandoPending: performandoPending.length,
+      resultadosPending: resultadosPending.length,
+      priorityByCriativoId,
+      estimateText:
+        totalPending > 0
+          ? "Validação geralmente em até 24h úteis. CSV do Meta com utm_content acelera a fila."
+          : null,
+      oldestPending: pendingItems.slice(0, 5),
+      accelerateTips: [
+        "Importe CSV do Ads Manager com coluna utm_content",
+        "Reporte hook rate, CPA ou ROAS junto com o claim Performando",
+        "Importe campeões com vídeo + transcrição automática",
+      ],
+    };
+  });
+
+export const getChampionsForRanking = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(z.object({ projectId: z.string().uuid() }))
+  .handler(async ({ data, context }) => {
+    const champions = await buildChampionsForRanking(context.supabase, data.projectId);
+    return { champions };
   });
 
 export const fetchChampionPerformance = createServerFn({ method: "POST" })
@@ -1026,9 +1358,7 @@ export const reportarResultado = createServerFn({ method: "POST" })
       .maybeSingle();
     if (criativo?.project_id && data.metrica) {
       const perf = await getProjectPerformanceContext(supabase, criativo.project_id);
-      if (perf?.sinaisCalibration.length) {
-        await refreshProjectCalibration(supabase, criativo.project_id, perf.sinaisCalibration);
-      }
+      await syncProjectCalibration(supabase, criativo.project_id, perf);
     }
 
     return { ok: true };
@@ -1109,9 +1439,7 @@ export const importMetricasCsv = createServerFn({ method: "POST" })
     }
 
     const perf = await getProjectPerformanceContext(supabase, data.projectId);
-    if (perf?.sinaisCalibration.length) {
-      await refreshProjectCalibration(supabase, data.projectId, perf.sinaisCalibration);
-    }
+    await syncProjectCalibration(supabase, data.projectId, perf);
 
     return {
       imported,
@@ -1119,6 +1447,212 @@ export const importMetricasCsv = createServerFn({ method: "POST" })
       autoApproved,
       performandoAuto,
     };
+  });
+
+const ImportMetricSchema = z.object({
+  metrica: z.string().min(1),
+  valor: z.string().min(1),
+});
+
+const ImportCampeaoItemSchema = z.object({
+  storagePath: z.string().min(1),
+  nomeAngulo: z.string().min(1).max(200),
+  metrics: z.array(ImportMetricSchema).optional().default([]),
+  formatoSaida: z.enum(["criativo_curto", "vsl_curta"]).optional(),
+  estiloProducao: z.enum(["texto_animado", "clipes_texto", "ugc_avatar"]).optional(),
+  aspectRatio: z.enum(["9:16", "4:5", "1:1"]).optional(),
+  notas: z.string().max(1000).optional(),
+  fileName: z.string().optional(),
+});
+
+export const importCriativoCampeao = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    ImportCampeaoItemSchema.extend({
+      projectId: z.string().uuid(),
+      organizationId: z.string().uuid(),
+      produto: z.string().optional(),
+    }),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    assertUserOwnedMediaPath(userId, data.storagePath);
+    await assertCanImportCampeoes(supabase, data.organizationId, 1);
+
+    const result = await executeImportCriativoCampeao({
+      supabase,
+      userId,
+      projectId: data.projectId,
+      organizationId: data.organizationId,
+      storagePath: data.storagePath,
+      nomeAngulo: data.nomeAngulo,
+      metrics: data.metrics,
+      formatoSaida: data.formatoSaida,
+      estiloProducao: data.estiloProducao,
+      aspectRatio: data.aspectRatio,
+      notas: data.notas,
+      fileName: data.fileName,
+      produto: data.produto,
+    });
+
+    const perf = await getProjectPerformanceContext(supabase, data.projectId);
+    await syncProjectCalibration(supabase, data.projectId, perf);
+
+    return result;
+  });
+
+export const importCriativosCampeoesLote = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    z.object({
+      projectId: z.string().uuid(),
+      organizationId: z.string().uuid(),
+      produto: z.string().optional(),
+      items: z.array(ImportCampeaoItemSchema).min(1).max(50),
+    }),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertCanImportCampeoes(supabase, data.organizationId, data.items.length);
+
+    const results: Array<{ criativoId: string; nomeAngulo: string; ok: boolean; error?: string }> = [];
+
+    for (const item of data.items) {
+      try {
+        assertUserOwnedMediaPath(userId, item.storagePath);
+        const result = await executeImportCriativoCampeao({
+          supabase,
+          userId,
+          projectId: data.projectId,
+          organizationId: data.organizationId,
+          storagePath: item.storagePath,
+          nomeAngulo: item.nomeAngulo,
+          metrics: item.metrics,
+          formatoSaida: item.formatoSaida,
+          estiloProducao: item.estiloProducao,
+          aspectRatio: item.aspectRatio,
+          notas: item.notas,
+          fileName: item.fileName,
+          produto: data.produto,
+        });
+        results.push({ criativoId: result.criativoId, nomeAngulo: item.nomeAngulo, ok: true });
+      } catch (e) {
+        results.push({
+          criativoId: "",
+          nomeAngulo: item.nomeAngulo,
+          ok: false,
+          error: e instanceof Error ? e.message : "Erro desconhecido",
+        });
+      }
+    }
+
+    const perf = await getProjectPerformanceContext(supabase, data.projectId);
+    await syncProjectCalibration(supabase, data.projectId, perf);
+
+    const imported = results.filter((r) => r.ok).length;
+    return { imported, total: data.items.length, results };
+  });
+
+const ReferenceTranscriptionSchema = z.object({
+  transcription: z.string().min(40).max(12000),
+  label: z.string().max(120).optional(),
+  skipAnalysis: z.boolean().optional(),
+});
+
+export const addProjectReferenceTranscription = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    ReferenceTranscriptionSchema.extend({
+      projectId: z.string().uuid(),
+    }),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const analysis =
+      data.skipAnalysis === true
+        ? undefined
+        : await analyzeReferenceTranscription({
+            apiKey: process.env.ANTHROPIC_API_KEY,
+            userId,
+            text: data.transcription.trim(),
+            label: data.label,
+          });
+    return appendProjectReferenceTranscription(supabase, data.projectId, data.transcription, {
+      label: data.label,
+      analysis,
+    });
+  });
+
+const ReferenceSnippetSchema = z.object({
+  text: z.string().min(40).max(12000),
+  label: z.string().max(120).optional(),
+});
+
+export const addProjectReferenceTranscriptionsBatchFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    z.object({
+      projectId: z.string().uuid(),
+      snippets: z.array(ReferenceSnippetSchema).min(1).max(8),
+      skipAnalysis: z.boolean().optional(),
+    }),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const withAnalysis = await Promise.all(
+      data.snippets.map(async (snippet) => {
+        const analysis =
+          data.skipAnalysis === true
+            ? undefined
+            : await analyzeReferenceTranscription({
+                apiKey,
+                userId: userId,
+                text: snippet.text.trim(),
+                label: snippet.label,
+              });
+        return { ...snippet, analysis };
+      }),
+    );
+    return appendProjectReferenceTranscriptionsBatch(supabase, data.projectId, withAnalysis);
+  });
+
+export const setProjectReferenceComboFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    z.object({
+      projectId: z.string().uuid(),
+      structureId: z.string().uuid().optional(),
+      formatoId: z.string().uuid().optional(),
+      anguloId: z.string().uuid().optional(),
+      clear: z.boolean().optional(),
+    }),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    if (data.clear) {
+      await saveProjectReferenceCombo(supabase, data.projectId, null);
+      return { ok: true };
+    }
+    await saveProjectReferenceCombo(supabase, data.projectId, {
+      structure_id: data.structureId,
+      formato_id: data.formatoId,
+      angulo_id: data.anguloId,
+    });
+    return { ok: true };
+  });
+
+export const removeProjectReferenceTranscriptionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    z.object({
+      projectId: z.string().uuid(),
+      transcriptionId: z.string().uuid(),
+    }),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    return removeProjectReferenceTranscription(supabase, data.projectId, data.transcriptionId);
   });
 
 export { ProjectScopeSchema };

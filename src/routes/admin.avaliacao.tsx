@@ -69,6 +69,7 @@ function AdminAvaliacao() {
   const [qualityScore, setQualityScore] = useState("3");
   const [adminNotes, setAdminNotes] = useState("");
   const [includeIntel, setIncludeIntel] = useState(false);
+  const [queuePriorityFilter, setQueuePriorityFilter] = useState<"all" | "alta">("alta");
 
   const queryClient = useQueryClient();
   const fetchQueue = useServerFn(listAdminAvaliacaoQueue);
@@ -189,6 +190,21 @@ function AdminAvaliacao() {
         </TabsList>
 
         <TabsContent value="fila" className="space-y-4 mt-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Label className="text-xs text-muted-foreground">Ordenação</Label>
+            <Select
+              value={queuePriorityFilter}
+              onValueChange={(v) => setQueuePriorityFilter(v as "all" | "alta")}
+            >
+              <SelectTrigger className="w-[220px] h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="alta">Alta prioridade primeiro</SelectItem>
+                <SelectItem value="all">Todas as prioridades</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {queueLoading ? (
             <div className="flex justify-center py-16">
               <Loader2 className="size-8 animate-spin text-primary-glow" />
@@ -197,9 +213,18 @@ function AdminAvaliacao() {
             <div className="glass rounded-xl border border-border/40 p-8 text-center text-muted-foreground text-sm">
               Nenhuma pendência — tudo validado.
             </div>
+          ) : (queuePriorityFilter === "alta"
+              ? queue?.items.filter((i) => i.priorityScore >= 10).length
+              : queue?.items.length) === 0 ? (
+            <div className="glass rounded-xl border border-border/40 p-8 text-center text-muted-foreground text-sm">
+              Nenhum item de alta prioridade na fila. Altere o filtro para ver todos.
+            </div>
           ) : (
             <div className="space-y-3">
-              {queue?.items.map((item) => (
+              {(queuePriorityFilter === "alta"
+                ? queue?.items.filter((i) => i.priorityScore >= 10)
+                : queue?.items
+              )?.map((item) => (
                 <div
                   key={item.kind === "performando" ? `p-${item.criativoId}` : `r-${item.resultadoId}`}
                   className="glass rounded-xl border border-border/40 p-4 space-y-3"
@@ -208,6 +233,18 @@ function AdminAvaliacao() {
                     <div>
                       <Badge variant="outline" className="mb-2">
                         {item.kind === "performando" ? "Claim Performando" : "Métrica reportada"}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={`mb-2 ml-2 ${
+                          item.priorityLabel === "Alta (CSV/UTM)"
+                            ? "border-success/40 text-success"
+                            : item.priorityLabel === "Média"
+                              ? "border-warning/40 text-warning"
+                              : "border-muted-foreground/40 text-muted-foreground"
+                        }`}
+                      >
+                        {item.priorityLabel}
                       </Badge>
                       <p className="font-medium">{item.angulo}</p>
                       <p className="text-xs text-muted-foreground">
@@ -253,6 +290,13 @@ function AdminAvaliacao() {
                   </div>
                 </div>
               ))}
+              {queuePriorityFilter === "alta" &&
+                (queue?.items.filter((i) => i.priorityScore < 10).length ?? 0) > 0 && (
+                  <p className="text-xs text-muted-foreground text-center pt-2">
+                    {(queue?.items.filter((i) => i.priorityScore < 10).length ?? 0)} item(ns) de prioridade
+                    média/baixa — altere o filtro para ver todos.
+                  </p>
+                )}
             </div>
           )}
           <div className="space-y-2">

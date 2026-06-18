@@ -102,6 +102,32 @@ export async function assertCanCreateProject(
   }
 }
 
+export async function assertCanImportCampeoes(
+  supabase: SupabaseClient<Database>,
+  organizationId: string | null | undefined,
+  additionalImports = 1,
+) {
+  const tier = await getOrgPlanTier(supabase, organizationId);
+  const limits = PLAN_LIMITS[tier];
+  if (limits.importsMes === Infinity) return;
+
+  const since = monthStartIso();
+  let query = supabase
+    .from("criativos")
+    .select("id", { count: "exact", head: true })
+    .eq("source", "importado")
+    .gte("imported_at", since);
+
+  if (organizationId) query = query.eq("organization_id", organizationId);
+
+  const { count } = await query;
+  if ((count ?? 0) + additionalImports > limits.importsMes) {
+    throw new Error(
+      `Limite de ${limits.importsMes} import(s) de campeões/mês do plano ${tier}. Faça upgrade em Plano e uso.`,
+    );
+  }
+}
+
 export async function assertCanEscala(
   supabase: SupabaseClient<Database>,
   organizationId: string,

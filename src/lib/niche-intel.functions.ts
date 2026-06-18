@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/integrations/supabase/types";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 function nichoKey(nicho: string) {
@@ -15,11 +17,9 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
-type IntelInsight = { title: string; desc: string; tag: string };
+export type IntelInsight = { title: string; desc: string; tag: string };
 
-async function generateNicheIntel(
-  nichoLabel: string,
-): Promise<IntelInsight[]> {
+async function generateNicheIntel(nichoLabel: string): Promise<IntelInsight[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return [
@@ -81,41 +81,44 @@ Português do Brasil. Sem markdown.`,
   }
 }
 
+export async function loadNicheDailyInsights(
+  supabase: SupabaseClient<Database>,
+  nicho: string,
+): Promise<{ insights: IntelInsight[]; cached: boolean }> {
+  const key = nichoKey(nicho);
+  const today = todayIso();
+
+  const { data: cached } = await supabase
+    .from("niche_daily_intel")
+    .select("insights, generated_for")
+    .eq("nicho_key", key)
+    .eq("generated_for", today)
+    .maybeSingle();
+
+  if (cached?.insights) {
+    return { insights: cached.insights as IntelInsight[], cached: true };
+  }
+
+  const insights = await generateNicheIntel(nicho);
+  if (insights.length > 0) {
+    await supabase.from("niche_daily_intel").upsert(
+      {
+        nicho_key: key,
+        nicho_label: nicho,
+        insights,
+        generated_for: today,
+      },
+      { onConflict: "nicho_key,generated_for" },
+    );
+  }
+
+  return { insights, cached: false };
+}
+
 export const getNicheDailyIntel = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ nicho: z.string().min(1) }))
   .handler(async ({ data, context }) => {
-    const { supabase } = context;
-    const key = nichoKey(data.nicho);
-    const today = todayIso();
-
-    const { data: cached } = await supabase
-      .from("niche_daily_intel")
-      .select("insights, generated_for")
-      .eq("nicho_key", key)
-      .eq("generated_for", today)
-      .maybeSingle();
-
-    if (cached?.insights) {
-      return {
-        nicho: data.nicho,
-        insights: cached.insights as IntelInsight[],
-        cached: true,
-      };
-    }
-
-    const insights = await generateNicheIntel(data.nicho);
-    if (insights.length > 0) {
-      await supabase.from("niche_daily_intel").upsert(
-        {
-          nicho_key: key,
-          nicho_label: data.nicho,
-          insights,
-          generated_for: today,
-        },
-        { onConflict: "nicho_key,generated_for" },
-      );
-    }
-
-    return { nicho: data.nicho, insights, cached: false };
+    const { insights, cached } = await loadNicheDailyInsights(context.supabase, data.nicho);
+    return { nicho: data.nicho, insights, cached };
   });

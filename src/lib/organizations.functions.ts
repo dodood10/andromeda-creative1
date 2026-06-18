@@ -115,26 +115,32 @@ export const updateProfile = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { error } = await supabase
+    const { data: profile, error } = await supabase
       .from("profiles")
       .update({
         display_name: data.displayName,
         nicho: data.nicho,
       })
-      .eq("id", userId);
+      .eq("id", userId)
+      .select()
+      .single();
 
     if (error) throw new Error(error.message);
 
     if (data.projectId) {
-      const patch: Record<string, string | null> = {};
+      const patch: { nicho?: string; url_default?: string } = {};
       if (data.nicho) patch.nicho = data.nicho;
       if (data.urlDefault) patch.url_default = data.urlDefault;
       if (Object.keys(patch).length > 0) {
-        await supabase.from("projects").update(patch).eq("id", data.projectId);
+        const { error: projectError } = await supabase
+          .from("projects")
+          .update(patch)
+          .eq("id", data.projectId);
+        if (projectError) throw new Error(projectError.message);
       }
     }
 
-    return { ok: true };
+    return { ok: true, profile };
   });
 
 export const getWorkspaceSettings = createServerFn({ method: "POST" })

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { RoteiroBloco } from "./schemas/angulos.schema";
+import { AnguloSchema } from "./schemas/angulos.schema";
 import {
   computeHookDimensionScore,
   computeLeilaoScore,
@@ -23,6 +24,14 @@ import { assertCanExport } from "./plan-enforcement";
 import type { EstiloProducao } from "./formato-recomendacao";
 import type { AudioPaths, CriativoScore, ScoreDimensao } from "./types/criativo-json";
 import { parseAudioPaths, parseScoreJson } from "./types/criativo-json";
+import {
+  championFromCriativoRow,
+  scoreAnguloVsChampions,
+} from "./champion-angle-ranking";
+import { computeFourUsScore } from "./schwartz-angulo";
+import { resolveLandingUrlForCriativo } from "./landing-alignment.functions";
+import { buildOfferSnapshot } from "./offer-snapshot";
+import { checkOfferCongruence } from "./congruence-check";
 
 const BUCKET = "criativos-media";
 
@@ -297,8 +306,32 @@ export const avaliarCriativo = createServerFn({ method: "POST" })
     const diversidadeFromAngulo = Math.max(40, 100 - mesmoAngulo * 15);
     const diversidadeScore = Math.round((diversidadeFromAngulo + leilaoScore) / 2);
 
+    const { data: campeoesRows } = await supabase
+      .from("criativos")
+      .select("id, angulo, formato_saida, estilo_producao, angulo_json, status, performando_intel_status")
+      .eq("project_id", criativo.project_id!)
+      .eq("status", "Performando")
+      .eq("performando_intel_status", "approved");
+
+    const championsForRanking = (campeoesRows ?? []).map((c) => championFromCriativoRow(c));
+
+    const hookText = angulo?.hook ?? roteiro[0]?.conteudo ?? "";
+    const ctaText =
+      (criativo.angulo_json as { cta?: string } | null)?.cta ??
+      roteiro[roteiro.length - 1]?.conteudo ??
+      "";
+    const fourUs = computeFourUsScore(hookText, ctaText, "conv");
+
     const dimensoes: ScoreDimensao[] = [
       { id: "hook", label: "Hook rate esperado", score: hookScore, minimo: 70, ok: hookScore >= 70, dica: hookDica },
+      {
+        id: "four_us",
+        label: "4 U's do hook",
+        score: fourUs.score,
+        minimo: 70,
+        ok: fourUs.score >= 70,
+        dica: fourUs.score < 70 ? fourUs.dica : undefined,
+      },
       {
         id: "compliance",
         label: "Compliance Meta",
@@ -338,7 +371,95 @@ export const avaliarCriativo = createServerFn({ method: "POST" })
       },
     ];
 
-    const podeExportar = dimensoes.every((d) => d.ok);
+    const landingUrl = await resolveLandingUrlForCriativo(supabase, criativo);
+    if (landingUrl) {
+      try {
+        const apiKey = process.env.ANTHROPIC_API_KEY;
+        const snapshot = await buildOfferSnapshot(landingUrl, apiKey);
+        const hookTextCong = angulo?.hook ?? roteiro[0]?.conteudo ?? "";
+        const ctaText =
+          (criativo.angulo_json as { cta?: string } | null)?.cta ??
+          roteiro[roteiro.length - 1]?.conteudo ??
+          "";
+        const congruence = await checkOfferCongruence({
+          offerSnapshot: snapshot,
+          hook: hookTextCong,
+          cta: ctaText,
+          roteiroResumo: textoCompleto.slice(0, 2000),
+          apiKey,
+        });
+        dimensoes.push({
+          id: "congruencia_oferta",
+          label: "Congruência com a oferta",
+          score: congruence.score,
+          minimo: 70,
+          ok: congruence.score >= 70,
+          dica:
+            congruence.score < 70
+              ? congruence.sugestoes[0] ?? congruence.divergencias[0]
+              : undefined,
+        });
+      } catch {
+        /* URL inacessível */
+      }
+    }
+
+    if (championsForRanking.length > 0) {
+      const anguloParsed = AnguloSchema.safeParse(criativo.angulo_json);
+      const anguloItem = anguloParsed.success
+        ? anguloParsed.data
+        : {
+            numero: 1,
+            nome: criativo.angulo,
+            tipo: "Previsibilidade" as const,
+            micropersona: { nome: criativo.angulo, papel_temido: "" },
+            variavel_explorada: "",
+            nivel_schwartz: "",
+            nivel_conspiracao: "sem" as const,
+            hook: angulo?.hook ?? roteiro[0]?.conteudo ?? "",
+            estrutura: [],
+            hook_visual: "",
+            cta: "",
+            justificativa_probabilistica: "",
+            sinais_andromeda: {
+              hook_rate_estimado: "30%",
+              feedback_negativo_esperado: "medio" as const,
+              fatia_leilao: "media",
+            },
+            saturacao_hook: { status: "neutro" as const, observacao: "" },
+            janela_relevancia: { tipo: "atemporal" as const, estimativa: "", motivo: "" },
+            recomendacao_formato: {
+              formato_saida: criativo.formato_saida ?? "criativo_curto",
+              estilo_producao: criativo.estilo_producao ?? "texto_animado",
+              aspect_ratio_prioritario: "9:16" as const,
+              duracao_alvo_seg: 45,
+              justificativa: "",
+              formatos_saturados_nicho: [],
+              confianca: "media" as const,
+              requer_midia_usuario: false,
+            },
+          };
+
+      const champResult = scoreAnguloVsChampions(anguloItem, championsForRanking);
+      const matchedName = champResult.matchedChampionAngulo ?? championsForRanking[0]?.angulo;
+      dimensoes.push({
+        id: "campeao",
+        label: "Alinhamento com campeões",
+        score: champResult.score,
+        minimo: 50,
+        ok: champResult.score >= 50,
+        dica:
+          champResult.score < 50 && matchedName
+            ? `Muito diferente do campeão "${matchedName}" — teste como variação, não como substituto.`
+            : champResult.score >= 70
+              ? `Próximo do padrão do campeão ${matchedName}.`
+              : undefined,
+      });
+    }
+
+    const podeExportar = dimensoes
+      .filter((d) => d.id !== "congruencia_oferta" && d.id !== "four_us")
+      .every((d) => d.ok);
     const scoreJson: CriativoScore = { dimensoes, podeExportar, avaliadoEm: new Date().toISOString() };
 
     await supabase.from("criativos").update({ score_json: scoreJson }).eq("id", data.criativoId);

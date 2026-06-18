@@ -5,6 +5,7 @@ import {
   type RecomendacaoFormato,
 } from "./schemas/angulos.schema";
 import type { EstiloProducao, FormatoSaida } from "./types/enums";
+import { normalizeSchwartzAnguloFields } from "./schwartz-angulo";
 
 export type { EstiloProducao, FormatoSaida } from "./types/enums";
 
@@ -37,9 +38,14 @@ export function normalizeRecomendacaoFormato(raw: unknown): RecomendacaoFormato 
   return { ...DEFAULT_RECOMENDACAO };
 }
 
-export function normalizeAngulo<T extends AnguloLike>(angulo: T): T & { recomendacao_formato: RecomendacaoFormato } {
+export function normalizeAngulo<T extends AnguloLike>(angulo: T): T & {
+  recomendacao_formato: RecomendacaoFormato;
+  angulo_copy: import("./types/enums").AnguloCopyTipo;
+  nivel_consciencia_alvo: import("./types/enums").NivelConscienciaAlvo;
+} {
+  const withSchwartz = normalizeSchwartzAnguloFields(angulo);
   return {
-    ...angulo,
+    ...withSchwartz,
     recomendacao_formato: normalizeRecomendacaoFormato(angulo.recomendacao_formato),
   };
 }
@@ -126,7 +132,7 @@ export async function getProjectFormatContext(
   for (const c of criativos) {
     if (c.formato_saida) formatosSet.add(c.formato_saida as FormatoSaida);
     if (c.estilo_producao) estilosSet.add(c.estilo_producao as EstiloProducao);
-    if (c.status === "Performando") {
+    if (c.status === "Performando" && c.performando_intel_status === "approved") {
       performando++;
       topPerformers.push({
         angulo: c.angulo,

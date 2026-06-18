@@ -1,6 +1,8 @@
 import { z } from "zod";
 import {
   AnguloTipoSchema,
+  AnguloCopyTipoSchema,
+  NivelConscienciaAlvoSchema,
   EstiloProducaoSchema,
   FeedbackNegativoSchema,
   FormatoSaidaSchema,
@@ -25,12 +27,20 @@ export const RecomendacaoFormatoSchema = z.object({
 
 export type RecomendacaoFormato = z.infer<typeof RecomendacaoFormatoSchema>;
 
+export const CongruenciaOfertaSchema = z.object({
+  score: z.number().min(0).max(100),
+  alinhado: z.boolean(),
+  divergencias: z.array(z.string()).default([]),
+});
+
 export const AnguloSchema = z.object({
   numero: z.number(),
   nome: z.string(),
   tipo: AnguloTipoSchema,
   micropersona: z.object({ nome: z.string(), papel_temido: z.string() }),
   variavel_explorada: z.string(),
+  angulo_copy: AnguloCopyTipoSchema.optional(),
+  nivel_consciencia_alvo: NivelConscienciaAlvoSchema.optional(),
   nivel_schwartz: z.string(),
   nivel_conspiracao: NivelConspiracaoSchema,
   hook: z.string(),
@@ -53,6 +63,7 @@ export const AnguloSchema = z.object({
     motivo: z.string(),
   }),
   recomendacao_formato: RecomendacaoFormatoSchema.optional(),
+  congruencia_oferta: CongruenciaOfertaSchema.optional(),
 });
 
 export const ResultadoAngulosSchema = z.object({

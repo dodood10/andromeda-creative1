@@ -10,7 +10,7 @@ export type ExportTranscricaoBloco = {
 export type ExportTranscricaoSnapshot = {
   blocos: ExportTranscricaoBloco[];
   exported_at: string;
-  source: "export_snapshot" | "whisper";
+  source: "export_snapshot" | "whisper" | "paste";
   total_blocos: number;
   duracao_estimada_seg?: number;
   whisper_language?: string;

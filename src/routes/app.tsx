@@ -37,6 +37,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { WorkspaceProvider, useWorkspace } from "@/contexts/workspace-context";
 import { EditorNavLink } from "@/components/editor-nav-link";
+import { safeLoginRedirect } from "@/lib/utils";
 
 export const Route = createFileRoute("/app")({
   head: () => ({
@@ -70,7 +71,7 @@ function AppAuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!loading && !session) {
-      navigate({ to: "/login", search: { redirect: pathname } });
+      navigate({ to: "/login", search: { redirect: safeLoginRedirect(pathname) } });
     }
   }, [loading, session, navigate, pathname]);
 

@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { trackMetaCompleteRegistration, trackMetaLead } from "@/lib/meta-pixel";
 import { useAuth } from "@/hooks/use-auth";
+import { safeLoginRedirect } from "@/lib/utils";
 
 const searchSchema = z.object({
   redirect: z.string().optional(),
@@ -27,6 +28,18 @@ export const Route = createFileRoute("/login")({
   component: Login,
 });
 
+function authErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  const msg = error.message.toLowerCase();
+  if (msg.includes("email not confirmed")) {
+    return "Confirme seu e-mail antes de entrar. Verifique a caixa de entrada (e o spam).";
+  }
+  if (msg.includes("invalid login credentials")) {
+    return "E-mail ou senha incorretos.";
+  }
+  return error.message;
+}
+
 function Login() {
   const navigate = useNavigate();
   const { redirect } = Route.useSearch();
@@ -39,7 +52,7 @@ function Login() {
 
   useEffect(() => {
     if (authLoading || !session) return;
-    const dest = redirect ?? (profile?.nicho ? "/app" : "/app/onboarding");
+    const dest = safeLoginRedirect(redirect, profile?.nicho ? "/app" : "/app/onboarding");
     navigate({ to: dest });
   }, [authLoading, session, profile?.nicho, redirect, navigate]);
 
@@ -52,9 +65,9 @@ function Login() {
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      navigate({ to: redirect ?? "/app" });
+      navigate({ to: safeLoginRedirect(redirect) });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao entrar");
+      toast.error(authErrorMessage(e, "Erro ao entrar"));
     } finally {
       setLoading(false);
     }
@@ -67,7 +80,7 @@ function Login() {
     }
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -77,8 +90,16 @@ function Login() {
       if (error) throw error;
       trackMetaLead("signup_form");
       trackMetaCompleteRegistration("email");
-      toast.success("Conta criada! Verifique seu e-mail se a confirmação estiver ativa.");
-      navigate({ to: redirect ?? "/app/onboarding" });
+      if (data.session) {
+        toast.success("Conta criada! Vamos configurar seu perfil.");
+        navigate({ to: safeLoginRedirect(redirect, "/app/onboarding") });
+      } else {
+        toast.success(
+          "Conta criada! Enviamos um link de confirmação para seu e-mail. Confirme antes de entrar.",
+          { duration: 8000 },
+        );
+        setTab("signin");
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao criar conta");
     } finally {
@@ -101,20 +122,6 @@ function Login() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao enviar recuperação");
     } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleGoogle() {
-    setLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: `${window.location.origin}${redirect ?? "/app/onboarding"}` },
-      });
-      if (error) throw error;
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao entrar com Google");
       setLoading(false);
     }
   }
@@ -243,24 +250,6 @@ function Login() {
                 </Button>
               </TabsContent>
             </Tabs>
-
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-border/50" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">ou</span>
-              </div>
-            </div>
-
-            <Button
-              variant="outline"
-              className="w-full min-h-11"
-              onClick={handleGoogle}
-              disabled={loading}
-            >
-              Continuar com Google
-            </Button>
           </Card>
         </div>
       </div>

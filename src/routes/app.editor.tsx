@@ -11,7 +11,7 @@ import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Download, Mic, Music, Type, Loader2, Sparkles, Upload, Image, Copy, CheckCircle2, AlertTriangle, ExternalLink, ChevronDown, RefreshCw, TrendingUp } from "lucide-react";
+import { Download, Mic, Music, Type, Loader2, Sparkles, Upload, Image, Copy, CheckCircle2, AlertTriangle, ExternalLink, ChevronDown, RefreshCw, TrendingUp, Target } from "lucide-react";
 import { toast } from "sonner";
 import { getCriativo, getLatestCriativo, updateCriativoRoteiro, updateCriativoStatus, getGeradorEtaEstimates } from "@/lib/criativos.functions";
 import {
@@ -38,6 +38,12 @@ import { gerarVslCurta } from "@/lib/vsl.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
 import { celebrateFirstExport } from "@/lib/first-export-celebration";
 import { trackMetaExportConcluido, trackMetaMarcarSubiu } from "@/lib/meta-pixel";
+import { PlanoTesteMetaDialog } from "@/components/plano-teste-meta-dialog";
+import {
+  avaliarAlinhamentoLanding,
+  getCriativoLandingContext,
+  type LandingAlignmentResult,
+} from "@/lib/landing-alignment.functions";
 import type { AudioPaths } from "@/lib/types/criativo-json";
 import type { CriativoScore } from "@/lib/types/criativo-json";
 
@@ -152,6 +158,8 @@ function Editor({ criativoId, focus }: EditorProps) {
   const fetchCapabilities = useServerFn(getMediaCapabilities);
   const fetchEta = useServerFn(getGeradorEtaEstimates);
   const fetchPlanUsage = useServerFn(getPlanUsage);
+  const runLandingAlign = useServerFn(avaliarAlinhamentoLanding);
+  const fetchLandingCtx = useServerFn(getCriativoLandingContext);
 
   const { data: planUsage } = useQuery({
     queryKey: ["plan-usage", organizationId],
@@ -186,6 +194,10 @@ function Editor({ criativoId, focus }: EditorProps) {
   const [voiceId, setVoiceId] = useState("");
   const [refinarInstrucao, setRefinarInstrucao] = useState("");
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [landingAlignment, setLandingAlignment] = useState<LandingAlignmentResult | null>(null);
+  const [landingLoading, setLandingLoading] = useState(false);
+  const [landingUrl, setLandingUrl] = useState<string | null>(null);
+  const alignmentFetched = useRef(false);
   const [scoreOpen, setScoreOpen] = useState(false);
   const [scoreData, setScoreData] = useState<CriativoScore | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -302,7 +314,13 @@ function Editor({ criativoId, focus }: EditorProps) {
       const b = roteiro[block];
       if (!b || !refinarInstrucao.trim()) throw new Error("Informe a instrução");
       return runRefinar({
-        data: { conteudoAtual: b.conteudo, instrucao: refinarInstrucao, tempo: b.tempo },
+        data: {
+          conteudoAtual: b.conteudo,
+          instrucao: refinarInstrucao,
+          tempo: b.tempo,
+          projectId: projectId ?? undefined,
+          offerUrl: landingUrl ?? undefined,
+        },
       });
     },
     onSuccess: (data) => {
@@ -391,9 +409,70 @@ function Editor({ criativoId, focus }: EditorProps) {
     }
   }
 
+  async function handleLandingAlignment() {
+    setLandingLoading(true);
+    try {
+      const ctx = await fetchLandingCtx({ data: { criativoId } });
+      if (!ctx.url) {
+        toast.error("Nenhuma URL de landing encontrada para este projeto.");
+        return;
+      }
+      setLandingUrl(ctx.url);
+      const result = await runLandingAlign({
+        data: {
+          criativoId,
+          url: ctx.url,
+          hook: ctx.hook,
+          cta: ctx.cta,
+          roteiroResumo: ctx.roteiroResumo,
+        },
+      });
+      setLandingAlignment(result);
+      if (result.score < 70) {
+        toast.warning(`Alinhamento ${result.score}% — revise hook vs página`);
+      } else {
+        toast.success(`Alinhamento ${result.score}% com a landing`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao checar alinhamento");
+    } finally {
+      setLandingLoading(false);
+    }
+  }
+
   useEffect(() => {
     focusHandled.current = false;
+    alignmentFetched.current = false;
+    setLandingAlignment(null);
+    setLandingUrl(null);
   }, [criativoId]);
+
+  useEffect(() => {
+    if (!criativoId || alignmentFetched.current) return;
+    alignmentFetched.current = true;
+    void (async () => {
+      try {
+        const ctx = await fetchLandingCtx({ data: { criativoId } });
+        if (!ctx.url) return;
+        setLandingUrl(ctx.url);
+        setLandingLoading(true);
+        const result = await runLandingAlign({
+          data: {
+            criativoId,
+            url: ctx.url,
+            hook: ctx.hook,
+            cta: ctx.cta,
+            roteiroResumo: ctx.roteiroResumo,
+          },
+        });
+        setLandingAlignment(result);
+      } catch {
+        /* silencioso — usuário pode checar manualmente */
+      } finally {
+        setLandingLoading(false);
+      }
+    })();
+  }, [criativoId, fetchLandingCtx, runLandingAlign]);
 
   useEffect(() => {
     if (!criativo || !focus || focusHandled.current) return;
@@ -582,6 +661,8 @@ function Editor({ criativoId, focus }: EditorProps) {
       )}
       {(showPostExport || criativo.export_status === "pronto") && exportPaths.length > 0 && (
         <PostExportBanner
+          criativoId={criativoId}
+          anguloNome={anguloNome}
           utm={criativo.utm_content ?? criativoId}
           exportPaths={exportPaths}
           downloadUrls={downloadUrls}
@@ -592,6 +673,8 @@ function Editor({ criativoId, focus }: EditorProps) {
           onExpand={() => setShowPostExport(true)}
           expanded={showPostExport}
           exportDevMode={exportDevMode}
+          organizationId={organizationId}
+          userId={user?.id}
         />
       )}
       <div className="px-4 lg:px-6 pt-4">
@@ -660,6 +743,9 @@ function Editor({ criativoId, focus }: EditorProps) {
               downloadUrls={downloadUrls}
               exportPaths={exportPaths}
               exportEtaLabel={exportEtaLabel}
+              onLandingAlign={() => void handleLandingAlignment()}
+              landingLoading={landingLoading}
+              landingAlignment={landingAlignment}
             />
           </Dialog>
         </div>
@@ -679,6 +765,9 @@ function Editor({ criativoId, focus }: EditorProps) {
               downloadUrls={downloadUrls}
               exportPaths={exportPaths}
               exportEtaLabel={exportEtaLabel}
+              onLandingAlign={() => void handleLandingAlignment()}
+              landingLoading={landingLoading}
+              landingAlignment={landingAlignment}
             />
           </Dialog>
         </div>
@@ -784,6 +873,39 @@ function Editor({ criativoId, focus }: EditorProps) {
             <Button size="sm" variant="outline" onClick={() => refinarMutation.mutate()} disabled={refinarMutation.isPending}>
               <Sparkles className="size-3.5 mr-1" /> Refinar bloco
             </Button>
+          </div>
+          <div className="space-y-2 pt-2 border-t border-border/40">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Alinhamento landing
+            </Label>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              onClick={() => void handleLandingAlignment()}
+              disabled={landingLoading}
+            >
+              {landingLoading ? (
+                <Loader2 className="size-3.5 mr-1 animate-spin" />
+              ) : (
+                <ExternalLink className="size-3.5 mr-1" />
+              )}
+              Checar congruência com a oferta
+            </Button>
+            {landingAlignment && landingAlignment.score < 70 && (
+              <div className="p-2 rounded-lg border border-warning/40 bg-warning/10 text-xs space-y-1">
+                <p className="font-medium text-warning">Score {landingAlignment.score}% — divergências</p>
+                {landingAlignment.divergencias.map((d) => (
+                  <p key={d} className="text-muted-foreground">• {d}</p>
+                ))}
+                {landingAlignment.sugestoes.map((s) => (
+                  <p key={s} className="text-foreground">→ {s}</p>
+                ))}
+              </div>
+            )}
+            {landingAlignment && landingAlignment.score >= 70 && (
+              <p className="text-xs text-success">Alinhado ({landingAlignment.score}%)</p>
+            )}
           </div>
         </aside>
 
@@ -969,6 +1091,8 @@ function Editor({ criativoId, focus }: EditorProps) {
 }
 
 type PostExportContentProps = {
+  criativoId: string;
+  anguloNome?: string;
   utm: string;
   exportPaths: string[];
   downloadUrls: Record<string, string>;
@@ -976,9 +1100,12 @@ type PostExportContentProps = {
   onMarcarSubiu: () => void;
   markingSubiu: boolean;
   exportDevMode: boolean;
+  onOpenTestPlan?: () => void;
 };
 
 function PostExportContent({
+  criativoId,
+  anguloNome,
   utm,
   exportPaths,
   downloadUrls,
@@ -986,6 +1113,7 @@ function PostExportContent({
   onMarcarSubiu,
   markingSubiu,
   exportDevMode,
+  onOpenTestPlan,
 }: PostExportContentProps) {
   return (
     <div className="space-y-4">
@@ -1030,6 +1158,11 @@ function PostExportContent({
       </div>
       <UtmBuilder utmContent={utm} />
       <div className="flex flex-wrap gap-2">
+        {onOpenTestPlan && (
+          <Button size="sm" variant="outline" onClick={onOpenTestPlan}>
+            <Target className="size-3.5 mr-1" /> Plano de teste Meta
+          </Button>
+        )}
         <Button className="bg-gradient-primary border-0" onClick={onMarcarSubiu} disabled={markingSubiu}>
           {markingSubiu ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4 mr-1.5" />}
           Marcar como Subiu
@@ -1046,9 +1179,13 @@ type PostExportBannerProps = PostExportContentProps & {
   onDismiss: () => void;
   onExpand: () => void;
   expanded: boolean;
+  organizationId?: string | null;
+  userId?: string;
 };
 
 function PostExportBanner({
+  criativoId,
+  anguloNome,
   utm,
   exportPaths,
   downloadUrls,
@@ -1059,22 +1196,44 @@ function PostExportBanner({
   onExpand,
   expanded,
   exportDevMode,
+  organizationId,
+  userId,
 }: PostExportBannerProps) {
+  const [testPlanOpen, setTestPlanOpen] = useState(false);
+
+  const dialog = (
+    <PlanoTesteMetaDialog
+      criativoId={criativoId}
+      anguloNome={anguloNome}
+      autoOpen
+      showTrigger={false}
+      open={testPlanOpen}
+      onOpenChange={setTestPlanOpen}
+      organizationId={organizationId}
+      userId={userId}
+    />
+  );
+
   if (!expanded) {
     return (
-      <div className="px-6 py-2 bg-success/10 border-b border-success/30 flex items-center justify-between text-sm">
-        <span className="flex items-center gap-2">
-          <CheckCircle2 className="size-4 text-success" /> Export pronto — abra o checklist pós-export
-        </span>
-        <Button size="sm" variant="outline" onClick={onExpand}>
-          Ver checklist
-        </Button>
-      </div>
+      <>
+        {dialog}
+        <div className="px-6 py-2 bg-success/10 border-b border-success/30 flex items-center justify-between text-sm">
+          <span className="flex items-center gap-2">
+            <CheckCircle2 className="size-4 text-success" /> Export pronto — abra o checklist pós-export
+          </span>
+          <Button size="sm" variant="outline" onClick={onExpand}>
+            Ver checklist
+          </Button>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="px-6 py-4 bg-success/10 border-b border-success/30">
+    <>
+      {dialog}
+      <div className="px-6 py-4 bg-success/10 border-b border-success/30">
       <div className="flex items-center justify-between mb-3">
         <h2 className="font-display font-semibold flex items-center gap-2 text-sm">
           <CheckCircle2 className="size-4 text-success" /> Checklist pós-export
@@ -1082,6 +1241,8 @@ function PostExportBanner({
         <Button size="sm" variant="ghost" onClick={onDismiss}>Recolher</Button>
       </div>
       <PostExportContent
+        criativoId={criativoId}
+        anguloNome={anguloNome}
         utm={utm}
         exportPaths={exportPaths}
         downloadUrls={downloadUrls}
@@ -1089,8 +1250,10 @@ function PostExportBanner({
         onMarcarSubiu={onMarcarSubiu}
         markingSubiu={markingSubiu}
         exportDevMode={exportDevMode}
+        onOpenTestPlan={() => setTestPlanOpen(true)}
       />
     </div>
+    </>
   );
 }
 
@@ -1102,6 +1265,9 @@ type ExportDialogProps = {
   downloadUrls: Record<string, string>;
   exportPaths: string[];
   exportEtaLabel?: string;
+  onLandingAlign: () => void;
+  landingLoading: boolean;
+  landingAlignment: LandingAlignmentResult | null;
 };
 
 function ExportDialog({
@@ -1112,6 +1278,9 @@ function ExportDialog({
   downloadUrls,
   exportPaths,
   exportEtaLabel,
+  onLandingAlign,
+  landingLoading,
+  landingAlignment,
 }: ExportDialogProps) {
   return (
     <DialogContent>
@@ -1134,6 +1303,39 @@ function ExportDialog({
           ))}
         </div>
       )}
+      <div className="space-y-2 pt-2 border-t border-border/50">
+        <p className="text-sm font-medium">Congruência com a oferta</p>
+        <Button size="sm" variant="outline" onClick={onLandingAlign} disabled={landingLoading}>
+          {landingLoading ? (
+            <Loader2 className="size-3.5 mr-1 animate-spin" />
+          ) : (
+            <ExternalLink className="size-3.5 mr-1" />
+          )}
+          Checar congruência com a oferta
+        </Button>
+        {landingAlignment && landingAlignment.score < 70 && (
+          <div className="p-2 rounded-lg border border-warning/40 bg-warning/10 text-xs space-y-1">
+            <p className="font-medium text-warning">Score {landingAlignment.score}% — divergências</p>
+            {landingAlignment.divergencias.map((d) => (
+              <p key={d} className="text-muted-foreground">• {d}</p>
+            ))}
+            {landingAlignment.sugestoes.map((s) => (
+              <p key={s} className="text-foreground">→ {s}</p>
+            ))}
+          </div>
+        )}
+        {landingAlignment && landingAlignment.score >= 70 && (
+          <p className="text-xs text-success">Alinhado ({landingAlignment.score}%)</p>
+        )}
+        {landingAlignment && landingAlignment.score < 70 && (
+          <p className="text-xs text-warning mt-2">
+            Export liberado, mas revise o hook — score de congruência abaixo de 70%.
+          </p>
+        )}
+        <Link to="/app/gerador" className="text-xs text-primary-glow underline block">
+          Ajustar ângulos no gerador
+        </Link>
+      </div>
       {exportPaths.length > 0 && (
         <div className="space-y-2 pt-2 border-t border-border/50">
           <p className="text-sm font-medium">Downloads</p>

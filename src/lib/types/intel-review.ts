@@ -37,6 +37,8 @@ export type AvaliacaoQueueItem =
       organizationName: string;
       userEmail: string;
       submittedAt: string;
+      priorityScore: number;
+      priorityLabel: "Alta (CSV/UTM)" | "Média" | "Baixa";
     }
   | {
       kind: "resultado";
@@ -51,6 +53,8 @@ export type AvaliacaoQueueItem =
       valor: string | null;
       observacao: string | null;
       submittedAt: string;
+      priorityScore: number;
+      priorityLabel: "Alta (CSV/UTM)" | "Média" | "Baixa";
     };
 
 export type AvaliacaoCriativoRow = {

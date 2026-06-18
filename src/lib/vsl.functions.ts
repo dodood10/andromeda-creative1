@@ -13,6 +13,8 @@ import {
   resolveVslTargetDurationSec,
 } from "./vsl-duration";
 import { formatCalibrationBiasInstruction, loadProjectIntelSettings } from "./sinais-calibration";
+import { getProjectGeneralIntelText } from "./project-reference-intel";
+import { buildOfferSnapshot, formatOfferSnapshotBlock } from "./offer-snapshot";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -24,7 +26,7 @@ const InputSchema = z.object({
   productType: z.string().optional(),
   goal: z.string().optional(),
   context: z.string().optional(),
-  tomCalibracao: z.enum(["direto", "empatico", "autoritativo"]).optional(),
+  tomCalibracao: TomCalibracaoSchema.optional(),
 });
 
 export type GerarVslResult = {
@@ -66,13 +68,29 @@ export async function generateVslFromAngulo(params: {
     direto: "Direto e agressivo",
     empatico: "Empático e suave",
     autoritativo: "Autoritativo e técnico",
-  }[params.tomCalibracao as keyof typeof tomLabel] ?? params.tomCalibracao;
+    urgente: "Urgente e persuasivo (sem escassez falsa)",
+  }[params.tomCalibracao as "direto" | "empatico" | "autoritativo" | "urgente"] ?? params.tomCalibracao;
 
-  let calibrationBlock = "";
+  let contextBlocks = "";
+  try {
+    const snap = await buildOfferSnapshot(params.url, params.apiKey);
+    contextBlocks += `\n\n${formatOfferSnapshotBlock(snap)}`;
+  } catch {
+    /* ignore */
+  }
+
   if (params.supabase && params.projectId) {
-    const settings = await loadProjectIntelSettings(params.supabase, params.projectId);
-    calibrationBlock = formatCalibrationBiasInstruction(settings);
-    if (calibrationBlock) calibrationBlock = `\n\nCONTEXTO DE CALIBRAÇÃO:\n${calibrationBlock}`;
+    const [generalIntel, settings] = await Promise.all([
+      getProjectGeneralIntelText(params.supabase, params.projectId),
+      loadProjectIntelSettings(params.supabase, params.projectId),
+    ]);
+    if (generalIntel) {
+      contextBlocks += `\n\nCONTEXTO DE INTELIGÊNCIA GERAL (transcrições de referência):\n${generalIntel}`;
+    }
+    const calibrationBlock = formatCalibrationBiasInstruction(settings);
+    if (calibrationBlock) {
+      contextBlocks += `\n\nCONTEXTO DE CALIBRAÇÃO:\n${calibrationBlock}`;
+    }
   }
 
   const objecoesDoAngulo = angulo.estrutura
@@ -95,7 +113,7 @@ ${JSON.stringify(angulo, null, 2)}
 
 OBJEÇÕES / CTA já mapeados no ângulo (reutilize no bloco 5 quando fizer sentido):
 ${objecoesDoAngulo.length ? objecoesDoAngulo.join("\n---\n") : "(derivar do ângulo)"}
-${calibrationBlock}
+${contextBlocks}
 
 Visite a URL com web_search se necessário para depoimentos, garantia e oferta.
 Gere a VSL completa em JSON respeitando a duração alvo e a calibração de tom por bloco.`;

@@ -29,6 +29,7 @@ import {
   exportZipCriativos,
   listResultados,
   importMetricasCsv,
+  getIntelReviewStatus,
   type CriativoRow,
 } from "@/lib/criativos.functions";
 import { getSignedExportUrls } from "@/lib/export.functions";
@@ -37,6 +38,14 @@ import type { Enums } from "@/integrations/supabase/types";
 import { trackMetaMarcarSubiu, trackMetaPerformando } from "@/lib/meta-pixel";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { MetaUploadGuide } from "@/components/meta-upload-guide";
+import { ImportBibliotecaButton } from "@/components/import-biblioteca-dialog";
+import { PlanoTesteMetaDialog } from "@/components/plano-teste-meta-dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -92,6 +101,31 @@ type ResultadoRow = {
   criativos: { id: string; angulo: string; produto: string; project_id?: string } | null;
 };
 
+type ReviewPriority = {
+  priorityLabel: string;
+  priorityHint: string;
+};
+
+function PendingValidationBadge({ priority }: { priority?: ReviewPriority }) {
+  const badge = (
+    <Badge variant="outline" className="text-[10px] border-warning/40 text-warning cursor-help">
+      aguardando validação
+    </Badge>
+  );
+  if (!priority) return badge;
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>{badge}</TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-xs">
+          <p className="font-medium">{priority.priorityLabel}</p>
+          <p className="mt-1 text-muted-foreground">{priority.priorityHint}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 function Historico() {
   const { status: urlStatus, criativoId: urlCriativoId, export: urlExport } = Route.useSearch();
   const { projectId, loading: wsLoading } = useWorkspace();
@@ -102,6 +136,7 @@ function Historico() {
   const runZip = useServerFn(exportZipCriativos);
   const runImportCsv = useServerFn(importMetricasCsv);
   const signExports = useServerFn(getSignedExportUrls);
+  const fetchReviewStatus = useServerFn(getIntelReviewStatus);
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
@@ -147,6 +182,14 @@ function Historico() {
     queryFn: () => fetchResultados({ data: { projectId: projectId! } }),
     enabled: !!projectId,
   });
+
+  const { data: reviewStatus } = useQuery({
+    queryKey: ["intel-review-status", projectId],
+    queryFn: () => fetchReviewStatus({ data: { projectId: projectId! } }),
+    enabled: !!projectId,
+  });
+
+  const priorityByCriativo = reviewStatus?.priorityByCriativoId ?? {};
 
   const resultadosByCriativo = useMemo(() => {
     const map = new Map<string, ResultadoRow[]>();
@@ -342,6 +385,7 @@ function Historico() {
             <Button variant="outline" size="sm" onClick={() => setCsvOpen(true)}>
               <Upload className="size-4 mr-1.5" /> Importar CSV Meta
             </Button>
+            <ImportBibliotecaButton />
           </div>
           <Link to="/app/gerador">
             <Button size="sm" className="bg-gradient-primary border-0">
@@ -551,6 +595,7 @@ function Historico() {
                   key={r.id}
                   row={r}
                   highlighted={r.id === highlightedId}
+                  reviewPriority={priorityByCriativo[r.id]}
                   resultadosCount={(resultadosByCriativo.get(r.id) ?? []).length}
                   onStatusChange={(status) => requestStatusChange(r, status)}
                   onDownload={handleDownload}
@@ -576,6 +621,7 @@ function Historico() {
                           row={r}
                           compact
                           highlighted={r.id === highlightedId}
+                          reviewPriority={priorityByCriativo[r.id]}
                           resultadosCount={(resultadosByCriativo.get(r.id) ?? []).length}
                           onStatusChange={(status) => requestStatusChange(r, status)}
                           onDownload={handleDownload}
@@ -608,6 +654,7 @@ function Historico() {
                         key={r.id}
                         row={r}
                         highlighted={r.id === highlightedId}
+                        reviewPriority={priorityByCriativo[r.id]}
                         resultadosCount={(resultadosByCriativo.get(r.id) ?? []).length}
                         onStatusChange={(status) => requestStatusChange(r, status)}
                         onDownload={handleDownload}
@@ -766,6 +813,7 @@ function CriativoCard({
   row,
   compact,
   highlighted,
+  reviewPriority,
   resultadosCount,
   onStatusChange,
   onDownload,
@@ -776,6 +824,7 @@ function CriativoCard({
   row: CriativoRow;
   compact?: boolean;
   highlighted?: boolean;
+  reviewPriority?: ReviewPriority;
   resultadosCount: number;
   onStatusChange: (status: CriativoStatus) => void;
   onDownload: (paths: string[], path?: string) => void;
@@ -796,6 +845,11 @@ function CriativoCard({
           <p className="text-xs text-muted-foreground truncate">
             {row.produto} · {row.formato} · {dataFmt}
           </p>
+          {row.source === "importado" && (
+            <Badge variant="outline" className="mt-1 text-[10px] border-primary/40 text-primary-glow">
+              Importado
+            </Badge>
+          )}
         </div>
         <button
           type="button"
@@ -821,7 +875,7 @@ function CriativoCard({
         </SelectContent>
       </Select>
       {row.status === "Performando" && row.performando_intel_status === "pending" && (
-        <p className="text-[10px] text-warning">Validação em até 24h</p>
+        <PendingValidationBadge priority={reviewPriority} />
       )}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="ghost" className="min-h-11" onClick={onViewResultados}>
@@ -836,6 +890,9 @@ function CriativoCard({
         <Link to="/app/editor" search={{ criativoId: row.id }}>
           <Button size="sm" variant="outline" className="min-h-11">Editor</Button>
         </Link>
+        {row.export_status === "pronto" && row.status === "Gerado" && (
+          <PlanoTesteMetaDialog criativoId={row.id} anguloNome={row.angulo} />
+        )}
         {row.export_status !== "pronto" && (
           <Link to="/app/editor" search={{ criativoId: row.id, focus: "score" }}>
             <Button size="sm" className="min-h-11 bg-gradient-primary border-0">Exportar</Button>
@@ -856,6 +913,7 @@ function CriativoCard({
 function CriativoRowItem({
   row,
   highlighted,
+  reviewPriority,
   resultadosCount,
   onStatusChange,
   onDownload,
@@ -865,6 +923,7 @@ function CriativoRowItem({
 }: {
   row: CriativoRow;
   highlighted?: boolean;
+  reviewPriority?: ReviewPriority;
   resultadosCount: number;
   onStatusChange: (status: CriativoStatus) => void;
   onDownload: (paths: string[], path?: string) => void;
@@ -894,16 +953,23 @@ function CriativoRowItem({
       <TableCell className="font-mono text-xs text-muted-foreground">{dataFmt}</TableCell>
       <TableCell className="font-medium">{row.produto}</TableCell>
       <TableCell>{row.angulo}</TableCell>
-      <TableCell className="text-muted-foreground">{row.formato}</TableCell>
+      <TableCell className="text-muted-foreground">
+        <div className="flex flex-col gap-1">
+          <span>{row.formato}</span>
+          {row.source === "importado" && (
+            <Badge variant="outline" className="w-fit text-[10px] border-primary/40 text-primary-glow">
+              Importado
+            </Badge>
+          )}
+        </div>
+      </TableCell>
       <TableCell>
         <Select value={row.status} onValueChange={(v) => onStatusChange(v as CriativoStatus)}>
           <SelectTrigger className="h-8 w-[130px] border-0 bg-transparent p-0 shadow-none">
             <div className="flex flex-col gap-1 items-start">
               <Badge variant="outline" className={statusStyle[row.status]}>{row.status}</Badge>
               {row.status === "Performando" && row.performando_intel_status === "pending" && (
-                <Badge variant="outline" className="text-[10px] border-warning/40 text-warning">
-                  aguardando validação
-                </Badge>
+                <PendingValidationBadge priority={reviewPriority} />
               )}
               {row.status === "Performando" && row.performando_intel_status === "rejected" && (
                 <Badge variant="outline" className="text-[10px] border-destructive/40 text-destructive">
@@ -951,6 +1017,9 @@ function CriativoRowItem({
         <Link to="/app/editor" search={{ criativoId: row.id }}>
           <Button size="sm" variant="ghost">Editor</Button>
         </Link>
+        {row.export_status === "pronto" && row.status === "Gerado" && (
+          <PlanoTesteMetaDialog criativoId={row.id} anguloNome={row.angulo} />
+        )}
         {row.export_status !== "pronto" && row.status !== "Pausado" && (
           <Link to="/app/editor" search={{ criativoId: row.id, focus: "score" }}>
             <Button size="sm" variant="outline" className="border-warning/40 text-warning">
