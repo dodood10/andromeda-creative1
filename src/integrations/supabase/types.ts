@@ -429,6 +429,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          intel_settings: Json
           name: string
           nicho: string | null
           organization_id: string
@@ -437,6 +438,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          intel_settings?: Json
           name: string
           nicho?: string | null
           organization_id: string
@@ -445,6 +447,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          intel_settings?: Json
           name?: string
           nicho?: string | null
           organization_id?: string

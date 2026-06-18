@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   Wand2, Sparkles, ArrowRight, Brain, Loader2, Target, Gauge,
   HelpCircle, Clock, TrendingDown, TrendingUp, Minus, EyeOff, Upload, AlertTriangle,
-  Film, LayoutTemplate, RefreshCw, Layers, ChevronDown,
+  Film, LayoutTemplate, RefreshCw, Layers, ChevronDown, Mic, Download,
 } from "lucide-react";
 import {
   gerarAngulos,
@@ -60,17 +60,25 @@ import {
   overrideFromRecomendacao,
   type FormatoOverride,
 } from "@/lib/formato-recomendacao";
+import { getVslBlocksPreview } from "@/lib/vsl-duration";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 const wizardSearchSchema = z.object({
-  step: z.enum(["wizard"]).optional(),
+  step: z.enum(["wizard", "export"]).optional(),
   formato: z.enum(["criativo_curto", "vsl_curta"]).optional(),
   url: z.string().optional(),
   ttfe: z.enum(["1"]).optional(),
 });
 
 const WIZARD_STORAGE_KEY = "andromeda_wizard_state";
+const EXPORT_STEP_STORAGE_KEY = "andromeda_export_step";
+
+type ExportDraftItem = {
+  id: string;
+  nome: string;
+  needsMedia?: boolean;
+};
 
 type WizardPersisted = {
   geracaoId: string;
@@ -78,6 +86,7 @@ type WizardPersisted = {
   wizardStep: WizardStep;
   formatoPorAngulo: Record<number, FormatoOverride>;
   backgroundMediaPath: string | null;
+  exportDrafts?: ExportDraftItem[];
 };
 
 export const Route = createFileRoute("/app/gerador")({
@@ -127,7 +136,7 @@ const confiancaColor: Record<string, string> = {
   baixa: "bg-muted/40 text-muted-foreground border-border",
 };
 
-type Etapa = "input" | "respondendo" | "resultado" | "wizard";
+type Etapa = "input" | "respondendo" | "resultado" | "wizard" | "export";
 type WizardStep = "producao" | "midia";
 
 function Gerador() {
@@ -166,6 +175,7 @@ function Gerador() {
   const [pendingFormato, setPendingFormato] = useState<"criativo_curto" | "vsl_curta" | null>(null);
   const [partialDrafts, setPartialDrafts] = useState<Array<{ id: string; nome: string }> | null>(null);
   const [batchChecklist, setBatchChecklist] = useState<Array<{ id: string; nome: string; needsMedia: boolean }> | null>(null);
+  const [exportDrafts, setExportDrafts] = useState<ExportDraftItem[]>([]);
   const [backgroundMediaPath, setBackgroundMediaPath] = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [pexelsQuery, setPexelsQuery] = useState("");
@@ -174,6 +184,7 @@ function Gerador() {
     id: string; type: "image" | "video"; previewUrl: string; downloadUrl: string; attribution: string;
   }>>([]);
   const [modoRapido, setModoRapido] = useState(false);
+  const [loadingOverlayDismissed, setLoadingOverlayDismissed] = useState(false);
   const mediaRef = useRef<HTMLInputElement>(null);
   const prevProjectRef = useRef<string | null>(null);
   const pendingAutoDraft = useRef(false);
@@ -266,13 +277,14 @@ function Gerador() {
   }, [geracaoRestoreError]);
 
   useEffect(() => {
-    if (urlFormato && urlStep === "wizard" && !geracaoId && !resultado && !loadingGeracao) {
+    if (urlFormato && !geracaoId && !resultado && !loadingGeracao) {
       setPendingFormato(urlFormato);
-      setEtapa("input");
-      navigate({ to: "/app/gerador", search: {}, replace: true });
+      if (urlStep !== "wizard") {
+        navigate({ to: "/app/gerador", search: { formato: urlFormato }, replace: true });
+      }
       toast.info(
         urlFormato === "vsl_curta"
-          ? "Briefing pronto para VSL curta — gere seus ângulos e o formato será aplicado na produção."
+          ? "Gere seus ângulos primeiro — o formato VSL será aplicado na produção."
           : "Gere seus ângulos primeiro — o formato será aplicado na produção.",
       );
     }
@@ -376,7 +388,23 @@ function Gerador() {
         setFormatoPorAngulo(legacyMap);
       }
       setBackgroundMediaPath(saved.backgroundMediaPath);
+      if (saved.exportDrafts?.length) setExportDrafts(saved.exportDrafts);
       if (urlStep === "wizard") setEtapa("wizard");
+      if (urlStep === "export") {
+        setEtapa("export");
+        if (saved.exportDrafts?.length) setExportDrafts(saved.exportDrafts);
+        else {
+          try {
+            const exportRaw = localStorage.getItem(EXPORT_STEP_STORAGE_KEY);
+            if (exportRaw) {
+              const parsed = JSON.parse(exportRaw) as { exportDrafts?: ExportDraftItem[] };
+              if (parsed.exportDrafts?.length) setExportDrafts(parsed.exportDrafts);
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -387,6 +415,14 @@ function Gerador() {
       toast.error("Informe a URL do site");
       return;
     }
+    if (!projectId) {
+      toast.error("Selecione um projeto no header");
+      return;
+    }
+    if (planUsage && !planUsage.canGerar) {
+      toast.error("Limite de gerações atingido este mês");
+      return;
+    }
     try {
       validateHttpUrl(url);
     } catch {
@@ -395,7 +431,9 @@ function Gerador() {
     }
     setLoadingPergunta(true);
     try {
-      const data = await askQuestion({ data: { url, productType, goal, context } });
+      const data = await askQuestion({
+        data: { url, productType, goal, context, organizationId: organizationId ?? undefined },
+      });
       setPergunta(data);
       setEtapa("respondendo");
     } catch (e) {
@@ -427,6 +465,7 @@ function Gerador() {
     }
     const etaSec = eta?.angulosSec ?? 60;
     setLoadingAngulos(true);
+    setLoadingOverlayDismissed(false);
     setLoadingStep(`Consultando IA (estimativa ~${etaSec}s)…`);
     const start = Date.now();
     const existingId = updateGeracaoId ?? geracaoId;
@@ -549,8 +588,32 @@ function Gerador() {
       toast.error("Salve uma geração antes de regenerar");
       return;
     }
+    if (planUsage && !planUsage.canGerar) {
+      toast.error("Limite de gerações atingido este mês");
+      return;
+    }
+    const limit = planUsage?.limits.geracoesMes;
+    const used = planUsage?.geracoesMes ?? 0;
+    const remaining =
+      limit != null && limit !== Infinity ? Math.max(0, limit - used) : null;
+    const confirmMsg =
+      remaining != null
+        ? `Regenerar consome 1 geração (${remaining} restante(s) este mês). Continuar?`
+        : "Regenerar substitui os 5 ângulos atuais. Continuar?";
+    if (!window.confirm(confirmMsg)) return;
     setSelectedAngulos(new Set());
     await runGerarAngulos(!!context.trim(), geracaoId);
+  }
+
+  function advanceFromProducao() {
+    if (!resultado) return;
+    const mediaIndices = needsMediaUpload(resultado.angulos, selectedAngulos, formatoPorAngulo);
+    if (mediaIndices.length === 0) {
+      void handleCreateDrafts();
+      return;
+    }
+    setWizardStep("midia");
+    persistWizard({ wizardStep: "midia" });
   }
 
   async function autoCreateSingleDraft(
@@ -583,6 +646,7 @@ function Gerador() {
           aspectRatioPrioritario: fmtFinal.aspectRatioPrioritario,
           projectId,
           organizationId,
+          tomCalibracao,
         },
       });
 
@@ -666,6 +730,7 @@ function Gerador() {
             projectId,
             organizationId,
             backgroundMediaPath: backgroundMediaPath ?? undefined,
+            tomCalibracao,
           },
         });
         if (fmt.formatoSaida === "vsl_curta") {
@@ -711,24 +776,23 @@ function Gerador() {
       if (failed.length > 0) {
         setPartialDrafts(draftList.map(({ id, nome }) => ({ id, nome })));
         toast.warning(`${created.length} criado(s), ${failed.length} falhou(aram)`);
-        navigate({
-          to: "/app/editor",
-          search: { criativoId: created[0].id, focus: "audio" },
-        });
-        return;
       }
 
-      const first = created[0];
+      localStorage.setItem(
+        EXPORT_STEP_STORAGE_KEY,
+        JSON.stringify({ geracaoId, exportDrafts: draftList }),
+      );
+      persistWizard({ exportDrafts: draftList });
+
       trackMetaRascunhoCriado(created.length);
       toast.success(
         created.length === 1
-          ? "Rascunho criado — próximo: gerar áudio"
-          : `${created.length} rascunhos criados — abrindo o primeiro`,
+          ? "Rascunho criado — complete o export no próximo passo"
+          : `${created.length} rascunhos criados — siga o funil de export`,
       );
-      if (created.length > 1) {
-        setBatchChecklist(draftList);
-      }
-      navigate({ to: "/app/editor", search: { criativoId: first.id, focus: "audio" } });
+      setExportDrafts(draftList);
+      setEtapa("export");
+      navigate({ to: "/app/gerador", search: { step: "export" }, replace: true });
     } catch (e) {
       if (created.length > 0) {
         setPartialDrafts(
@@ -746,23 +810,30 @@ function Gerador() {
     }
   }
 
+  const canGenerate = !!projectId && (planUsage?.canGerar ?? true);
+
   return (
     <div className="container mx-auto px-6 py-8 max-w-6xl space-y-8 relative">
       <AppBreadcrumbs
         items={[
           { label: "Dashboard", to: "/app" },
           { label: "Gerador", to: "/app/gerador" },
-          ...(etapa !== "input" ? [{ label: etapa === "wizard" ? "Produção" : etapa }] : []),
+          ...(etapa !== "input"
+            ? [{ label: etapa === "wizard" ? "Produção" : etapa === "export" ? "Export" : etapa }]
+            : []),
         ]}
       />
-      {loadingAngulos && (
+      {loadingAngulos && !loadingOverlayDismissed && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center">
           <Card className="glass p-8 max-w-md text-center space-y-4">
             <Loader2 className="size-10 animate-spin text-primary-glow mx-auto" />
             <p className="font-medium">{loadingStep}</p>
             <p className="text-sm text-muted-foreground">
-              Estimativa baseada no histórico: ~{eta?.angulosSec ?? 60}s. Não feche a página.
+              Estimativa baseada no histórico: ~{eta?.angulosSec ?? 60}s. Você pode continuar navegando — avisamos ao concluir.
             </p>
+            <Button variant="outline" size="sm" onClick={() => setLoadingOverlayDismissed(true)}>
+              Continuar em segundo plano
+            </Button>
           </Card>
         </div>
       )}
@@ -794,7 +865,23 @@ function Gerador() {
       )}
 
       {planUsage && !planUsage.canGerar && (
-        <UpgradeBanner message={`Limite de gerações do plano grátis (${planUsage.geracoesMes}/${planUsage.limits.geracoesMes} este mês).`} />
+        <UpgradeBanner
+          message={`Limite de gerações do plano grátis (${planUsage.geracoesMes}/${planUsage.limits.geracoesMes} este mês).`}
+          upgradeTo="/app/plano"
+        />
+      )}
+
+      {planUsage && planUsage.tier === "free" && (
+        <div className="flex items-center justify-between gap-2 p-3 rounded-lg border border-border/50 bg-muted/20 text-sm">
+          <span>
+            Uso este mês: <strong>{planUsage.geracoesMes}/{planUsage.limits.geracoesMes === Infinity ? "∞" : planUsage.limits.geracoesMes}</strong> gerações
+            {" · "}
+            <strong>{planUsage.exportsMes}/{planUsage.limits.exportsMes === Infinity ? "∞" : planUsage.limits.exportsMes}</strong> exports
+          </span>
+          <Link to="/app/plano" className="text-primary-glow text-xs hover:underline shrink-0">
+            Ver plano
+          </Link>
+        </div>
       )}
 
       {(etapa !== "input" || modoRapido || resultado) && <GeradorStepper etapa={etapa} />}
@@ -896,7 +983,7 @@ function Gerador() {
           {modoRapido ? (
             <Button
               onClick={handleGenerateDirect}
-              disabled={loadingAngulos || !url.trim() || (planUsage ? !planUsage.canGerar : false)}
+              disabled={loadingAngulos || !url.trim() || !canGenerate}
               className="min-h-11 bg-gradient-primary border-0 shadow-glow"
             >
               {loadingAngulos ? (
@@ -911,13 +998,13 @@ function Gerador() {
                 variant="outline"
                 className="min-h-11"
                 onClick={handleGenerateDirect}
-                disabled={loadingPergunta || loadingAngulos || !url.trim()}
+                disabled={loadingPergunta || loadingAngulos || !url.trim() || !canGenerate}
               >
                 Gerar direto (sem pergunta)
               </Button>
               <Button
                 onClick={handleAskQuestion}
-                disabled={loadingPergunta || loadingAngulos}
+                disabled={loadingPergunta || loadingAngulos || !canGenerate}
                 className="min-h-11 bg-gradient-primary border-0 shadow-glow"
               >
                 {loadingPergunta ? (
@@ -1222,9 +1309,25 @@ function Gerador() {
                           </div>
                           <p className="text-sm text-muted-foreground leading-relaxed">{rec.justificativa}</p>
                           {rec.formato_saida === "vsl_curta" && (
-                            <p className="text-sm text-primary-glow">
-                              Ao criar o rascunho, a IA gera roteiro VSL completo de ~2 min (6 blocos, hook visual, objeções e CTA com valor).
-                            </p>
+                            <div className="mt-3 space-y-2">
+                              <p className="text-sm text-primary-glow font-medium">
+                                Este ângulo pede VSL curta — preview da estrutura:
+                              </p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                {getVslBlocksPreview(rec.duracao_alvo_seg ?? 120).map((b) => (
+                                  <div
+                                    key={b.label}
+                                    className="flex gap-2 text-xs p-2 rounded border border-primary/20 bg-background/40"
+                                  >
+                                    <span className="font-mono text-primary-glow shrink-0">{b.tempo}</span>
+                                    <span className="text-muted-foreground">{b.label}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                Duração alvo ~{rec.duracao_alvo_seg ?? 120}s · tom do briefing ({tomCalibracao}).
+                              </p>
+                            </div>
                           )}
                           {rec.formatos_saturados_nicho.length > 0 && (
                             <p className="text-xs text-muted-foreground">
@@ -1314,6 +1417,31 @@ function Gerador() {
               })}
             </Accordion>
           </div>
+
+          {selectedAngulos.size > 0 && (
+            <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/50 bg-background/95 backdrop-blur px-4 py-3 md:pl-[var(--sidebar-width,0px)]">
+              <div className="container mx-auto max-w-6xl flex items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">
+                  {selectedAngulos.size} ângulo(s) selecionado(s) — próximo: configurar produção e gerar áudio
+                </p>
+                <Button
+                  className="bg-gradient-primary border-0 shrink-0"
+                  disabled={selectedAngulos.size === 0}
+                  onClick={() => {
+                    const globalFmt = pendingFormato ?? urlFormato;
+                    const map = initFormatoPorAngulo(selectedAngulos, globalFmt ?? undefined);
+                    setFormatoPorAngulo(map);
+                    setEtapa("wizard");
+                    setWizardStep("producao");
+                    navigate({ to: "/app/gerador", search: { step: "wizard" } });
+                    persistWizard({ wizardStep: "producao", selectedAngulos: [...selectedAngulos], formatoPorAngulo: map });
+                  }}
+                >
+                  Continuar <ArrowRight className="size-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -1326,6 +1454,26 @@ function Gerador() {
 
       {etapa === "wizard" && (
         <Card className="glass bg-gradient-card p-6 space-y-6">
+          {planUsage?.tier === "free" && !planUsage.canExport && (
+            <div className="flex items-start gap-2 p-4 rounded-lg border border-warning/40 bg-warning/10 text-sm">
+              <AlertTriangle className="size-4 text-warning shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium">Limite de export atingido ({planUsage.exportsMes}/{planUsage.limits.exportsMes} este mês)</p>
+                <p className="text-muted-foreground mt-1">
+                  Você ainda pode criar rascunhos e editar. Faça upgrade para exportar mais MP4s.
+                </p>
+                <Link to="/app/plano" className="text-primary-glow text-xs hover:underline mt-1 inline-block">
+                  Ver plano e uso
+                </Link>
+              </div>
+            </div>
+          )}
+          {planUsage?.tier === "free" && planUsage.canExport && (
+            <div className="flex items-center gap-2 p-3 rounded-lg border border-border/50 bg-muted/20 text-sm text-muted-foreground">
+              <AlertTriangle className="size-4 shrink-0" />
+              Plano grátis: {planUsage.exportsMes}/{planUsage.limits.exportsMes} export(s) MP4 este mês — priorize o criativo com maior potencial.
+            </div>
+          )}
           {loadingGeracao && !resultado && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
               <Loader2 className="size-4 animate-spin" /> Carregando geração salva...
@@ -1519,8 +1667,11 @@ function Gerador() {
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setEtapa("resultado")}>Voltar aos ângulos</Button>
-                <Button onClick={() => { setWizardStep("midia"); persistWizard({ wizardStep: "midia" }); }}>
-                  Próximo <ArrowRight className="size-4 ml-1" />
+                <Button onClick={advanceFromProducao}>
+                  {resultado && needsMediaUpload(resultado.angulos, selectedAngulos, formatoPorAngulo).length === 0
+                    ? "Criar rascunhos"
+                    : "Próximo"}{" "}
+                  <ArrowRight className="size-4 ml-1" />
                 </Button>
               </div>
             </div>
@@ -1675,6 +1826,77 @@ function Gerador() {
               </div>
             </div>
           )}
+        </Card>
+      )}
+
+      {etapa === "export" && exportDrafts.length > 0 && (
+        <Card className="glass p-6 space-y-6 border border-primary/30">
+          <div>
+            <h2 className="font-display text-xl font-semibold">Export — último passo do funil</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Complete áudio, score e MP4 no editor. Depois marque como Subiu no histórico.
+            </p>
+            {planUsage && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Cota de export: {planUsage.exportsMes}/
+                {planUsage.limits.exportsMes === Infinity ? "∞" : planUsage.limits.exportsMes} este mês
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            {exportDrafts.map((d, i) => (
+              <div key={d.id} className="rounded-lg border border-border/50 p-4 space-y-3">
+                <p className="font-medium text-sm">
+                  {i + 1}. {d.nome}
+                </p>
+                <ol className="text-xs space-y-2 text-muted-foreground list-decimal list-inside">
+                  <li>Gerar narração (áudio TTS)</li>
+                  {d.needsMedia && <li>Enviar mídia de fundo / clipes</li>}
+                  <li>Avaliar score Andromeda e exportar MP4</li>
+                  <li>Subir no Meta e marcar status no histórico</li>
+                </ol>
+                <div className="flex flex-wrap gap-2">
+                  <Link to="/app/editor" search={{ criativoId: d.id, focus: "audio" }}>
+                    <Button size="sm" variant="outline">
+                      <Mic className="size-3.5 mr-1" /> Áudio
+                    </Button>
+                  </Link>
+                  {d.needsMedia && (
+                    <Link to="/app/editor" search={{ criativoId: d.id, focus: "media" }}>
+                      <Button size="sm" variant="outline">Mídia</Button>
+                    </Link>
+                  )}
+                  <Link to="/app/editor" search={{ criativoId: d.id, focus: "score" }}>
+                    <Button size="sm" className="bg-gradient-primary border-0">
+                      <Download className="size-3.5 mr-1" /> Exportar MP4
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-2 border-t border-border/50">
+            <Link to="/app/editor" search={{ criativoId: exportDrafts[0].id, focus: "audio" }}>
+              <Button className="bg-gradient-primary border-0">
+                Abrir primeiro no editor <ArrowRight className="size-4 ml-1" />
+              </Button>
+            </Link>
+            <Link to="/app/historico">
+              <Button variant="outline">Ver no histórico</Button>
+            </Link>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                localStorage.removeItem(EXPORT_STEP_STORAGE_KEY);
+                setEtapa("resultado");
+                navigate({ to: "/app/gerador", replace: true });
+              }}
+            >
+              Gerar mais ângulos
+            </Button>
+          </div>
         </Card>
       )}
 

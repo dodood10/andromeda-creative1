@@ -17,6 +17,7 @@ import type { AppLink } from "@/lib/app-links";
 import { ActivationChecklist } from "@/components/activation-checklist";
 import { UpgradeBanner } from "@/components/upgrade-banner";
 import { ContinueWizardBanner } from "@/components/continue-wizard-banner";
+import { EscalaLineageCard } from "@/components/escala-lineage-card";
 
 export const Route = createFileRoute("/app/")({
   head: () => ({
@@ -120,7 +121,17 @@ function Dashboard() {
           id: "rascunho",
           label: "Criar um rascunho no editor",
           done: stats.total > 0,
-          action: { to: "/app/gerador" as const, label: "Criar rascunho" },
+          action:
+            stats.firstExportPendingId || stats.firstCriativoId
+              ? {
+                  to: "/app/editor" as const,
+                  search: {
+                    criativoId: (stats.firstExportPendingId ?? stats.firstCriativoId)!,
+                    focus: "audio" as const,
+                  },
+                  label: "Abrir editor",
+                }
+              : { to: "/app/gerador" as const, label: "Criar rascunho" },
         },
         {
           id: "export",
@@ -155,6 +166,30 @@ function Dashboard() {
         </Link>
       </div>
 
+      {nextAction && (
+        <Card className="glass bg-gradient-card border-primary/30 p-6 shadow-glow">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-start gap-4">
+              <div className="size-12 rounded-xl bg-gradient-primary flex items-center justify-center shrink-0">
+                <Zap className="size-6 text-primary-foreground" />
+              </div>
+              <div>
+                <Badge className="bg-primary/20 text-primary-glow border-0 mb-2">Próxima ação</Badge>
+                <h2 className="font-display text-xl font-semibold">{nextAction.label}</h2>
+                <p className="text-muted-foreground mt-1 text-sm max-w-xl">
+                  {stats?.sugestao ?? "Uma ação clara por vez acelera o retorno no Meta."}
+                </p>
+              </div>
+            </div>
+            <Link to={nextAction.to} search={nextAction.search}>
+              <Button className="bg-gradient-primary border-0">
+                Fazer agora <ArrowRight className="size-4 ml-1.5" />
+              </Button>
+            </Link>
+          </div>
+        </Card>
+      )}
+
       {planUsage && !planUsage.canGerar && (
         <UpgradeBanner message="Você atingiu o limite de gerações do plano grátis este mês." upgradeTo="/app/plano" />
       )}
@@ -185,6 +220,10 @@ function Dashboard() {
         </Card>
       )}
 
+      {stats?.escalaLineage && stats.escalaLineage.length > 0 && (
+        <EscalaLineageCard lineage={stats.escalaLineage} />
+      )}
+
       {stats && activationSteps.length > 0 && <ActivationChecklist steps={activationSteps} />}
 
       {stats?.total === 0 && !isLoading && (
@@ -196,30 +235,6 @@ function Dashboard() {
           <Link to="/app/gerador">
             <Button className="min-h-11 bg-gradient-primary border-0">Gerar meus primeiros 5 ângulos</Button>
           </Link>
-        </Card>
-      )}
-
-      {nextAction && (
-        <Card className="glass bg-gradient-card border-primary/30 p-6 shadow-glow">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex items-start gap-4">
-              <div className="size-12 rounded-xl bg-gradient-primary flex items-center justify-center shrink-0">
-                <Zap className="size-6 text-primary-foreground" />
-              </div>
-              <div>
-                <Badge className="bg-primary/20 text-primary-glow border-0 mb-2">Próxima ação</Badge>
-                <h2 className="font-display text-xl font-semibold">{nextAction.label}</h2>
-                <p className="text-muted-foreground mt-1 text-sm max-w-xl">
-                  {stats?.sugestao ?? "Uma ação clara por vez acelera o retorno no Meta."}
-                </p>
-              </div>
-            </div>
-            <Link to={nextAction.to} search={nextAction.search}>
-              <Button className="bg-gradient-primary border-0">
-                Fazer agora <ArrowRight className="size-4 ml-1.5" />
-              </Button>
-            </Link>
-          </div>
         </Card>
       )}
 

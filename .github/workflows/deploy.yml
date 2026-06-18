@@ -28,3 +28,35 @@ jobs:
           CI: "true"
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://yagovrnfwbuvuoeeiqjl.supabase.co' }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_META_PIXEL_ID: ${{ secrets.VITE_META_PIXEL_ID || '4269485799969770' }}
+
+  deploy:
+    name: Deploy Cloudflare Worker
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Cloudflare Worker bundle
+        run: npm run build:worker
+        env:
+          CI: "true"
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_META_PIXEL_ID: ${{ secrets.VITE_META_PIXEL_ID || '4269485799969770' }}
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy

@@ -8,6 +8,13 @@ import { buildVslRoteiroFromAngulo, vslOutputToRoteiro } from "./vsl-roteiro";
 import { trackApiUsage } from "./api-usage";
 import type { ResultadoAngulos } from "./schemas/angulos.schema";
 import { AnguloSchema } from "./schemas/angulos.schema";
+import {
+  formatVslDurationPrompt,
+  resolveVslTargetDurationSec,
+} from "./vsl-duration";
+import { formatCalibrationBiasInstruction, loadProjectIntelSettings } from "./sinais-calibration";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/integrations/supabase/types";
 
 const InputSchema = z.object({
   geracaoId: z.string().uuid().optional(),
@@ -36,14 +43,21 @@ export async function generateVslFromAngulo(params: {
   goal: string;
   context: string;
   tomCalibracao: string;
+  supabase?: SupabaseClient<Database>;
+  projectId?: string | null;
 }): Promise<GerarVslResult> {
   const angulo = params.angulo;
+  const duracaoAlvo = resolveVslTargetDurationSec(angulo);
   const fallbackRoteiro = buildVslRoteiroFromAngulo(angulo);
 
   if (!params.apiKey) {
     return {
       roteiro: fallbackRoteiro,
-      anguloJsonExtras: { vsl_dev_mode: true, vsl_gerado_em: new Date().toISOString() },
+      anguloJsonExtras: {
+        vsl_dev_mode: true,
+        vsl_gerado_em: new Date().toISOString(),
+        vsl_duracao_alvo_seg: duracaoAlvo,
+      },
       devMode: true,
     };
   }
@@ -54,17 +68,37 @@ export async function generateVslFromAngulo(params: {
     autoritativo: "Autoritativo e técnico",
   }[params.tomCalibracao as keyof typeof tomLabel] ?? params.tomCalibracao;
 
+  let calibrationBlock = "";
+  if (params.supabase && params.projectId) {
+    const settings = await loadProjectIntelSettings(params.supabase, params.projectId);
+    calibrationBlock = formatCalibrationBiasInstruction(settings);
+    if (calibrationBlock) calibrationBlock = `\n\nCONTEXTO DE CALIBRAÇÃO:\n${calibrationBlock}`;
+  }
+
+  const objecoesDoAngulo = angulo.estrutura
+    .filter((b) => /obje|cta|prova/i.test(b.tempo) || b.conteudo.length > 20)
+    .slice(-2)
+    .map((b) => b.conteudo);
+
   const userMsg = `URL: ${params.url}
 Tipo de produto: ${params.productType}
 Objetivo: ${params.goal}
 Contexto: ${params.context || "(nenhum)"}
-Tom: ${tomLabel}
+Tom de calibração: ${tomLabel}
+
+DURAÇÃO ALVO TOTAL: ${duracaoAlvo} segundos
+DISTRIBUIÇÃO POR BLOCO:
+${formatVslDurationPrompt(duracaoAlvo)}
 
 ÂNGULO SELECIONADO (use esta micropersona exclusivamente):
 ${JSON.stringify(angulo, null, 2)}
 
+OBJEÇÕES / CTA já mapeados no ângulo (reutilize no bloco 5 quando fizer sentido):
+${objecoesDoAngulo.length ? objecoesDoAngulo.join("\n---\n") : "(derivar do ângulo)"}
+${calibrationBlock}
+
 Visite a URL com web_search se necessário para depoimentos, garantia e oferta.
-Gere a VSL curta completa de 2 minutos em JSON.`;
+Gere a VSL completa em JSON respeitando a duração alvo e a calibração de tom por bloco.`;
 
   try {
     const text = await callAnthropicJson({
@@ -78,7 +112,7 @@ Gere a VSL curta completa de 2 minutos em JSON.`;
     if (!parsed.success) {
       throw new Error(parsed.error.message.slice(0, 200));
     }
-    const { roteiro, extras } = vslOutputToRoteiro(parsed.data);
+    const { roteiro, extras } = vslOutputToRoteiro(parsed.data, duracaoAlvo);
     trackApiUsage({
       userId: params.userId,
       organizationId: params.organizationId,
@@ -96,7 +130,11 @@ Gere a VSL curta completa de 2 minutos em JSON.`;
     console.error("[gerarVslCurta]", e);
     return {
       roteiro: fallbackRoteiro,
-      anguloJsonExtras: { vsl_dev_mode: true, vsl_gerado_em: new Date().toISOString() },
+      anguloJsonExtras: {
+        vsl_dev_mode: true,
+        vsl_gerado_em: new Date().toISOString(),
+        vsl_duracao_alvo_seg: duracaoAlvo,
+      },
       devMode: true,
     };
   }
@@ -115,6 +153,7 @@ export const gerarVslCurta = createServerFn({ method: "POST" })
     let goal = data.goal ?? "conv";
     let ctx = data.context ?? "";
     let organizationId: string | null = null;
+    let projectId: string | null = null;
 
     if (data.criativoId) {
       const { data: criativo, error } = await supabase
@@ -124,6 +163,7 @@ export const gerarVslCurta = createServerFn({ method: "POST" })
         .single();
       if (error || !criativo) throw new Error("Criativo não encontrado");
       organizationId = criativo.organization_id;
+      projectId = criativo.project_id;
 
       if (criativo.geracao_id) {
         const { data: geracao } = await supabase
@@ -158,6 +198,7 @@ export const gerarVslCurta = createServerFn({ method: "POST" })
         .single();
       if (error || !geracao) throw new Error("Geração não encontrada");
       organizationId = geracao.organization_id;
+      projectId = geracao.project_id;
       url = geracao.url;
       productType = geracao.product_type ?? productType;
       goal = geracao.goal ?? goal;
@@ -178,6 +219,8 @@ export const gerarVslCurta = createServerFn({ method: "POST" })
       goal,
       context: ctx,
       tomCalibracao: data.tomCalibracao ?? "direto",
+      supabase,
+      projectId,
     });
 
     if (data.criativoId) {

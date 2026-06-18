@@ -1,28 +1,11 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+/** VSL consolidada no gerador — rota legada redireciona com formato pré-selecionado. */
 export const Route = createFileRoute("/app/vsl")({
-  head: () => ({
-    meta: [{ title: "VSL curta · Andromeda" }],
-  }),
-  component: VslRedirect,
-});
-
-function VslRedirect() {
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    navigate({
+  beforeLoad: () => {
+    throw redirect({
       to: "/app/gerador",
-      search: { step: "wizard", formato: "vsl_curta" },
-      replace: true,
+      search: { formato: "vsl_curta" },
     });
-  }, [navigate]);
-
-  return (
-    <div className="flex items-center justify-center h-[40vh]">
-      <Loader2 className="size-8 animate-spin text-primary-glow" />
-    </div>
-  );
-}
+  },
+});

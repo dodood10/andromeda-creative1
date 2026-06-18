@@ -46,18 +46,35 @@ export const getPlanUsage = createServerFn({ method: "POST" })
 
     const { count: exportsMes } = await exportsQuery;
 
+    let escalaQuery = supabase
+      .from("criativos")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", since)
+      .like("angulo", "% · var %");
+
+    if (data.organizationId) {
+      escalaQuery = escalaQuery.eq("organization_id", data.organizationId);
+    } else {
+      escalaQuery = escalaQuery.eq("user_id", userId);
+    }
+
+    const { count: escalaMes } = await escalaQuery;
+
     const limits = PLAN_LIMITS[tier];
 
     return {
       tier,
       geracoesMes: geracoesMes ?? 0,
       exportsMes: exportsMes ?? 0,
+      escalaMes: escalaMes ?? 0,
       limits: {
         geracoesMes: limits.geracoesMes,
         exportsMes: limits.exportsMes,
+        escalaMes: limits.escalaMes,
       },
       canGerar: (geracoesMes ?? 0) < limits.geracoesMes,
       canExport: (exportsMes ?? 0) < limits.exportsMes,
+      canEscala: limits.escalaMes === Infinity || (escalaMes ?? 0) < limits.escalaMes,
       label: PLAN_LABELS[tier],
     };
   });

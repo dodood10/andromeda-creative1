@@ -7,6 +7,10 @@ Use lateralização (Anthony Carreiro), isolamento de variável (Derick Carneiro
 
 PRINCÍPIO: nunca lateralizar sem evidência de performance. Mudar UMA variável por vez.
 
+Se receber CONTEXTO DE MÉTRICAS REAIS do campeão, calibre probabilidade_superar_original e ordem_lancamento com esses dados — não ignore CPA, ROAS, gasto ou hook rate reportados.
+Se a transcrição vier de WHISPER (áudio real do MP4), priorize-a sobre o roteiro JSON para identificar o que realmente rodou no Meta.
+Se o histórico do projeto indicar que uma variável (ex: hook-t, ugc_avatar) já falhou 2+ vezes, reduza probabilidade_superar_original para "baixa" nessa variação.
+
 OPERAÇÕES OBRIGATÓRIAS:
 1) Transcrição por blocos de tempo
 2) Estrutura invisível: ângulo psicológico, gatilhos, função por bloco, Schwartz, variáveis presentes
@@ -58,12 +62,15 @@ Português do Brasil.`;
 
 export const ESCALA_VARIACAO_SYSTEM = `Você gera UMA variação de criativo campeão para escala Andromeda.
 Mantenha pontos de força intactos. Mude apenas o que a variação exige.
+Para hook-t: inclua utm_suggestion para tracking A/B no Meta (slug curto, sem espaços).
 Responda APENAS JSON:
 {
   "variacao_id": "string",
   "nome": "string",
   "nivel_risco": "string",
   "instrucao_producao": "string",
+  "diff_vs_original": "string — 1 frase: o que mudou vs campeão",
+  "utm_suggestion": "string opcional — só para hook-t",
   "roteiro": [{"tempo":"string","conteudo":"string","tipo":"string","hook_visual":"opcional"}],
   "estilo_producao": "texto_animado|clipes_texto ou omitir",
   "sinais_esperados": { "hook_rate_estimado": "string", "feedback_negativo_esperado": "string", "fatia_leilao": "string" }

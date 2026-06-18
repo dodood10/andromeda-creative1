@@ -126,7 +126,7 @@ export async function getProjectFormatContext(
   for (const c of criativos) {
     if (c.formato_saida) formatosSet.add(c.formato_saida as FormatoSaida);
     if (c.estilo_producao) estilosSet.add(c.estilo_producao as EstiloProducao);
-    if (c.status === "Performando" && c.performando_intel_status === "approved") {
+    if (c.status === "Performando") {
       performando++;
       topPerformers.push({
         angulo: c.angulo,

@@ -33,7 +33,6 @@ import {
   TrendingUp,
   Plus,
   CreditCard,
-  Film,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { WorkspaceProvider, useWorkspace } from "@/contexts/workspace-context";
@@ -53,22 +52,11 @@ type NavItem = { title: string; url: string; icon: typeof Sparkles; exact?: bool
 
 const navGroups: Array<{ label: string; items: NavItem[] }> = [
   {
-    label: "Criar",
-    items: [
-      { title: "Gerar ângulos", url: "/app/gerador", icon: Wand2 },
-      { title: "VSL curta", url: "/app/vsl", icon: Film },
-    ],
-  },
-  {
-    label: "Gerenciar",
+    label: "Funil",
     items: [
       { title: "Dashboard", url: "/app", icon: Sparkles, exact: true },
-      { title: "Meus criativos", url: "/app/historico", icon: History },
-    ],
-  },
-  {
-    label: "Crescer",
-    items: [
+      { title: "Criar ângulos", url: "/app/gerador", icon: Wand2 },
+      { title: "Histórico", url: "/app/historico", icon: History },
       { title: "Inteligência", url: "/app/inteligencia", icon: BarChart3 },
       { title: "Escala", url: "/app/escala", icon: TrendingUp },
     ],
@@ -298,7 +286,7 @@ function AppSidebar({ isOwner }: { isOwner: boolean }) {
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
-                {group.label === "Criar" && (
+                {group.label === "Funil" && (
                   <EditorNavLink isActive={isActive("/app/editor")} />
                 )}
               </SidebarMenu>

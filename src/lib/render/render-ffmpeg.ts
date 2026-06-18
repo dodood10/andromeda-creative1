@@ -42,4 +42,41 @@ export async function callFfmpegRender(payload: {
   return (await res.json()) as { paths: string[] };
 }
 
+export type FfmpegTranscribeResult = {
+  text: string;
+  language?: string;
+  duration?: number;
+  segments: Array<{ start: number; end: number; text: string }>;
+};
+
+export async function callFfmpegTranscribe(payload: {
+  criativoId: string;
+  storagePath: string;
+}): Promise<FfmpegTranscribeResult | null> {
+  const ffmpegUrl = process.env.FFMPEG_SERVICE_URL;
+  const ffmpegSecret = process.env.FFMPEG_SERVICE_SECRET;
+  if (!ffmpegUrl || !ffmpegSecret) {
+    return null;
+  }
+
+  const res = await fetch(`${ffmpegUrl}/transcribe`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${ffmpegSecret}`,
+    },
+    body: JSON.stringify({
+      criativoId: payload.criativoId,
+      storagePath: payload.storagePath,
+    }),
+  });
+
+  if (!res.ok) {
+    console.warn(`[ffmpeg-transcribe] ${res.status}`);
+    return null;
+  }
+
+  return (await res.json()) as FfmpegTranscribeResult;
+}
+
 export { BUCKET };

@@ -24,9 +24,10 @@ node server.mjs
 
 Endpoints:
 
-- `GET /health` — health check
+- `GET /health` — health check (`whisper: true` se `OPENAI_API_KEY` configurado)
 - `POST /render` — texto animado (fundo + legendas + áudio)
 - `POST /render-clipes` — concatena clipes + legendas + áudio
+- `POST /transcribe` — extrai áudio do MP4 exportado + Whisper (requer `OPENAI_API_KEY`)
 
 Header: `Authorization: Bearer <FFMPEG_SERVICE_SECRET>`
 

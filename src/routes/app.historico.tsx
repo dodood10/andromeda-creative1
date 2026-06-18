@@ -301,13 +301,19 @@ function Historico() {
     }
     setCsvLoading(true);
     try {
-      const { imported, total } = await runImportCsv({
+      const { imported, total, autoApproved, performandoAuto } = await runImportCsv({
         data: { projectId, csvText: csvText.trim() },
       });
-      toast.success(`${imported} de ${total} linhas importadas`);
+      let msg = `${imported} de ${total} linhas importadas`;
+      if (autoApproved > 0) msg += ` · ${autoApproved} métrica(s) validadas automaticamente`;
+      if (performandoAuto > 0) msg += ` · ${performandoAuto} campeão(ões) detectado(s)`;
+      toast.success(msg);
       setCsvOpen(false);
       setCsvText("");
       queryClient.invalidateQueries({ queryKey: ["resultados", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["inteligencia", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["criativos"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao importar CSV");
     } finally {
@@ -455,6 +461,7 @@ function Historico() {
       <ResultadoDialog
         open={!!reportModal}
         title={`Reportar resultado · ${reportModal?.angulo ?? ""}`}
+        escalarCriativoId={reportModal?.id}
         resultadoTipo={resultadoTipo}
         setResultadoTipo={setResultadoTipo}
         metrica={metrica}
@@ -507,6 +514,18 @@ function Historico() {
           >
             Adicionar novo resultado
           </Button>
+          {viewResultados?.id && (
+            <Link
+              to="/app/escala"
+              search={{ criativoId: viewResultados.id }}
+              className="block"
+              onClick={() => setViewResultados(null)}
+            >
+              <Button className="w-full bg-gradient-primary border-0">
+                <TrendingUp className="size-4 mr-1.5" /> Escalar
+              </Button>
+            </Link>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -640,7 +659,8 @@ function Historico() {
             <DialogTitle>Importar métricas do Ads Manager</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Exporte um relatório CSV do Meta Ads com colunas de anúncio, utm_content ou gasto. O Andromeda associa por utm_content ou nome do ângulo.
+            Exporte um relatório CSV do Meta Ads com colunas de anúncio, utm_content, gasto, CPA, ROAS e hook rate.
+            O Andromeda associa por utm_content ou nome do ângulo. Métricas fortes podem marcar criativos como Performando automaticamente.
           </p>
           <Textarea
             rows={8}
@@ -661,6 +681,7 @@ function Historico() {
 function ResultadoDialog({
   open,
   title,
+  escalarCriativoId,
   resultadoTipo,
   setResultadoTipo,
   metrica,
@@ -675,6 +696,7 @@ function ResultadoDialog({
 }: {
   open: boolean;
   title: string;
+  escalarCriativoId?: string;
   resultadoTipo: ResultadoTipo;
   setResultadoTipo: (v: ResultadoTipo) => void;
   metrica: string;
@@ -722,6 +744,18 @@ function ResultadoDialog({
           <Button className="w-full bg-gradient-primary border-0" onClick={onSubmit} disabled={pending}>
             Salvar resultado
           </Button>
+          {escalarCriativoId && (
+            <Link
+              to="/app/escala"
+              search={{ criativoId: escalarCriativoId }}
+              className="block"
+              onClick={onClose}
+            >
+              <Button variant="outline" className="w-full">
+                <TrendingUp className="size-4 mr-1.5" /> Escalar agora
+              </Button>
+            </Link>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -805,6 +839,13 @@ function CriativoCard({
         {row.export_status !== "pronto" && (
           <Link to="/app/editor" search={{ criativoId: row.id, focus: "score" }}>
             <Button size="sm" className="min-h-11 bg-gradient-primary border-0">Exportar</Button>
+          </Link>
+        )}
+        {row.status === "Performando" && (
+          <Link to="/app/escala" search={{ criativoId: row.id }}>
+            <Button size="sm" variant="outline" className="min-h-11">
+              <TrendingUp className="size-3.5 mr-1" /> Escalar
+            </Button>
           </Link>
         )}
       </div>

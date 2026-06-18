@@ -11,7 +11,7 @@ import { Slider } from "@/components/ui/slider";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Download, Mic, Music, Type, Loader2, Sparkles, Upload, Image, Copy, CheckCircle2, AlertTriangle, ExternalLink, ChevronDown, RefreshCw } from "lucide-react";
+import { Download, Mic, Music, Type, Loader2, Sparkles, Upload, Image, Copy, CheckCircle2, AlertTriangle, ExternalLink, ChevronDown, RefreshCw, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { getCriativo, getLatestCriativo, updateCriativoRoteiro, updateCriativoStatus, getGeradorEtaEstimates } from "@/lib/criativos.functions";
 import {
@@ -537,6 +537,9 @@ function Editor({ criativoId, focus }: EditorProps) {
   const exportEtaLabel = formatEtaRange(exportEtaSec);
   const isVsl = criativo.formato_saida === "vsl_curta" || isVslRoteiro(roteiro);
   const vslExtras = (criativo.angulo_json as VslAnguloJsonExtras | null) ?? {};
+  const escalaDiff = (criativo.angulo_json as { escala_diff_vs_original?: string; escala_variacao_id?: string } | null)
+    ?.escala_diff_vs_original;
+  const escalaVarId = (criativo.angulo_json as { escala_variacao_id?: string } | null)?.escala_variacao_id;
   const vslDevMode = !!vslExtras.vsl_dev_mode;
   const blocoAtual = roteiro[block];
   const audioPaths = criativo.audio_paths ?? {};
@@ -566,6 +569,14 @@ function Editor({ criativoId, focus }: EditorProps) {
               : exportDevMode
                 ? "Export em modo dev: arquivos MP4 são placeholders. Configure FFMPEG_SERVICE_URL para render real."
                 : "Áudio em modo dev: narração não será gerada. Configure ELEVENLABS_API_KEY para voz real."}
+          </span>
+        </div>
+      )}
+      {escalaDiff && (
+        <div className="px-6 py-2 bg-accent/10 border-b border-accent/30 flex items-start gap-2 text-sm">
+          <TrendingUp className="size-4 text-accent shrink-0 mt-0.5" />
+          <span>
+            <strong>Variação de escala{escalaVarId ? ` (${escalaVarId})` : ""}:</strong> {escalaDiff}
           </span>
         </div>
       )}

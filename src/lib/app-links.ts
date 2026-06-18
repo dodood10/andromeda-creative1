@@ -7,9 +7,8 @@ export type AppLink = {
     | "/app/editor"
     | "/app/projetos"
     | "/app/escala"
-  | "/app/inteligencia"
-  | "/app/vsl"
-  | "/app/plano";
+    | "/app/inteligencia"
+    | "/app/plano";
   search?: Record<string, string | undefined>;
 };
 
@@ -22,3 +21,8 @@ export function appLinkToHref(link: AppLink): string {
   const q = params.toString();
   return q ? `${link.to}?${q}` : link.to;
 }
+
+import { getVslBlocksPreview } from "@/lib/vsl-duration";
+
+/** Preview estático 120s — use getVslBlocksPreview(duracao) para duração dinâmica */
+export const VSL_BLOCKS_PREVIEW = getVslBlocksPreview(120);

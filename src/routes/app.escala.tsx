@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useRef, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -13,7 +13,6 @@ import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   TrendingUp,
-  Upload,
   Sparkles,
   Play,
   Loader2,
@@ -21,15 +20,16 @@ import {
   Search,
   AlertTriangle,
   ListOrdered,
+  BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useAuth } from "@/hooks/use-auth";
-import { useWorkspace } from "@/contexts/workspace-context";
-import { uploadCriativoMedia } from "@/lib/storage";
-import { getCriativo, listCriativos } from "@/lib/criativos.functions";
+import { getCriativo, listCriativos, fetchChampionPerformance } from "@/lib/criativos.functions";
 import { analisarCampeao, gerarVariacoesEscala } from "@/lib/escala.functions";
 import { getSignedExportUrls } from "@/lib/export.functions";
+import { getPlanUsage } from "@/lib/plan.functions";
+import { EscalaLimitModal } from "@/components/escala-limit-modal";
 import type { EscalaAnalise } from "@/lib/schemas/escala.schema";
+import { useWorkspace } from "@/contexts/workspace-context";
 
 const searchSchema = z.object({
   criativoId: z.string().uuid().optional(),
@@ -61,7 +61,6 @@ function variacaoKey(v: SelectedVariacao) {
 function Escala() {
   const { criativoId } = Route.useSearch();
   const navigate = useNavigate();
-  const { user } = useAuth();
   const { organizationId, projectId } = useWorkspace();
   const queryClient = useQueryClient();
   const fetchCriativo = useServerFn(getCriativo);
@@ -69,6 +68,17 @@ function Escala() {
   const runAnalise = useServerFn(analisarCampeao);
   const runVariacoes = useServerFn(gerarVariacoesEscala);
   const signExports = useServerFn(getSignedExportUrls);
+  const fetchChampPerf = useServerFn(fetchChampionPerformance);
+  const fetchPlanUsage = useServerFn(getPlanUsage);
+
+  const { data: planUsage } = useQuery({
+    queryKey: ["plan-usage", organizationId],
+    queryFn: () => fetchPlanUsage({ data: { organizationId: organizationId! } }),
+    enabled: !!organizationId,
+    staleTime: 60_000,
+  });
+
+  const [escalaLimitOpen, setEscalaLimitOpen] = useState(false);
 
   const { data: campeao } = useQuery({
     queryKey: ["criativo", criativoId],
@@ -85,6 +95,13 @@ function Escala() {
     enabled: !!projectId && !criativoId,
   });
 
+  const { data: champPerf } = useQuery({
+    queryKey: ["champion-perf", criativoId],
+    queryFn: () => fetchChampPerf({ data: { criativoId: criativoId! } }),
+    enabled: !!criativoId,
+    staleTime: 120_000,
+  });
+
   const aj = (campeao?.angulo_json as { escala_analise?: EscalaAnalise } | null) ?? {};
   const analiseCache = aj.escala_analise;
 
@@ -92,24 +109,33 @@ function Escala() {
   const [step, setStep] = useState<"analise" | "geracao">(analiseCache ? "geracao" : "analise");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  const preselectFromOrdem = (analiseData: EscalaAnalise) => {
+    const next = new Set<string>();
+    for (const id of analiseData.ordem_lancamento.slice(0, 3)) {
+      if (analiseData.menu_variacoes.some((m) => m.id === id)) next.add(id);
+    }
+    if (next.size === 0 && analiseData.menu_variacoes[0]) {
+      next.add(analiseData.menu_variacoes[0].id);
+    }
+    setSelected(next);
+  };
+
   useEffect(() => {
     if (analiseCache) {
       setAnalise(analiseCache);
       setStep("geracao");
+      preselectFromOrdem(analiseCache);
     }
   }, [analiseCache]);
 
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadedPath, setUploadedPath] = useState<string | null>(null);
   const [variacoesCriadas, setVariacoesCriadas] = useState<
     Array<{ tipo: string; hook: string; criativoId?: string; angulo: string }> | null
   >(null);
+
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const statusOk = ["Performando", "Rodando", "Subiu"].includes(campeao?.status ?? "");
   const intelPending = campeao?.performando_intel_status === "pending";
-  const canScale = statusOk;
 
   const analiseMutation = useMutation({
     mutationFn: (force: boolean) => {
@@ -119,6 +145,7 @@ function Escala() {
     onSuccess: (data) => {
       setAnalise(data.analise);
       setStep("geracao");
+      preselectFromOrdem(data.analise);
       queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
       toast.success(data.cached ? "Análise carregada do cache" : "Análise do campeão concluída");
     },
@@ -189,25 +216,17 @@ function Escala() {
     }
   }
 
-  async function handleFileUpload(file: File) {
-    if (!user) {
-      toast.error("Faça login para enviar vídeos");
+  function handleGerarVariacoes() {
+    if (planUsage && !planUsage.canEscala) {
+      setEscalaLimitOpen(true);
       return;
     }
-    setUploading(true);
-    try {
-      const { path } = await uploadCriativoMedia(user.id, file, projectId ?? undefined);
-      setUploadedPath(path);
-      toast.success("Vídeo enviado para o storage");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro no upload");
-    } finally {
-      setUploading(false);
-    }
+    gerarMutation.mutate();
   }
 
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-6xl space-y-8">
+      <EscalaLimitModal open={escalaLimitOpen} onOpenChange={setEscalaLimitOpen} />
       <AppBreadcrumbs
         items={[
           { label: "Projeto", to: "/app" },
@@ -224,6 +243,17 @@ function Escala() {
             : "Pegue o que está performando e gere variações em lote."}
         </p>
       </div>
+
+      {planUsage && !planUsage.canEscala && (
+        <Card className="glass p-4 border border-warning/40 bg-warning/10 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm">
+            Variações de escala com IA exigem plano Pro. Você ainda pode analisar o campeão gratuitamente.
+          </p>
+          <Button size="sm" variant="outline" onClick={() => setEscalaLimitOpen(true)}>
+            Ver opções de upgrade
+          </Button>
+        </Card>
+      )}
 
       {!criativoId && (
         <Card className="glass p-6 space-y-4 border border-primary/20">
@@ -287,6 +317,20 @@ function Escala() {
                     <Badge className="bg-success/20 text-success border-success/40 mb-2">{campeao.status}</Badge>
                     <h2 className="font-display text-xl font-semibold">{campeao.angulo}</h2>
                     <p className="text-sm text-muted-foreground mt-1">{campeao.produto} · {campeao.formato_saida ?? campeao.formato}</p>
+                    {champPerf && champPerf.metrics.length > 0 && (
+                      <div className="mt-3 p-3 rounded-lg bg-success/5 border border-success/20 space-y-1">
+                        <p className="text-xs font-semibold flex items-center gap-1.5 text-success">
+                          <BarChart3 className="size-3.5" /> Métricas do campeão
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {champPerf.metrics.slice(0, 6).map((m) => (
+                            <Badge key={`${m.metrica}-${m.valor}`} variant="outline" className="text-[10px]">
+                              {m.metrica}: {m.valor}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {!statusOk && (
                       <div className="mt-3 flex items-start gap-2 text-sm text-warning p-3 rounded-lg bg-warning/10 border border-warning/30">
                         <AlertTriangle className="size-4 shrink-0 mt-0.5" />
@@ -522,7 +566,7 @@ function Escala() {
           <Button
             className="bg-gradient-primary border-0 shadow-glow"
             disabled={!criativoId || selected.size === 0 || gerarMutation.isPending}
-            onClick={() => gerarMutation.mutate()}
+            onClick={handleGerarVariacoes}
           >
             {gerarMutation.isPending ? (
               <Loader2 className="size-4 animate-spin mr-1.5" />

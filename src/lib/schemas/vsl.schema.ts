@@ -50,6 +50,14 @@ export const VslOutputSchema = z.object({
     tom_voz: z.string(),
     safe_zone: z.string().optional(),
   }),
+  checklist_meta_ads: z
+    .object({
+      duracao_seg: z.number().optional(),
+      safe_zone_ok: z.boolean().optional(),
+      claims_sensiveis: z.array(z.string()).optional(),
+      aprovacao_previa: z.string().optional(),
+    })
+    .optional(),
   sinais_andromeda: z.object({
     hook_rate_estimado: z.string(),
     hold_rate_30s: z.string(),

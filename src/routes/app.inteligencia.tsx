@@ -93,7 +93,12 @@ function Inteligencia() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard label="Criativos" value={resumo?.total ?? 0} />
-            <StatCard label="Performando (validados)" value={resumo?.performando ?? 0} accent="success" />
+            <StatCard
+              label="Performando"
+              value={resumo?.performando ?? 0}
+              sub={resumo?.performandoValidados != null ? `${resumo.performandoValidados} validados` : undefined}
+              accent="success"
+            />
             <StatCard label="Rodando" value={resumo?.rodando ?? 0} accent="accent" />
             <StatCard
               label="Hook rate médio (est.)"
@@ -112,6 +117,45 @@ function Inteligencia() {
                   `${data.pendentesValidacao.resultados} métrica(s) reportada(s)`}
                 {" — "}somente dados validados entram nos insights e nas próximas gerações de ângulos.
               </p>
+            </Card>
+          )}
+
+          {(data.intelSettings?.hook_rate_bias_pp != null ||
+            (data.sinaisCalibration?.length ?? 0) > 0) && (
+            <Card className="glass p-6 space-y-4 border border-primary/20">
+              <h2 className="font-semibold flex items-center gap-2">
+                <TrendingDown className="size-4 text-primary-glow" /> Calibração hook rate (estimado vs real)
+              </h2>
+              {data.intelSettings?.hook_rate_bias_pp != null && (
+                <p className="text-sm text-muted-foreground">
+                  Bias do projeto: estimativas{" "}
+                  {data.intelSettings.hook_rate_bias_pp > 0
+                    ? `subestimaram em ~${data.intelSettings.hook_rate_bias_pp}pp`
+                    : data.intelSettings.hook_rate_bias_pp < 0
+                      ? `superestimaram em ~${Math.abs(data.intelSettings.hook_rate_bias_pp)}pp`
+                      : "alinhadas com o real"}
+                  {data.intelSettings.calibration_samples
+                    ? ` (${data.intelSettings.calibration_samples} amostra(s))`
+                    : ""}
+                  . Próximas gerações de ângulos ajustam automaticamente.
+                </p>
+              )}
+              {(data.sinaisCalibration?.length ?? 0) > 0 && (
+                <div className="space-y-2">
+                  {data.sinaisCalibration!.map((s) => (
+                    <div
+                      key={s.angulo}
+                      className="flex flex-wrap justify-between gap-2 p-3 rounded-lg border border-border/40 text-sm"
+                    >
+                      <span className="font-medium truncate pr-4">{s.angulo}</span>
+                      <span className="text-muted-foreground font-mono text-xs">
+                        est. {s.hookRateEstimado ?? "—"} → real {s.hookRateReal ?? "—"}
+                        {s.delta ? ` (${s.delta})` : ""}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
           )}
 
@@ -210,9 +254,17 @@ function Inteligencia() {
                 {resumo?.exportados ?? 0} exportados
               </p>
             </div>
-            <Link to="/app/historico" search={{ status: "Performando" }}>
+            <Link
+              to="/app/escala"
+              search={
+                data.firstPerformandoCriativoId
+                  ? { criativoId: data.firstPerformandoCriativoId }
+                  : undefined
+              }
+            >
               <Button className="bg-gradient-primary border-0">
-                Ver campeões no histórico <ArrowRight className="size-4 ml-1.5" />
+                {data.firstPerformandoCriativoId ? "Escalar campeão" : "Ver campeões"}{" "}
+                <ArrowRight className="size-4 ml-1.5" />
               </Button>
             </Link>
           </Card>
@@ -225,10 +277,12 @@ function Inteligencia() {
 function StatCard({
   label,
   value,
+  sub,
   accent,
 }: {
   label: string;
   value: string | number;
+  sub?: string;
   accent?: "success" | "accent";
 }) {
   const Icon = accent === "success" ? TrendingUp : accent === "accent" ? TrendingDown : BarChart3;
@@ -239,6 +293,7 @@ function StatCard({
         <Icon className={`size-4 ${accent === "success" ? "text-success" : "text-primary-glow"}`} />
       </div>
       <div className="text-3xl font-display font-bold">{value}</div>
+      {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
     </Card>
   );
 }

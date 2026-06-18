@@ -12,7 +12,8 @@ import {
   executeCriativoRender,
 } from "@/lib/render/render-orchestrator";
 import { createRenderJob } from "@/lib/render/render-jobs";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { ensureExportTranscription } from "@/lib/transcribe-export";
+import type { ExportTranscricaoSnapshot } from "@/lib/export-transcription";
 
 export type CriativoRenderRow = {
   id: string;
@@ -59,6 +60,14 @@ export async function processCriativoRenderJob(params: {
 
   const existingScore = criativo.score_json;
   const scorePatch = buildExportScorePatch(existingScore, resolved);
+  const aj = (criativo.angulo_json as Record<string, unknown>) ?? {};
+  const existingSnapshot = (aj.export_transcricao as ExportTranscricaoSnapshot | undefined) ?? null;
+  const exportTranscricao = await ensureExportTranscription({
+    criativoId: criativo.id,
+    roteiro,
+    exportPaths: paths,
+    existing: existingSnapshot,
+  });
 
   await supabase
     .from("criativos")
@@ -67,6 +76,7 @@ export async function processCriativoRenderJob(params: {
       export_paths: paths,
       storage_path: paths[0] ?? null,
       audio_paths: audioPaths,
+      angulo_json: { ...aj, export_transcricao: exportTranscricao },
       score_json: devMode
         ? {
             ...scorePatch,

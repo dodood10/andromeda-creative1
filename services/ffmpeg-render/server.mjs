@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createClient } from "@supabase/supabase-js";
+import { File } from "node:buffer";
 
 const PORT = process.env.PORT ?? 3456;
 const SECRET = process.env.FFMPEG_SERVICE_SECRET ?? "dev-secret";
@@ -312,12 +313,94 @@ async function processRenderClipes(payload) {
   return { paths: storagePaths, utm: utmContent ?? criativoId };
 }
 
+async function callOpenAiWhisper(audioPath) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+
+  const file = new File([fs.readFileSync(audioPath)], "audio.mp3", { type: "audio/mpeg" });
+  const form = new FormData();
+  form.append("file", file);
+  form.append("model", "whisper-1");
+  form.append("language", "pt");
+  form.append("response_format", "verbose_json");
+  form.append("timestamp_granularities[]", "segment");
+
+  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Whisper API ${res.status}: ${err.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const segments = (data.segments ?? []).map((s) => ({
+    start: s.start,
+    end: s.end,
+    text: s.text?.trim() ?? "",
+  }));
+
+  return {
+    text: data.text ?? "",
+    language: data.language ?? "pt",
+    duration: data.duration ?? segments[segments.length - 1]?.end,
+    segments,
+  };
+}
+
+async function processTranscribe(payload) {
+  const { storagePath, criativoId } = payload;
+  if (!storagePath) throw new Error("storagePath obrigatório");
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    throw new Error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY obrigatórios");
+  }
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "andromeda-whisper-"));
+  const videoPath = path.join(workDir, `${criativoId ?? "export"}.mp4`);
+  const audioPath = path.join(workDir, "audio.mp3");
+
+  try {
+    await downloadFromStorage(supabase, storagePath, videoPath);
+    execSync(
+      `ffmpeg -y -i "${videoPath}" -vn -acodec libmp3lame -ar 16000 -ac 1 "${audioPath}"`,
+      { stdio: "ignore", timeout: 120000 },
+    );
+
+    if (!fs.existsSync(audioPath)) {
+      throw new Error("Falha ao extrair áudio do MP4");
+    }
+
+    const result = await callOpenAiWhisper(audioPath);
+    if (!result) {
+      throw new Error("OPENAI_API_KEY não configurado no serviço FFmpeg");
+    }
+
+    return result;
+  } finally {
+    try {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const route = req.url?.split("?")[0];
 
   if (req.method === "GET" && route === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true, endpoints: ["/render", "/render-clipes"] }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        endpoints: ["/render", "/render-clipes", "/transcribe"],
+        whisper: Boolean(process.env.OPENAI_API_KEY),
+      }),
+    );
     return;
   }
 
@@ -327,8 +410,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const route = req.url?.split("?")[0];
-  if (route !== "/render" && route !== "/render-clipes") {
+  if (route !== "/render" && route !== "/render-clipes" && route !== "/transcribe") {
     res.writeHead(404);
     res.end("Not found");
     return;
@@ -347,9 +429,11 @@ const server = http.createServer(async (req, res) => {
   try {
     const payload = JSON.parse(body);
     const result =
-      route === "/render-clipes"
-        ? await processRenderClipes(payload)
-        : await processRender(payload);
+      route === "/transcribe"
+        ? await processTranscribe(payload)
+        : route === "/render-clipes"
+          ? await processRenderClipes(payload)
+          : await processRender(payload);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
   } catch (e) {

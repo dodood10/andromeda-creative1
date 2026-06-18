@@ -5,6 +5,18 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { AnguloSchema, ResultadoAngulosSchema, RoteiroBlocoSchema } from "./schemas/angulos.schema";
 import type { ResultadoAngulos } from "./schemas/angulos.schema";
 import { normalizeAngulo, getProjectFormatContext } from "./formato-recomendacao";
+import {
+  getChampionPerformanceContext,
+  getProjectPerformanceContext,
+  pickBestPerformandoCriativoId,
+  type ChampionMetric,
+} from "./project-performance-context";
+import { buildEscalaLineage } from "./escala-lineage";
+import { refreshProjectCalibration, loadProjectIntelSettings } from "./sinais-calibration";
+import {
+  parseMetaAdsCsv,
+  csvRowIndicatesStrongPerformance,
+} from "./meta-csv-parser";
 import type { AppLink } from "./app-links";
 import { buildVslRoteiroFromAngulo } from "./vsl-roteiro";
 import { generateVslFromAngulo } from "./vsl.functions";
@@ -251,6 +263,7 @@ const CreateDraftSchema = z.object({
   backgroundMediaPath: z.string().optional(),
   projectId: z.string().uuid(),
   organizationId: z.string().uuid(),
+  tomCalibracao: z.enum(["direto", "empatico", "autoritativo"]).optional().default("direto"),
 });
 
 export const createCriativoDraft = createServerFn({ method: "POST" })
@@ -281,6 +294,7 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
             hook: anguloNormalized.hook,
             cta: anguloNormalized.cta,
             estrutura: anguloNormalized.estrutura,
+            recomendacao_formato: anguloNormalized.recomendacao_formato,
           })
         : anguloNormalized.estrutura.map((b, i) => ({
             tempo: b.tempo,
@@ -300,7 +314,9 @@ export const createCriativoDraft = createServerFn({ method: "POST" })
         productType: geracao.product_type ?? "info",
         goal: geracao.goal ?? "conv",
         context: geracao.context ?? "",
-        tomCalibracao: "direto",
+        tomCalibracao: data.tomCalibracao ?? "direto",
+        supabase,
+        projectId: data.projectId,
       });
       roteiro = vslResult.roteiro;
       vslExtras = vslResult.anguloJsonExtras;
@@ -373,7 +389,9 @@ export const getDashboardStats = createServerFn({ method: "POST" })
 
     const { data: criativos, error } = await supabase
       .from("criativos")
-      .select("status, angulo, formato_saida, export_status, id, performando_intel_status, updated_at")
+      .select(
+        "status, angulo, formato_saida, export_status, id, performando_intel_status, updated_at, angulo_json",
+      )
       .eq("project_id", data.projectId);
 
     if (error) throw new Error(error.message);
@@ -422,10 +440,39 @@ export const getDashboardStats = createServerFn({ method: "POST" })
     );
     const semExport = semExportList.length;
     const firstExportPendingId = semExportList[0]?.id ?? null;
-    const campeao = (criativos ?? []).find(
-      (c) => c.status === "Performando" && c.performando_intel_status === "approved",
-    );
-    const firstPerformandoId = campeao?.id ?? null;
+    const firstCriativoId = (criativos ?? [])[0]?.id ?? null;
+
+    const { data: resultadosProjeto } = await supabase
+      .from("resultados_reportados")
+      .select("criativo_id, metrica, valor, intel_review_status, observacao")
+      .in(
+        "criativo_id",
+        (criativos ?? []).map((c) => c.id),
+      )
+      .in("intel_review_status", ["approved", "pending"])
+      .limit(300);
+
+    const metricsByCriativo = new Map<string, ChampionMetric[]>();
+    for (const r of resultadosProjeto ?? []) {
+      if (!r.criativo_id || !r.metrica) continue;
+      const csvAuto = r.observacao?.includes("Import CSV") && r.intel_review_status === "pending";
+      if (r.intel_review_status !== "approved" && !csvAuto) continue;
+      const list = metricsByCriativo.get(r.criativo_id) ?? [];
+      if (!list.some((x) => x.metrica === r.metrica)) {
+        list.push({
+          metrica: r.metrica,
+          valor: r.valor ?? "—",
+          tipo: r.tipo ?? "clique",
+          source: csvAuto ? "csv_auto" : "approved",
+        });
+        metricsByCriativo.set(r.criativo_id, list);
+      }
+    }
+
+    const firstPerformandoId =
+      pickBestPerformandoCriativoId(criativos ?? [], metricsByCriativo) ??
+      (criativos ?? []).find((c) => c.status === "Performando")?.id ??
+      null;
     const performandoPendentes = (criativos ?? []).filter(
       (c) => c.status === "Performando" && c.performando_intel_status === "pending",
     ).length;
@@ -471,7 +518,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
         tag: "Oportunidade",
         title: "Você ainda não testou VSL curta",
         desc: "A IA gera roteiro completo de 2 min (6 blocos) com hook visual, objeções e CTA com valor.",
-        action: { to: "/app/gerador", search: { step: "wizard", formato: "vsl_curta" } },
+        action: { to: "/app/gerador", search: { formato: "vsl_curta" } },
       });
     }
     if (angulosTestados.size < 3 && total > 0) {
@@ -490,6 +537,16 @@ export const getDashboardStats = createServerFn({ method: "POST" })
         action: { to: "/app/gerador" },
       });
     }
+
+    const escalaLineage = buildEscalaLineage(
+      (criativos ?? []).map((c) => ({
+        id: c.id,
+        angulo: c.angulo,
+        status: c.status,
+        export_status: c.export_status,
+        angulo_json: c.angulo_json,
+      })),
+    );
 
     const nextAction: AppLink & { label: string } = (() => {
       if (total === 0) return { label: "Gerar seus primeiros 5 ângulos", to: "/app/gerador" };
@@ -536,10 +593,12 @@ export const getDashboardStats = createServerFn({ method: "POST" })
       feed,
       nextAction,
       firstExportPendingId,
+      firstCriativoId,
       firstPerformandoId,
       performandoPendentes,
       staleExportReminderId: staleExportReminder?.id ?? null,
       volumeTarget: 12,
+      escalaLineage,
       sugestao:
         total === 0
           ? "Comece gerando seus primeiros 5 ângulos Andromeda."
@@ -716,16 +775,23 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
 
     const resultados = (resultadosRaw ?? []).filter((r) => {
       const c = r.criativos as { project_id?: string } | null;
-      return c?.project_id === data.projectId && r.intel_review_status === "approved";
+      if (c?.project_id !== data.projectId) return false;
+      if (r.intel_review_status === "approved") return true;
+      return !!(r.observacao?.includes("Import CSV") && r.intel_review_status === "pending");
     });
 
     const resultadosPendentes = (resultadosRaw ?? []).filter((r) => {
       const c = r.criativos as { project_id?: string } | null;
-      return c?.project_id === data.projectId && r.intel_review_status === "pending";
+      return (
+        c?.project_id === data.projectId &&
+        r.intel_review_status === "pending" &&
+        !r.observacao?.includes("Import CSV")
+      );
     }).length;
 
-    const performando = (criativos ?? []).filter(
-      (c) => c.status === "Performando" && c.performando_intel_status === "approved",
+    const performando = (criativos ?? []).filter((c) => c.status === "Performando");
+    const performandoValidados = performando.filter(
+      (c) => c.performando_intel_status === "approved",
     );
     const performandoPendentes = (criativos ?? []).filter(
       (c) => c.status === "Performando" && c.performando_intel_status === "pending",
@@ -756,11 +822,32 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
       }
       if (!anguloPerformance[c.angulo]) anguloPerformance[c.angulo] = { performando: 0, total: 0 };
       anguloPerformance[c.angulo].total++;
-      if (c.status === "Performando" && c.performando_intel_status === "approved") {
+      if (c.status === "Performando") {
         anguloPerformance[c.angulo].performando++;
       }
     }
 
+    const projPerf = await getProjectPerformanceContext(supabase, data.projectId);
+
+    const metricsByCriativoIntel = new Map<string, ChampionMetric[]>();
+    for (const r of resultados ?? []) {
+      if (!r.criativo_id || !r.metrica) continue;
+      const list = metricsByCriativoIntel.get(r.criativo_id) ?? [];
+      if (!list.some((x) => x.metrica === r.metrica)) {
+        list.push({
+          metrica: r.metrica,
+          valor: r.valor ?? "—",
+          tipo: r.tipo ?? "clique",
+          source: r.observacao?.includes("Import CSV") ? "csv_auto" : "approved",
+        });
+        metricsByCriativoIntel.set(r.criativo_id, list);
+      }
+    }
+
+    const firstPerformandoCriativoId =
+      pickBestPerformandoCriativoId(criativos ?? [], metricsByCriativoIntel) ??
+      performando[0]?.id ??
+      null;
     const metricasAgg: Record<string, string[]> = {};
     for (const r of resultados ?? []) {
       if (r.metrica && r.valor) {
@@ -778,10 +865,13 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
 
     const formatos = [...new Set((criativos ?? []).map((c) => c.formato_saida).filter(Boolean))];
 
+    const intelSettings = await loadProjectIntelSettings(supabase, data.projectId);
+
     return {
       resumo: {
         total: criativos?.length ?? 0,
         performando: performando.length,
+        performandoValidados: performandoValidados.length,
         rodando: rodando.length,
         exportados: exportados.length,
         resultadosReportados: resultados?.length ?? 0,
@@ -799,6 +889,9 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         exemplos: valores.slice(0, 3),
       })),
       topAngulos,
+      firstPerformandoCriativoId,
+      sinaisCalibration: projPerf?.sinaisCalibration ?? [],
+      intelSettings,
       formatosTestados: formatos,
       resultadosRecentes: (resultados ?? []).slice(0, 8).map((r) => ({
         angulo: (r.criativos as { angulo?: string })?.angulo ?? "—",
@@ -813,6 +906,13 @@ export const getInteligenciaNicho = createServerFn({ method: "POST" })
         resultados: resultadosPendentes,
       },
     };
+  });
+
+export const fetchChampionPerformance = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(z.object({ criativoId: z.string().uuid() }))
+  .handler(async ({ data, context }) => {
+    return getChampionPerformanceContext(context.supabase, data.criativoId);
   });
 
 export const fetchProjectFormatContext = createServerFn({ method: "POST" })
@@ -918,6 +1018,19 @@ export const reportarResultado = createServerFn({ method: "POST" })
     });
 
     if (error) throw new Error(error.message);
+
+    const { data: criativo } = await supabase
+      .from("criativos")
+      .select("project_id")
+      .eq("id", data.criativoId)
+      .maybeSingle();
+    if (criativo?.project_id && data.metrica) {
+      const perf = await getProjectPerformanceContext(supabase, criativo.project_id);
+      if (perf?.sinaisCalibration.length) {
+        await refreshProjectCalibration(supabase, criativo.project_id, perf.sinaisCalibration);
+      }
+    }
+
     return { ok: true };
   });
 
@@ -935,46 +1048,77 @@ export const importMetricasCsv = createServerFn({ method: "POST" })
 
     const { data: criativos, error: cErr } = await supabase
       .from("criativos")
-      .select("id, utm_content, angulo, produto")
+      .select("id, utm_content, angulo, produto, status, performando_intel_status")
       .eq("project_id", data.projectId);
 
     if (cErr) throw new Error(cErr.message);
 
-    const lines = data.csvText.trim().split(/\r?\n/);
-    if (lines.length < 2) throw new Error("CSV precisa de cabeçalho e ao menos uma linha");
-
-    const header = lines[0].split(/[,;\t]/).map((h) => h.trim().toLowerCase());
-    const utmIdx = header.findIndex((h) => h.includes("utm") || h.includes("content"));
-    const spendIdx = header.findIndex((h) => h.includes("gasto") || h.includes("spend") || h.includes("valor"));
-    const nameIdx = header.findIndex((h) => h.includes("anúncio") || h.includes("anuncio") || h.includes("ad name"));
+    const parsedRows = parseMetaAdsCsv(data.csvText);
+    if (parsedRows.length === 0) throw new Error("CSV precisa de cabeçalho e ao menos uma linha de dados");
 
     let imported = 0;
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(/[,;\t]/).map((c) => c.trim().replace(/^"|"$/g, ""));
-      const utmVal = utmIdx >= 0 ? cols[utmIdx] : "";
-      const adName = nameIdx >= 0 ? cols[nameIdx] : "";
-      const spend = spendIdx >= 0 ? cols[spendIdx] : "";
+    let autoApproved = 0;
+    let performandoAuto = 0;
 
+    for (const row of parsedRows) {
       const match = (criativos ?? []).find(
         (c) =>
-          (utmVal && c.utm_content === utmVal) ||
-          (adName && (c.angulo?.toLowerCase().includes(adName.toLowerCase()) ?? false)),
+          (row.utmContent && c.utm_content === row.utmContent) ||
+          (row.adName && (c.angulo?.toLowerCase().includes(row.adName.toLowerCase()) ?? false)),
       );
       if (!match) continue;
 
-      const { error } = await supabase.from("resultados_reportados").insert({
-        criativo_id: match.id,
-        user_id: userId,
-        tipo: "clique",
-        metrica: spendIdx >= 0 ? "gasto" : "import_csv",
-        valor: spend || null,
-        observacao: `Import CSV linha ${i + 1}`,
-        intel_review_status: "pending",
-      });
-      if (!error) imported++;
+      const utmExact = !!(row.utmContent && match.utm_content === row.utmContent);
+      const reviewStatus = utmExact ? "approved" : "pending";
+      const metricsToInsert =
+        row.metrics.length > 0
+          ? row.metrics
+          : [{ metrica: "import_csv", valor: "1" }];
+
+      for (const m of metricsToInsert) {
+        const { error } = await supabase.from("resultados_reportados").insert({
+          criativo_id: match.id,
+          user_id: userId,
+          tipo: "clique",
+          metrica: m.metrica,
+          valor: m.valor,
+          observacao: `Import CSV linha ${row.lineNumber}${utmExact ? " (match UTM — auto-aprovado)" : ""}`,
+          intel_review_status: reviewStatus,
+        });
+        if (!error) imported++;
+        if (!error && reviewStatus === "approved") autoApproved++;
+      }
+
+      const strong = csvRowIndicatesStrongPerformance(row.metrics);
+      if (utmExact && strong) {
+        const patch: Record<string, unknown> = {};
+        if (match.status === "Rodando" || match.status === "Subiu") {
+          patch.status = "Performando";
+          performandoAuto++;
+        }
+        if (match.performando_intel_status !== "approved") {
+          patch.performando_intel_status = "approved";
+          patch.performando_intel_submitted_at = new Date().toISOString();
+          patch.performando_intel_reviewed_at = new Date().toISOString();
+          patch.performando_intel_notes = "Auto-aprovado via import CSV Meta (métricas positivas + match UTM)";
+        }
+        if (Object.keys(patch).length > 0) {
+          await supabase.from("criativos").update(patch).eq("id", match.id);
+        }
+      }
     }
 
-    return { imported, total: lines.length - 1 };
+    const perf = await getProjectPerformanceContext(supabase, data.projectId);
+    if (perf?.sinaisCalibration.length) {
+      await refreshProjectCalibration(supabase, data.projectId, perf.sinaisCalibration);
+    }
+
+    return {
+      imported,
+      total: parsedRows.length,
+      autoApproved,
+      performandoAuto,
+    };
   });
 
 export { ProjectScopeSchema };

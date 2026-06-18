@@ -12,8 +12,52 @@ import {
 import { trackApiUsage } from "./api-usage";
 import type { RoteiroBloco } from "./schemas/angulos.schema";
 import { assertCanEscala } from "./plan-enforcement";
+import {
+  getChampionPerformanceContext,
+  getProjectPerformanceContext,
+  getVariationFailureContext,
+} from "./project-performance-context";
+import { formatTranscriptionForPrompt } from "./export-transcription";
+import { ensureExportTranscription } from "./transcribe-export";
+import type { ExportTranscricaoSnapshot } from "./export-transcription";
 
 const VARIACAO_IDS = ["hook-v", "hook-t", "avatar", "formato", "empilha", "benef", "cta"] as const;
+
+async function buildEscalaPerformanceBlock(
+  supabase: SupabaseClient,
+  criativoId: string,
+  projectId: string | null,
+): Promise<string> {
+  const parts: string[] = [];
+  const champCtx = await getChampionPerformanceContext(supabase, criativoId);
+  if (champCtx) parts.push(champCtx.summaryText);
+  if (projectId) {
+    const projCtx = await getProjectPerformanceContext(supabase, projectId);
+    if (projCtx) {
+      if (projCtx.failedPatterns.length) {
+        parts.push(
+          `Histórico do projeto — estilos que falharam: ${projCtx.failedPatterns.map((f) => `${f.estilo} (${f.count}x, 0 performando)`).join("; ")}`,
+        );
+      }
+      if (projCtx.variationFailures.length) {
+        parts.push(
+          `Variações de escala sem sucesso: ${projCtx.variationFailures.map((v) => `${v.variacaoId} (${v.count}x)`).join(", ")}`,
+        );
+      }
+      if (projCtx.sinaisCalibration.length) {
+        parts.push(
+          "Calibração hook rate (estimado vs real):",
+          ...projCtx.sinaisCalibration.slice(0, 3).map(
+            (s) => `- ${s.angulo}: est ${s.hookRateEstimado ?? "—"} / real ${s.hookRateReal ?? "—"}${s.delta ? ` (${s.delta})` : ""}`,
+          ),
+        );
+      }
+    }
+    const varCtx = await getVariationFailureContext(supabase, projectId);
+    if (varCtx) parts.push(varCtx);
+  }
+  return parts.length ? `\n\n${parts.join("\n\n")}` : "";
+}
 
 async function executeAnalisarCampeao(params: {
   supabase: SupabaseClient;
@@ -38,6 +82,36 @@ async function executeAnalisarCampeao(params: {
   }
 
   const roteiro = (campeao.roteiro as RoteiroBloco[]) ?? [];
+
+  const existingSnap = aj.export_transcricao as ExportTranscricaoSnapshot | undefined;
+  const exportPaths = Array.isArray(campeao.export_paths) ? (campeao.export_paths as string[]) : [];
+
+  if (campeao.export_status === "pronto" && exportPaths.length > 0) {
+    const transcricao = await ensureExportTranscription({
+      criativoId,
+      roteiro,
+      exportPaths,
+      existing: existingSnap ?? null,
+      forceWhisper: force || existingSnap?.source !== "whisper",
+    });
+    aj.export_transcricao = transcricao;
+    await supabase
+      .from("criativos")
+      .update({ angulo_json: { ...aj, export_transcricao: transcricao } })
+      .eq("id", criativoId);
+  } else if (
+    campeao.export_status === "pronto" &&
+    !(existingSnap?.blocos?.length)
+  ) {
+    const { buildExportTranscriptionSnapshot } = await import("./export-transcription");
+    aj.export_transcricao = buildExportTranscriptionSnapshot(roteiro);
+    await supabase
+      .from("criativos")
+      .update({ angulo_json: { ...aj, export_transcricao: aj.export_transcricao } })
+      .eq("id", criativoId);
+  }
+
+  const transcricaoExport = formatTranscriptionForPrompt({ ...campeao, angulo_json: aj });
   let geracaoContext = "";
   if (campeao.geracao_id) {
     const { data: geracao } = await supabase
@@ -55,14 +129,18 @@ async function executeAnalisarCampeao(params: {
 Produto: ${campeao.produto}
 Status: ${campeao.status}
 Formato: ${campeao.formato_saida} / ${campeao.estilo_producao}
+Export: ${campeao.export_status ?? "—"} · ${Array.isArray(campeao.export_paths) ? campeao.export_paths.length : 0} arquivo(s)
 
-ROTEIRO ATUAL:
+${transcricaoExport}
+
+ROTEIRO JSON (referência secundária se divergir da transcrição do export):
 ${JSON.stringify(roteiro, null, 2)}
 
 ANGULO_JSON:
 ${JSON.stringify(aj, null, 2)}
 
 ${geracaoContext}
+${await buildEscalaPerformanceBlock(supabase, campeao.id, campeao.project_id)}
 
 Execute as 4 operações e devolva o menu completo das 7 variações.`;
 
@@ -190,6 +268,7 @@ VARIAÇÃO A GERAR: ${req.variacaoId} — ${menuItem.nome}
 O que muda: ${menuItem.o_que_muda}
 O que permanece: ${menuItem.o_que_permanece}
 ${extraHook}
+${await buildEscalaPerformanceBlock(supabase, data.criativoId, campeao.project_id)}
 
 Gere roteiro COMPLETO com a variação aplicada. Mantenha corpo idêntico exceto onde a variação exige mudança.`;
 
@@ -227,6 +306,11 @@ Gere roteiro COMPLETO com a variação aplicada. Mantenha corpo idêntico exceto
               ...aj,
               escala_variacao_de: data.criativoId,
               escala_variacao_id: req.variacaoId,
+              escala_variacao_nome: menuItem.nome,
+              escala_campeao_angulo: campeao.angulo,
+              escala_gerado_em: new Date().toISOString(),
+              escala_diff_vs_original: out.diff_vs_original,
+              escala_utm_suggestion: out.utm_suggestion,
             },
             roteiro: out.roteiro,
             background_media_path: campeao.background_media_path,

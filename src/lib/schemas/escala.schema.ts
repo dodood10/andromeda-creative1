@@ -50,6 +50,8 @@ export const EscalaVariacaoOutputSchema = z.object({
   nome: z.string(),
   nivel_risco: z.string(),
   instrucao_producao: z.string().optional(),
+  diff_vs_original: z.string().optional(),
+  utm_suggestion: z.string().optional(),
   roteiro: z.array(
     z.object({
       tempo: z.string(),

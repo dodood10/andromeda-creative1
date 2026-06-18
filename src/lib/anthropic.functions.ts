@@ -4,6 +4,7 @@ import { refineBlockWithAI } from "./anthropic-refine";
 import { trackApiUsage } from "./api-usage";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getProjectFormatContext, normalizeAngulo } from "./formato-recomendacao";
+import { getProjectPerformanceContext } from "./project-performance-context";
 import { ResultadoAngulosSchema, type RecomendacaoFormato, type ResultadoAngulos } from "./schemas/angulos.schema";
 import { HttpUrlSchema } from "./security-url";
 import { rateLimitGerarAngulos } from "./security-rate-limit";
@@ -26,6 +27,7 @@ const PerguntaInputSchema = z.object({
   productType: z.string().optional().default("info"),
   goal: z.string().optional().default("conv"),
   context: z.string().optional().default(""),
+  organizationId: z.string().uuid().optional(),
 });
 
 const PERGUNTA_SYSTEM = `Você é estrategista da metodologia Andromeda 2026.
@@ -45,6 +47,8 @@ export const gerarPerguntaCirurgica = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY ausente");
+
+    await assertCanGerar(context.supabase, context.userId, data.organizationId);
 
     const regra =
       PRODUCT_QUESTION_RULES[data.productType] ?? PRODUCT_QUESTION_RULES.info;
@@ -190,6 +194,11 @@ REGRAS INVIOLÁVEIS
 - Sempre garantir variáveis fixas do nicho.
 - Nunca escassez/urgência falsas.
 
+ANTI-REPETIÇÃO (quando CONTEXTO DE PERFORMANCE listar micropersonas já testadas):
+- NUNCA reutilize nomes de micropersona listados — busque papéis temidos DIFERENTES.
+- Se o nicho estiver esgotado, mude variavel_explorada mantendo micropersona inédita.
+- Quando houver BIAS DE CALIBRAÇÃO DE HOOK RATE, ajuste hook_rate_estimado em todos os ângulos conforme indicado.
+
 ---
 
 FORMATO DE OUTPUT — OBRIGATÓRIO
@@ -293,9 +302,15 @@ export const gerarAngulos = createServerFn({ method: "POST" })
 
     let projectContextBlock = "";
     if (data.projectId) {
-      const ctx = await getProjectFormatContext(context.supabase, data.projectId);
-      if (ctx) {
-        projectContextBlock = `\n\nCONTEXTO DO PROJETO (diversidade de leilão):\n${ctx.summaryText}`;
+      const [formatCtx, perfCtx] = await Promise.all([
+        getProjectFormatContext(context.supabase, data.projectId),
+        getProjectPerformanceContext(context.supabase, data.projectId),
+      ]);
+      if (formatCtx) {
+        projectContextBlock += `\n\nCONTEXTO DO PROJETO (diversidade de leilão):\n${formatCtx.summaryText}`;
+      }
+      if (perfCtx) {
+        projectContextBlock += `\n\nCONTEXTO DE PERFORMANCE DO PROJETO:\n${perfCtx.summaryText}`;
       }
     }
 

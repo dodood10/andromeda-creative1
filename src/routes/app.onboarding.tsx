@@ -78,7 +78,7 @@ function Onboarding() {
   return (
     <div className="container max-w-lg mx-auto py-12 px-6">
       <div className="mb-6 space-y-2">
-        <p className="text-xs text-muted-foreground uppercase tracking-wide">Primeiros passos · 1 de 3</p>
+        <p className="text-xs text-muted-foreground uppercase tracking-wide">Primeiros passos · 1 de 4</p>
         <Progress value={stepProgress} className="h-1.5" />
       </div>
       <Card className="glass bg-gradient-card p-8 space-y-6">
@@ -132,6 +132,9 @@ function Onboarding() {
         <Button className="w-full bg-gradient-primary border-0" onClick={handleSubmit} disabled={loading}>
           {loading ? <Loader2 className="size-4 animate-spin" /> : "Continuar para o gerador"}
         </Button>
+        <p className="text-xs text-center text-muted-foreground">
+          Plano grátis inclui 3 gerações e 1 export por mês. O fluxo rápido usa 1 geração.
+        </p>
         <p className="text-xs text-center text-muted-foreground">
           Já tem conta?{" "}
           <Link to="/login" className="text-primary-glow hover:underline">
