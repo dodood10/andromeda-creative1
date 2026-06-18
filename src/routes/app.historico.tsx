@@ -20,7 +20,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Search, Download, TrendingUp, Play, Loader2, BarChart3 } from "lucide-react";
+import { Search, Download, TrendingUp, Play, Loader2, BarChart3, LayoutGrid, List } from "lucide-react";
 import { toast } from "sonner";
 import {
   listCriativos,
@@ -33,6 +33,17 @@ import {
 import { getSignedExportUrls } from "@/lib/export.functions";
 import { useWorkspace } from "@/contexts/workspace-context";
 import type { Enums } from "@/integrations/supabase/types";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const searchSchema = z.object({
   status: z.enum(["Gerado", "Subiu", "Rodando", "Performando", "Pausado"]).optional(),
@@ -102,6 +113,13 @@ function Historico() {
   const [zipLoading, setZipLoading] = useState(false);
   const [preview, setPreview] = useState<{ angulo: string; url: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
+  const [statusConfirm, setStatusConfirm] = useState<{
+    id: string;
+    angulo: string;
+    status: CriativoStatus;
+    from: CriativoStatus;
+  } | null>(null);
 
   useEffect(() => {
     if (urlStatus) setStatusFilter(urlStatus);
@@ -254,8 +272,20 @@ function Historico() {
 
   const highlightedId = urlCriativoId;
 
+  function requestStatusChange(row: CriativoRow, status: CriativoStatus) {
+    if (status === row.status) return;
+    const needsConfirm =
+      status === "Performando" || row.status === "Performando" || status === "Pausado";
+    if (needsConfirm) {
+      setStatusConfirm({ id: row.id, angulo: row.angulo, status, from: row.status });
+      return;
+    }
+    statusMutation.mutate({ id: row.id, status, angulo: row.angulo });
+  }
+
   return (
-    <div className="container mx-auto px-6 py-8 max-w-7xl space-y-6">
+    <div className="container mx-auto px-4 md:px-6 py-8 max-w-7xl space-y-6">
+      <AppBreadcrumbs items={[{ label: "Projeto", to: "/app" }, { label: "Meus criativos" }]} />
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-3xl font-display font-bold">Meus criativos</h1>
@@ -313,12 +343,33 @@ function Historico() {
       </Card>
 
       <Card className="glass p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <p className="text-sm text-muted-foreground">Filtros</p>
+          <div className="hidden md:flex gap-1">
+            <Button
+              size="sm"
+              variant={viewMode === "table" ? "secondary" : "ghost"}
+              className="min-h-11"
+              onClick={() => setViewMode("table")}
+            >
+              <List className="size-4 mr-1" /> Tabela
+            </Button>
+            <Button
+              size="sm"
+              variant={viewMode === "kanban" ? "secondary" : "ghost"}
+              className="min-h-11"
+              onClick={() => setViewMode("kanban")}
+            >
+              <LayoutGrid className="size-4 mr-1" /> Kanban
+            </Button>
+          </div>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           <div className="relative md:col-span-2">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <Input
               placeholder="Buscar por ângulo ou observações..."
-              className="pl-9"
+              className="pl-9 min-h-11"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -436,39 +487,114 @@ function Historico() {
             <Link to="/app/gerador" className="text-primary-glow underline">Gere ângulos</Link> para começar.
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent border-border/50">
-                <TableHead className="w-12"></TableHead>
-                <TableHead>Data</TableHead>
-                <TableHead>Produto</TableHead>
-                <TableHead>Ângulo</TableHead>
-                <TableHead>Formato</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Resultados</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            <div className="md:hidden p-4 space-y-3">
               {filtered.map((r) => (
-                <CriativoRowItem
+                <CriativoCard
                   key={r.id}
                   row={r}
                   highlighted={r.id === highlightedId}
                   resultadosCount={(resultadosByCriativo.get(r.id) ?? []).length}
-                  onStatusChange={(status) =>
-                    statusMutation.mutate({ id: r.id, status, angulo: r.angulo })
-                  }
+                  onStatusChange={(status) => requestStatusChange(r, status)}
                   onDownload={handleDownload}
                   onViewResultados={() => setViewResultados({ id: r.id, angulo: r.angulo })}
                   onPreview={() => handlePreview(r)}
                   previewLoading={previewLoading === r.id}
                 />
               ))}
-            </TableBody>
-          </Table>
+            </div>
+
+            {viewMode === "kanban" ? (
+              <div className="hidden md:grid grid-cols-4 gap-3 p-4">
+                {PIPELINE.map((colStatus) => (
+                  <div key={colStatus} className="space-y-2">
+                    <p className={`text-xs font-semibold px-2 py-1 rounded-full border w-fit ${statusStyle[colStatus]}`}>
+                      {colStatus}
+                    </p>
+                    {filtered
+                      .filter((r) => r.status === colStatus)
+                      .map((r) => (
+                        <CriativoCard
+                          key={r.id}
+                          row={r}
+                          compact
+                          highlighted={r.id === highlightedId}
+                          resultadosCount={(resultadosByCriativo.get(r.id) ?? []).length}
+                          onStatusChange={(status) => requestStatusChange(r, status)}
+                          onDownload={handleDownload}
+                          onViewResultados={() => setViewResultados({ id: r.id, angulo: r.angulo })}
+                          onPreview={() => handlePreview(r)}
+                          previewLoading={previewLoading === r.id}
+                        />
+                      ))}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent border-border/50">
+                      <TableHead className="w-12"></TableHead>
+                      <TableHead>Data</TableHead>
+                      <TableHead>Produto</TableHead>
+                      <TableHead>Ângulo</TableHead>
+                      <TableHead>Formato</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Resultados</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((r) => (
+                      <CriativoRowItem
+                        key={r.id}
+                        row={r}
+                        highlighted={r.id === highlightedId}
+                        resultadosCount={(resultadosByCriativo.get(r.id) ?? []).length}
+                        onStatusChange={(status) => requestStatusChange(r, status)}
+                        onDownload={handleDownload}
+                        onViewResultados={() => setViewResultados({ id: r.id, angulo: r.angulo })}
+                        onPreview={() => handlePreview(r)}
+                        previewLoading={previewLoading === r.id}
+                      />
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </>
         )}
       </Card>
+
+      <AlertDialog open={!!statusConfirm} onOpenChange={(open) => !open && setStatusConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar mudança de status</AlertDialogTitle>
+            <AlertDialogDescription>
+              {statusConfirm?.status === "Performando"
+                ? `Marcar "${statusConfirm.angulo}" como Performando? A equipe validará antes de usar na inteligência.`
+                : `Alterar "${statusConfirm?.angulo}" de ${statusConfirm?.from} para ${statusConfirm?.status}?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!statusConfirm) return;
+                statusMutation.mutate({
+                  id: statusConfirm.id,
+                  status: statusConfirm.status,
+                  angulo: statusConfirm.angulo,
+                });
+                setStatusConfirm(null);
+              }}
+            >
+              Confirmar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -540,6 +666,90 @@ function ResultadoDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CriativoCard({
+  row,
+  compact,
+  highlighted,
+  resultadosCount,
+  onStatusChange,
+  onDownload,
+  onViewResultados,
+  onPreview,
+  previewLoading,
+}: {
+  row: CriativoRow;
+  compact?: boolean;
+  highlighted?: boolean;
+  resultadosCount: number;
+  onStatusChange: (status: CriativoStatus) => void;
+  onDownload: (paths: string[], path?: string) => void;
+  onViewResultados: () => void;
+  onPreview: () => void;
+  previewLoading?: boolean;
+}) {
+  const dataFmt = format(new Date(row.created_at), "dd/MM", { locale: ptBR });
+  const paths = (row.export_paths as string[]) ?? [];
+
+  return (
+    <Card
+      className={`p-4 space-y-3 ${highlighted ? "ring-2 ring-primary/40 bg-primary/5" : ""} ${compact ? "text-sm" : ""}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-medium truncate">{row.angulo}</p>
+          <p className="text-xs text-muted-foreground truncate">
+            {row.produto} · {row.formato} · {dataFmt}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onPreview}
+          disabled={previewLoading}
+          className="size-11 shrink-0 rounded-lg bg-gradient-to-br from-primary/40 to-accent/30 flex items-center justify-center"
+        >
+          {previewLoading ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Play className="size-4 fill-current" />
+          )}
+        </button>
+      </div>
+      <Select value={row.status} onValueChange={(v) => onStatusChange(v as CriativoStatus)}>
+        <SelectTrigger className="min-h-11 w-full">
+          <Badge variant="outline" className={statusStyle[row.status]}>{row.status}</Badge>
+        </SelectTrigger>
+        <SelectContent>
+          {ALL_STATUSES.map((s) => (
+            <SelectItem key={s} value={s}>{s}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {row.status === "Performando" && row.performando_intel_status === "pending" && (
+        <p className="text-[10px] text-warning">Validação em até 24h</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="ghost" className="min-h-11" onClick={onViewResultados}>
+          <BarChart3 className="size-3.5 mr-1" />
+          {resultadosCount > 0 ? resultadosCount : "Resultados"}
+        </Button>
+        {paths.length > 0 && (
+          <Button size="sm" variant="outline" className="min-h-11" onClick={() => onDownload(paths)}>
+            <Download className="size-3.5" />
+          </Button>
+        )}
+        <Link to="/app/editor" search={{ criativoId: row.id }}>
+          <Button size="sm" variant="outline" className="min-h-11">Editor</Button>
+        </Link>
+        {row.export_status !== "pronto" && (
+          <Link to="/app/editor" search={{ criativoId: row.id, focus: "score" }}>
+            <Button size="sm" className="min-h-11 bg-gradient-primary border-0">Exportar</Button>
+          </Link>
+        )}
+      </div>
+    </Card>
   );
 }
 

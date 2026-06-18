@@ -393,6 +393,14 @@ export const getDashboardStats = createServerFn({ method: "POST" })
     }
 
     const total = criativos?.length ?? 0;
+    const exportados = (criativos ?? []).filter((c) => c.export_status === "pronto").length;
+    const marcouSubiu = counts.Subiu + counts.Rodando + counts.Performando > 0;
+
+    const { count: geracoesCount } = await supabase
+      .from("geracoes")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", data.projectId);
+
     const ativos = counts.Rodando + counts.Performando + counts.Subiu;
     const angulosTestados = new Set((criativos ?? []).map((c) => c.angulo));
     const formatosTestados = new Set(
@@ -507,6 +515,9 @@ export const getDashboardStats = createServerFn({ method: "POST" })
     return {
       counts,
       total,
+      exportados,
+      geracoesCount: geracoesCount ?? 0,
+      marcouSubiu,
       ativos,
       semExport,
       angulosTestados: [...angulosTestados],

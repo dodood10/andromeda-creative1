@@ -7,7 +7,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   TrendingUp,
@@ -24,7 +26,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { uploadCriativoMedia } from "@/lib/storage";
-import { getCriativo } from "@/lib/criativos.functions";
+import { getCriativo, listCriativos } from "@/lib/criativos.functions";
 import { analisarCampeao, gerarVariacoesEscala } from "@/lib/escala.functions";
 import { getSignedExportUrls } from "@/lib/export.functions";
 import type { EscalaAnalise } from "@/lib/schemas/escala.schema";
@@ -63,6 +65,7 @@ function Escala() {
   const { organizationId, projectId } = useWorkspace();
   const queryClient = useQueryClient();
   const fetchCriativo = useServerFn(getCriativo);
+  const fetchCriativos = useServerFn(listCriativos);
   const runAnalise = useServerFn(analisarCampeao);
   const runVariacoes = useServerFn(gerarVariacoesEscala);
   const signExports = useServerFn(getSignedExportUrls);
@@ -71,6 +74,15 @@ function Escala() {
     queryKey: ["criativo", criativoId],
     queryFn: () => fetchCriativo({ data: { id: criativoId! } }),
     enabled: !!criativoId,
+  });
+
+  const { data: performandoRows = [] } = useQuery({
+    queryKey: ["criativos-performando", projectId],
+    queryFn: async () => {
+      const rows = await fetchCriativos({ data: { projectId: projectId! } });
+      return rows.filter((r) => r.status === "Performando");
+    },
+    enabled: !!projectId && !criativoId,
   });
 
   const aj = (campeao?.angulo_json as { escala_analise?: EscalaAnalise } | null) ?? {};
@@ -197,7 +209,13 @@ function Escala() {
   }
 
   return (
-    <div className="container mx-auto px-6 py-8 max-w-6xl space-y-8">
+    <div className="container mx-auto px-4 md:px-6 py-8 max-w-6xl space-y-8">
+      <AppBreadcrumbs
+        items={[
+          { label: "Projeto", to: "/app" },
+          { label: "Escala" },
+        ]}
+      />
       <div>
         <h1 className="text-3xl font-display font-bold flex items-center gap-3">
           <TrendingUp className="size-7 text-primary-glow" /> Fase de escala
@@ -207,20 +225,51 @@ function Escala() {
             ? `Escalando: ${campeao.angulo} · ${campeao.produto}`
             : "Pegue o que está performando e gere variações em lote."}
         </p>
-        {!criativoId && (
-          <Link to="/app/historico" search={{ status: "Performando" }} className="text-sm text-primary-glow underline mt-2 inline-block">
-            Selecionar campeão no histórico
-          </Link>
-        )}
       </div>
 
-      <Tabs defaultValue="campeao">
-        <TabsList>
-          <TabsTrigger value="campeao"><Sparkles className="size-4 mr-1.5" /> Criativo campeão</TabsTrigger>
-          <TabsTrigger value="externo"><Upload className="size-4 mr-1.5" /> Vídeo externo</TabsTrigger>
-        </TabsList>
+      {!criativoId && (
+        <Card className="glass p-6 space-y-4 border border-primary/20">
+          <h2 className="font-semibold">Escolha um criativo campeão</h2>
+          {performandoRows.length > 0 ? (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Selecione um criativo marcado como Performando para analisar e gerar variações.
+              </p>
+              <Select
+                onValueChange={(id) => navigate({ to: "/app/escala", search: { criativoId: id } })}
+              >
+                <SelectTrigger className="min-h-11">
+                  <SelectValue placeholder="Selecionar campeão…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {performandoRows.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {r.angulo} · {r.produto}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Nenhum campeão ainda. Exporte criativos, suba no Meta e marque como Performando no histórico.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Link to="/app/historico" search={{ export: "pendente" }}>
+                  <Button variant="outline" className="min-h-11">Ver pendentes de export</Button>
+                </Link>
+                <Link to="/app/historico" search={{ status: "Performando" }}>
+                  <Button className="min-h-11 bg-gradient-primary border-0">Abrir histórico</Button>
+                </Link>
+              </div>
+            </>
+          )}
+        </Card>
+      )}
 
-        <TabsContent value="campeao" className="space-y-6 mt-6">
+      {criativoId && (
+      <div className="space-y-6">
           <Card className="glass bg-gradient-card p-6">
             <div className="flex gap-6">
               <button
@@ -463,37 +512,10 @@ function Escala() {
               </div>
             </div>
           )}
-        </TabsContent>
+      </div>
+      )}
 
-        <TabsContent value="externo" className="mt-6">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="video/mp4,video/webm"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void handleFileUpload(file);
-            }}
-          />
-          <Card
-            className="glass border-dashed p-12 text-center cursor-pointer hover:border-primary/40 transition"
-            onClick={() => fileRef.current?.click()}
-          >
-            {uploading ? (
-              <Loader2 className="size-10 mx-auto text-primary-glow animate-spin mb-3" />
-            ) : (
-              <Upload className="size-10 mx-auto text-muted-foreground mb-3" />
-            )}
-            <p className="font-medium">
-              {uploadedPath ? "Vídeo enviado — clique para trocar" : "Arraste seu vídeo ou clique para enviar"}
-            </p>
-            <p className="text-sm text-muted-foreground mt-1">MP4/WebM até 100 MB · análise manual em breve</p>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {analise && (
+      {criativoId && analise && (
         <div className="sticky bottom-4 flex justify-between items-center glass bg-gradient-card rounded-xl p-4">
           <div className="text-sm">
             <span className="text-muted-foreground">Selecionadas:</span>{" "}

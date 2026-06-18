@@ -54,6 +54,41 @@ function Inteligencia() {
         <Card className="glass p-8 text-center text-muted-foreground">
           Selecione um projeto para ver inteligência.
         </Card>
+      ) : (resumo?.total ?? 0) === 0 ? (
+        <Card className="glass p-8 space-y-6 border border-primary/20">
+          <h2 className="font-display text-xl font-semibold">Sua inteligência começa com dados reais</h2>
+          <ol className="space-y-4 text-sm">
+            <li className="flex gap-3">
+              <span className="size-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0 text-xs font-bold">1</span>
+              <div>
+                <p className="font-medium">Gere e exporte criativos</p>
+                <p className="text-muted-foreground">Use o gerador e o editor até ter MP4 prontos.</p>
+              </div>
+            </li>
+            <li className="flex gap-3">
+              <span className="size-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0 text-xs font-bold">2</span>
+              <div>
+                <p className="font-medium">Marque como Performando e reporte métricas</p>
+                <p className="text-muted-foreground">No histórico, atualize o status e registre CPA ou ROAS.</p>
+              </div>
+            </li>
+            <li className="flex gap-3">
+              <span className="size-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0 text-xs font-bold">3</span>
+              <div>
+                <p className="font-medium">Volte aqui para insights e escala</p>
+                <p className="text-muted-foreground">Dados validados alimentam recomendações e o gerador.</p>
+              </div>
+            </li>
+          </ol>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/app/gerador">
+              <Button className="min-h-11 bg-gradient-primary border-0">Gerar ângulos</Button>
+            </Link>
+            <Link to="/app/historico">
+              <Button variant="outline" className="min-h-11">Abrir histórico</Button>
+            </Link>
+          </div>
+        </Card>
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -177,7 +212,7 @@ function Inteligencia() {
             </div>
             <Link to="/app/historico" search={{ status: "Performando" }}>
               <Button className="bg-gradient-primary border-0">
-                Ir para escala <ArrowRight className="size-4 ml-1.5" />
+                Ver campeões no histórico <ArrowRight className="size-4 ml-1.5" />
               </Button>
             </Link>
           </Card>

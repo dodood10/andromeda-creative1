@@ -9,9 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { TrendingUp, AlertTriangle, Sparkles, ArrowRight, Flame, Eye, Zap, Loader2 } from "lucide-react";
 import { getDashboardStats } from "@/lib/criativos.functions";
+import { getPlanUsage } from "@/lib/plan.functions";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspace } from "@/contexts/workspace-context";
 import type { AppLink } from "@/lib/app-links";
+import { ActivationChecklist } from "@/components/activation-checklist";
+import { UpgradeBanner } from "@/components/upgrade-banner";
 
 export const Route = createFileRoute("/app/")({
   head: () => ({
@@ -48,15 +51,30 @@ const STATUS_LINKS: Record<string, AppLink> = {
   Performando: { to: "/app/historico", search: { status: "Performando" } },
 };
 
+function greetingForHour() {
+  const h = new Date().getHours();
+  if (h < 12) return "Bom dia";
+  if (h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
 function Dashboard() {
   const { profile } = useAuth();
-  const { projectId, currentProject, loading: wsLoading } = useWorkspace();
+  const { projectId, currentProject, organizationId, loading: wsLoading } = useWorkspace();
   const fetchStats = useServerFn(getDashboardStats);
+  const fetchPlanUsage = useServerFn(getPlanUsage);
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ["dashboard-stats", projectId],
     queryFn: () => fetchStats({ data: { projectId: projectId! } }),
     enabled: !!projectId,
+  });
+
+  const { data: planUsage } = useQuery({
+    queryKey: ["plan-usage", organizationId],
+    queryFn: () => fetchPlanUsage({ data: { organizationId: organizationId! } }),
+    enabled: !!organizationId,
+    staleTime: 60_000,
   });
 
   const hoje = format(new Date(), "d 'de' MMMM 'de' yyyy", { locale: ptBR });
@@ -79,21 +97,70 @@ function Dashboard() {
   const feedItems = stats?.feed ?? [];
   const nextAction = stats?.nextAction;
 
+  const activationSteps = stats
+    ? [
+        {
+          id: "angulos",
+          label: "Gerar seus primeiros 5 ângulos",
+          done: (stats.geracoesCount ?? 0) > 0,
+          action: { to: "/app/gerador" as const, label: "Ir ao gerador" },
+        },
+        {
+          id: "rascunho",
+          label: "Criar um rascunho no editor",
+          done: stats.total > 0,
+          action: { to: "/app/gerador" as const, label: "Criar rascunho" },
+        },
+        {
+          id: "export",
+          label: "Exportar seu primeiro MP4",
+          done: (stats.exportados ?? 0) > 0,
+          action: stats.firstExportPendingId
+            ? { to: "/app/editor" as const, search: { criativoId: stats.firstExportPendingId }, label: "Exportar agora" }
+            : { to: "/app/historico" as const, search: { export: "pendente" as const }, label: "Ver pendentes" },
+        },
+        {
+          id: "subiu",
+          label: "Marcar criativo como Subiu no histórico",
+          done: stats.marcouSubiu ?? false,
+          action: { to: "/app/historico" as const, label: "Abrir histórico" },
+        },
+      ]
+    : [];
+
   return (
-    <div className="container mx-auto px-6 py-8 max-w-7xl space-y-8">
-      <div className="flex items-end justify-between">
+    <div className="container mx-auto px-4 md:px-6 py-8 max-w-7xl space-y-8">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-display font-bold">Bom dia, {nome}</h1>
+          <h1 className="text-3xl font-display font-bold">{greetingForHour()}, {nome}</h1>
           <p className="text-muted-foreground mt-1">
             Nicho: <span className="text-foreground">{nicho}</span> · {hoje}
           </p>
         </div>
         <Link to="/app/gerador">
-          <Button className="bg-gradient-primary shadow-glow border-0">
+          <Button className="w-full sm:w-auto min-h-11 bg-gradient-primary shadow-glow border-0">
             <Sparkles className="size-4 mr-1.5" /> Gerar criativo
           </Button>
         </Link>
       </div>
+
+      {planUsage && !planUsage.canGerar && (
+        <UpgradeBanner message="Você atingiu o limite de gerações do plano grátis este mês." />
+      )}
+
+      {stats && activationSteps.length > 0 && <ActivationChecklist steps={activationSteps} />}
+
+      {stats?.total === 0 && !isLoading && (
+        <Card className="glass p-8 text-center space-y-4 border border-primary/20">
+          <h2 className="font-display text-xl font-semibold">Bem-vindo ao Andromeda</h2>
+          <p className="text-muted-foreground text-sm max-w-md mx-auto">
+            Em 3 passos você terá ângulos, rascunho e export. Comece pelo gerador com a URL do seu produto.
+          </p>
+          <Link to="/app/gerador">
+            <Button className="min-h-11 bg-gradient-primary border-0">Gerar meus primeiros 5 ângulos</Button>
+          </Link>
+        </Card>
+      )}
 
       {nextAction && (
         <Card className="glass bg-gradient-card border-primary/30 p-6 shadow-glow">
@@ -177,7 +244,7 @@ function Dashboard() {
                 <h3 className="font-semibold flex items-center gap-2">
                   <Zap className="size-4 text-primary-glow" /> Volume recomendado
                 </h3>
-                <p className="text-sm text-muted-foreground mt-1">Para R$ 5.000/dia de orçamento</p>
+                <p className="text-sm text-muted-foreground mt-1">Meta de criativos ativos no projeto</p>
               </div>
               <div className="text-right">
                 <div className="text-2xl font-display font-bold">
@@ -202,7 +269,7 @@ function Dashboard() {
                   <h3 className="font-semibold flex items-center gap-2">
                     <Zap className="size-4 text-primary-glow" /> Volume recomendado
                   </h3>
-                  <p className="text-sm text-muted-foreground mt-1">Para R$ 5.000/dia de orçamento</p>
+                  <p className="text-sm text-muted-foreground mt-1">Meta de criativos ativos no projeto</p>
                 </div>
                 <div className="text-right">
                   <div className="text-2xl font-display font-bold">

@@ -23,6 +23,10 @@ import {
   type ResultadoAngulos,
 } from "@/lib/anthropic.functions";
 import { saveGeracao, createCriativoDraft, getGeracaoResultado, getInteligenciaNicho, fetchProjectFormatContext, getGeradorEtaEstimates } from "@/lib/criativos.functions";
+import { getPlanUsage } from "@/lib/plan.functions";
+import { GeradorStepper } from "@/components/gerador-stepper";
+import { UpgradeBanner } from "@/components/upgrade-banner";
+import { Switch } from "@/components/ui/switch";
 import {
   pickRecommendedAngulos,
   pickAbTestPackage,
@@ -161,6 +165,7 @@ function Gerador() {
   const [pexelsResults, setPexelsResults] = useState<Array<{
     id: string; type: "image" | "video"; previewUrl: string; downloadUrl: string; attribution: string;
   }>>([]);
+  const [modoRapido, setModoRapido] = useState(false);
   const mediaRef = useRef<HTMLInputElement>(null);
   const prevProjectRef = useRef<string | null>(null);
   const { user } = useAuth();
@@ -170,6 +175,20 @@ function Gerador() {
   const fetchEta = useServerFn(getGeradorEtaEstimates);
   const runPexelsSearch = useServerFn(searchPexelsMedia);
   const runPexelsDownload = useServerFn(downloadPexelsToStorage);
+  const fetchPlanUsage = useServerFn(getPlanUsage);
+
+  const { data: planUsage } = useQuery({
+    queryKey: ["plan-usage", organizationId],
+    queryFn: () => fetchPlanUsage({ data: { organizationId: organizationId! } }),
+    enabled: !!organizationId,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (localStorage.getItem("gerador_completed_once") === "1") {
+      setModoRapido(true);
+    }
+  }, []);
 
   const { data: eta } = useQuery({
     queryKey: ["gerador-eta"],
@@ -428,6 +447,7 @@ function Gerador() {
       const durationMs = Date.now() - start;
       trackFunnelEvent({ userId: user?.id, organizationId, event: "angulos_gerados", success: true, durationMs });
       trackFunnelEvent({ userId: user?.id, organizationId, event: "wizard_step", success: true, durationMs });
+      localStorage.setItem("gerador_completed_once", "1");
 
       if (durationMs > 90000) toast.warning("Geração levou mais de 90 segundos");
       toast.success(existingId ? "Ângulos atualizados" : "Ângulos salvos");
@@ -600,10 +620,23 @@ function Gerador() {
       if (failed.length > 0) {
         setPartialDrafts(draftList.map(({ id, nome }) => ({ id, nome })));
         toast.warning(`${created.length} criado(s), ${failed.length} falhou(aram)`);
+        navigate({
+          to: "/app/editor",
+          search: { criativoId: created[0].id, focus: "audio" },
+        });
         return;
       }
 
-      setBatchChecklist(draftList);
+      const first = created[0];
+      toast.success(
+        created.length === 1
+          ? "Rascunho criado — próximo: gerar áudio"
+          : `${created.length} rascunhos criados — abrindo o primeiro`,
+      );
+      if (created.length > 1) {
+        setBatchChecklist(draftList);
+      }
+      navigate({ to: "/app/editor", search: { criativoId: first.id, focus: "audio" } });
     } catch (e) {
       if (created.length > 0) {
         setPartialDrafts(
@@ -661,6 +694,12 @@ function Gerador() {
         </div>
       )}
 
+      {planUsage && !planUsage.canGerar && (
+        <UpgradeBanner message={`Limite de gerações do plano grátis (${planUsage.geracoesMes}/${planUsage.limits.geracoesMes} este mês).`} />
+      )}
+
+      {(etapa !== "input" || modoRapido || resultado) && <GeradorStepper etapa={etapa} />}
+
       {unsavedResultado && (
         <div className="flex items-center justify-between gap-3 p-4 rounded-lg border border-warning/40 bg-warning/10 text-sm">
           <span>Ângulos gerados mas não salvos — crie rascunhos após salvar.</span>
@@ -684,20 +723,27 @@ function Gerador() {
       <div>
         <h1 className="text-3xl font-display font-bold">Gerador de ângulos</h1>
         <p className="text-muted-foreground mt-1">
-          Cole a URL, responda a pergunta cirúrgica e gere 5 ângulos com lógica probabilística Andromeda 2026.
+          {modoRapido
+            ? "Modo rápido: URL + objetivo → 5 ângulos em uma etapa."
+            : "Cole a URL, responda a pergunta cirúrgica e gere 5 ângulos com lógica probabilística Andromeda 2026."}
         </p>
+        <div className="flex items-center gap-2 mt-3">
+          <Switch id="modo-rapido" checked={modoRapido} onCheckedChange={setModoRapido} />
+          <Label htmlFor="modo-rapido" className="text-sm cursor-pointer">Modo rápido</Label>
+        </div>
       </div>
 
       <Card className="glass bg-gradient-card p-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className={`grid grid-cols-1 gap-4 ${modoRapido ? "md:grid-cols-2" : "md:grid-cols-3"}`}>
           <div className="space-y-1.5">
             <Label>URL do site</Label>
             <Input placeholder="https://seuproduto.com" value={url} onChange={(e) => setUrl(e.target.value)} />
           </div>
+          {!modoRapido && (
           <div className="space-y-1.5">
             <Label>Tipo de produto</Label>
             <Select value={productType} onValueChange={setProductType}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger className="min-h-11"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="ecom">E-commerce físico</SelectItem>
                 <SelectItem value="info">Infoproduto</SelectItem>
@@ -707,6 +753,7 @@ function Gerador() {
               </SelectContent>
             </Select>
           </div>
+          )}
           <div className="space-y-1.5">
             <Label>Objetivo</Label>
             <Select value={goal} onValueChange={setGoal}>
@@ -747,10 +794,23 @@ function Gerador() {
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2 justify-end">
-          {etapa !== "respondendo" && (
+          {modoRapido ? (
+            <Button
+              onClick={handleGenerateDirect}
+              disabled={loadingAngulos || !url.trim() || (planUsage ? !planUsage.canGerar : false)}
+              className="min-h-11 bg-gradient-primary border-0 shadow-glow"
+            >
+              {loadingAngulos ? (
+                <><Loader2 className="size-4 mr-1.5 animate-spin" /> Gerando 5 ângulos…</>
+              ) : (
+                <><Sparkles className="size-4 mr-1.5" /> Gerar 5 ângulos agora</>
+              )}
+            </Button>
+          ) : etapa !== "respondendo" ? (
             <>
               <Button
                 variant="outline"
+                className="min-h-11"
                 onClick={handleGenerateDirect}
                 disabled={loadingPergunta || loadingAngulos || !url.trim()}
               >
@@ -759,7 +819,7 @@ function Gerador() {
               <Button
                 onClick={handleAskQuestion}
                 disabled={loadingPergunta || loadingAngulos}
-                className="bg-gradient-primary border-0 shadow-glow"
+                className="min-h-11 bg-gradient-primary border-0 shadow-glow"
               >
                 {loadingPergunta ? (
                   <><Loader2 className="size-4 mr-1.5 animate-spin" /> Gerando pergunta...</>
@@ -768,7 +828,7 @@ function Gerador() {
                 )}
               </Button>
             </>
-          )}
+          ) : null}
         </div>
       </Card>
       </>

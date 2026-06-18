@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as PlanosRouteImport } from './routes/planos'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as AdminRouteImport } from './routes/admin'
@@ -32,6 +33,11 @@ import { Route as AdminCriativosRouteImport } from './routes/admin.criativos'
 import { Route as AdminAvaliacaoRouteImport } from './routes/admin.avaliacao'
 import { Route as AdminAuditoriaRouteImport } from './routes/admin.auditoria'
 
+const PlanosRoute = PlanosRouteImport.update({
+  id: '/planos',
+  path: '/planos',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -149,6 +155,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/planos': typeof PlanosRoute
   '/admin/auditoria': typeof AdminAuditoriaRoute
   '/admin/avaliacao': typeof AdminAvaliacaoRoute
   '/admin/criativos': typeof AdminCriativosRoute
@@ -171,6 +178,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/accept-invite': typeof AcceptInviteRoute
   '/login': typeof LoginRoute
+  '/planos': typeof PlanosRoute
   '/admin/auditoria': typeof AdminAuditoriaRoute
   '/admin/avaliacao': typeof AdminAvaliacaoRoute
   '/admin/criativos': typeof AdminCriativosRoute
@@ -196,6 +204,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteWithChildren
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/planos': typeof PlanosRoute
   '/admin/auditoria': typeof AdminAuditoriaRoute
   '/admin/avaliacao': typeof AdminAvaliacaoRoute
   '/admin/criativos': typeof AdminCriativosRoute
@@ -222,6 +231,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/login'
+    | '/planos'
     | '/admin/auditoria'
     | '/admin/avaliacao'
     | '/admin/criativos'
@@ -244,6 +254,7 @@ export interface FileRouteTypes {
     | '/'
     | '/accept-invite'
     | '/login'
+    | '/planos'
     | '/admin/auditoria'
     | '/admin/avaliacao'
     | '/admin/criativos'
@@ -268,6 +279,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/login'
+    | '/planos'
     | '/admin/auditoria'
     | '/admin/avaliacao'
     | '/admin/criativos'
@@ -293,10 +305,18 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRouteWithChildren
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  PlanosRoute: typeof PlanosRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/planos': {
+      id: '/planos'
+      path: '/planos'
+      fullPath: '/planos'
+      preLoaderRoute: typeof PlanosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -510,6 +530,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRouteWithChildren,
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  PlanosRoute: PlanosRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

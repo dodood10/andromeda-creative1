@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 import {
   Sparkles,
   Zap,
@@ -13,7 +14,16 @@ import {
   Target,
   Shield,
   LineChart,
+  Menu,
+  X,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import heroImg from "@/assets/hero-dashboard.jpg";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -86,6 +96,8 @@ const differentials = [
 ];
 
 function Landing() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Nav */}
@@ -99,13 +111,35 @@ function Landing() {
             <a href="#areas" className="hover:text-foreground transition">Recursos</a>
             <a href="#como" className="hover:text-foreground transition">Como funciona</a>
             <a href="#diferenciais" className="hover:text-foreground transition">Diferenciais</a>
+            <Link to="/planos" className="hover:text-foreground transition">Planos</Link>
           </nav>
-          <Link to="/app">
-            <Button className="bg-gradient-primary shadow-glow hover:opacity-90 border-0">
-              Entrar no app
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="md:hidden min-h-11 min-w-11 flex items-center justify-center"
+              onClick={() => setMobileOpen((v) => !v)}
+              aria-label="Menu"
+            >
+              {mobileOpen ? <X className="size-5" /> : <Menu className="size-5" />}
+            </button>
+            <Link to="/login" search={{ redirect: "/app/onboarding" }}>
+              <Button className="bg-gradient-primary shadow-glow hover:opacity-90 border-0 min-h-11">
+                Criar conta grátis
+              </Button>
+            </Link>
+          </div>
         </div>
+        {mobileOpen && (
+          <nav className="md:hidden border-t border-border/40 px-6 py-4 flex flex-col gap-3 text-sm">
+            <a href="#areas" onClick={() => setMobileOpen(false)}>Recursos</a>
+            <a href="#como" onClick={() => setMobileOpen(false)}>Como funciona</a>
+            <a href="#diferenciais" onClick={() => setMobileOpen(false)}>Diferenciais</a>
+            <Link to="/planos" onClick={() => setMobileOpen(false)}>Planos</Link>
+            <Link to="/login" search={{ redirect: "/app/onboarding" }} onClick={() => setMobileOpen(false)}>
+              Entrar
+            </Link>
+          </nav>
+        )}
       </header>
 
       {/* Hero */}
@@ -118,23 +152,49 @@ function Landing() {
               Metodologia Andromeda 2026
             </Badge>
             <h1 className="text-5xl md:text-7xl font-display font-bold tracking-tight">
-              Crie criativos que{" "}
-              <span className="bg-clip-text text-transparent bg-gradient-primary">
-                escalam no Meta Ads
-              </span>
+              Seu próximo criativo performando em{" "}
+              <span className="bg-clip-text text-transparent bg-gradient-primary">15 minutos</span>
             </h1>
             <p className="mt-6 text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto">
               Os segredos dos criativos de alta conversão em uma plataforma. Inteligência diária por nicho, 5 ângulos prontos por briefing, editor com safe zones do Meta e fase de escala automática.
             </p>
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
-              <Link to="/app">
-                <Button size="lg" className="bg-gradient-primary shadow-glow border-0 text-base px-8">
-                  Começar agora <ArrowRight className="ml-1.5 size-4" />
+              <Link to="/login" search={{ redirect: "/app/onboarding" }}>
+                <Button size="lg" className="bg-gradient-primary shadow-glow border-0 text-base px-8 min-h-11">
+                  Criar conta grátis <ArrowRight className="ml-1.5 size-4" />
                 </Button>
               </Link>
-              <Button size="lg" variant="ghost" className="text-base">
-                Ver demo
-              </Button>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button size="lg" variant="outline" className="text-base min-h-11">
+                    Ver demo de 60s
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>Como funciona em 60 segundos</DialogTitle>
+                  </DialogHeader>
+                  <ol className="space-y-4 text-sm">
+                    <li>
+                      <strong>1. Briefing</strong> — Cole a URL do produto e escolha o objetivo da campanha.
+                    </li>
+                    <li>
+                      <strong>2. 5 ângulos</strong> — A IA gera hooks, estrutura e justificativa por ângulo.
+                    </li>
+                    <li>
+                      <strong>3. Editor</strong> — Ajuste roteiro, gere narração e exporte MP4 com safe zones.
+                    </li>
+                    <li>
+                      <strong>4. Escala</strong> — Multiplique o criativo campeão com variações de hook e CTA.
+                    </li>
+                  </ol>
+                  <Link to="/login" search={{ redirect: "/app/onboarding" }}>
+                    <Button className="w-full min-h-11 bg-gradient-primary border-0 mt-2">
+                      Começar agora grátis
+                    </Button>
+                  </Link>
+                </DialogContent>
+              </Dialog>
             </div>
           </div>
 
@@ -262,10 +322,15 @@ function Landing() {
             <p className="mt-4 text-primary-foreground/80 max-w-xl mx-auto">
               Entre no app e gere os 5 primeiros ângulos em menos de 2 minutos.
             </p>
-            <div className="mt-8">
-              <Link to="/app">
-                <Button size="lg" variant="secondary" className="text-base px-8">
-                  Entrar no app <ArrowRight className="ml-1.5 size-4" />
+            <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Link to="/login" search={{ redirect: "/app/onboarding" }}>
+                <Button size="lg" variant="secondary" className="text-base px-8 min-h-11">
+                  Criar conta grátis <ArrowRight className="ml-1.5 size-4" />
+                </Button>
+              </Link>
+              <Link to="/planos">
+                <Button size="lg" variant="outline" className="text-base min-h-11 border-primary-foreground/30">
+                  Ver planos
                 </Button>
               </Link>
             </div>

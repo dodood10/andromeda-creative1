@@ -32,7 +32,8 @@ import {
   Pencil,
   BarChart3,
   TrendingUp,
-  Video,
+  Plus,
+  CreditCard,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { WorkspaceProvider, useWorkspace } from "@/contexts/workspace-context";
@@ -49,14 +50,28 @@ export const Route = createFileRoute("/app")({
 
 type NavItem = { title: string; url: string; icon: typeof Sparkles; exact?: boolean };
 
-const productionItems: NavItem[] = [
-  { title: "Dashboard", url: "/app", icon: Sparkles, exact: true },
-  { title: "Gerar ângulos", url: "/app/gerador", icon: Wand2 },
-  { title: "Editor", url: "/app/editor", icon: Pencil },
-  { title: "Meus criativos", url: "/app/historico", icon: History },
-  { title: "Escala", url: "/app/escala", icon: TrendingUp },
-  { title: "Inteligência", url: "/app/inteligencia", icon: BarChart3 },
-  { title: "VSL curta", url: "/app/vsl", icon: Video },
+const navGroups: Array<{ label: string; items: NavItem[] }> = [
+  {
+    label: "Criar",
+    items: [
+      { title: "Gerar ângulos", url: "/app/gerador", icon: Wand2 },
+      { title: "Editor", url: "/app/editor", icon: Pencil },
+    ],
+  },
+  {
+    label: "Gerenciar",
+    items: [
+      { title: "Dashboard", url: "/app", icon: Sparkles, exact: true },
+      { title: "Meus criativos", url: "/app/historico", icon: History },
+    ],
+  },
+  {
+    label: "Crescer",
+    items: [
+      { title: "Inteligência", url: "/app/inteligencia", icon: BarChart3 },
+      { title: "Escala", url: "/app/escala", icon: TrendingUp },
+    ],
+  },
 ];
 
 function AppAuthGate({ children }: { children: React.ReactNode }) {
@@ -146,6 +161,11 @@ function ProjectSelector({ compact }: { compact?: boolean }) {
 
 function AppLayout() {
   const { profile, signOut } = useAuth();
+  const pathname = useRouterState({ select: (r) => r.location.pathname });
+  const showFab =
+    pathname.startsWith("/app") &&
+    !pathname.startsWith("/app/onboarding") &&
+    pathname !== "/app/gerador";
 
   return (
     <AppAuthGate>
@@ -186,6 +206,20 @@ function AppLayout() {
               <main className="flex-1 overflow-auto">
                 <Outlet />
               </main>
+              {showFab && (
+                <Link
+                  to="/app/gerador"
+                  className="fixed bottom-4 right-4 z-40 md:bottom-6 md:right-6"
+                >
+                  <Button
+                    size="lg"
+                    className="rounded-full shadow-glow bg-gradient-primary border-0 min-h-12 min-w-12 px-4"
+                  >
+                    <Plus className="size-5 mr-1" />
+                    <span className="hidden sm:inline">Novo criativo</span>
+                  </Button>
+                </Link>
+              )}
             </div>
           </div>
         </SidebarProvider>
@@ -210,23 +244,25 @@ function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Produção</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {productionItems.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild isActive={isActive(item.url, item.exact)}>
-                    <Link to={item.url} className="flex items-center gap-2">
-                      <item.icon className="size-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {navGroups.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => (
+                  <SidebarMenuItem key={item.url}>
+                    <SidebarMenuButton asChild isActive={isActive(item.url, item.exact)}>
+                      <Link to={item.url} className="flex items-center gap-2">
+                        <item.icon className="size-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
         <SidebarGroup className="md:hidden">
           <SidebarGroupLabel>Projeto</SidebarGroupLabel>
           <SidebarGroupContent className="px-2 pb-2">
@@ -234,6 +270,7 @@ function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
+          <SidebarGroupLabel>Conta</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
@@ -241,6 +278,14 @@ function AppSidebar() {
                   <Link to="/app/projetos" className="flex items-center gap-2">
                     <FolderKanban className="size-4" />
                     <span>Projetos</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === "/planos"}>
+                  <Link to="/planos" className="flex items-center gap-2">
+                    <CreditCard className="size-4" />
+                    <span>Planos</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

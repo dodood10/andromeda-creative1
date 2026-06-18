@@ -36,6 +36,7 @@ import { validateHttpUrl } from "@/lib/security-url";
 import { VSL_BLOCOS_META, vslBlockLabel, isVslRoteiro, type VslAnguloJsonExtras } from "@/lib/vsl-roteiro";
 import { gerarVslCurta } from "@/lib/vsl.functions";
 import { trackFunnelEvent } from "@/lib/funnel-events";
+import { celebrateFirstExport } from "@/lib/first-export-celebration";
 import type { AudioPaths } from "@/lib/types/criativo-json";
 import type { CriativoScore } from "@/lib/types/criativo-json";
 
@@ -49,6 +50,9 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { UpgradeBanner } from "@/components/upgrade-banner";
+import { getPlanUsage } from "@/lib/plan.functions";
 
 const searchSchema = z.object({
   criativoId: z.string().uuid().optional(),
@@ -141,6 +145,14 @@ function Editor({ criativoId, focus }: EditorProps) {
   const signAudio = useServerFn(getSignedAudioUrl);
   const fetchCapabilities = useServerFn(getMediaCapabilities);
   const fetchEta = useServerFn(getGeradorEtaEstimates);
+  const fetchPlanUsage = useServerFn(getPlanUsage);
+
+  const { data: planUsage } = useQuery({
+    queryKey: ["plan-usage", organizationId],
+    queryFn: () => fetchPlanUsage({ data: { organizationId: organizationId! } }),
+    enabled: !!organizationId,
+    staleTime: 60_000,
+  });
 
   const { data: capabilities } = useQuery({
     queryKey: ["media-capabilities"],
@@ -175,6 +187,7 @@ function Editor({ criativoId, focus }: EditorProps) {
   const [exportDevMode, setExportDevMode] = useState(false);
   const [audioDevMode, setAudioDevMode] = useState(false);
   const [showPostExport, setShowPostExport] = useState(false);
+  const [mobileTab, setMobileTab] = useState<"roteiro" | "preview" | "export">("roteiro");
   const [markingSubiu, setMarkingSubiu] = useState(false);
   const [downloadUrls, setDownloadUrls] = useState<Record<string, string>>({});
   const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
@@ -436,6 +449,7 @@ function Editor({ criativoId, focus }: EditorProps) {
             setShowPostExport(true);
             setScoreOpen(false);
             toast.success("Export concluído!");
+            celebrateFirstExport();
             trackFunnelEvent({ userId: user?.id, organizationId, event: "export_pronto", success: true });
             queryClient.invalidateQueries({ queryKey: ["criativo", criativoId] });
             return;
@@ -555,7 +569,22 @@ function Editor({ criativoId, focus }: EditorProps) {
           exportDevMode={exportDevMode}
         />
       )}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-border/50">
+      <div className="px-4 lg:px-6 pt-4">
+        <AppBreadcrumbs
+          items={[
+            { label: "Projeto", to: "/app" },
+            { label: "Histórico", to: "/app/historico" },
+            { label: anguloNome },
+          ]}
+        />
+        {planUsage && !planUsage.canExport && (
+          <UpgradeBanner
+            message={`Limite de exports do plano grátis atingido (${planUsage.exportsMes}/${planUsage.limits.exportsMes} este mês).`}
+            compact
+          />
+        )}
+      </div>
+      <div className="flex items-center justify-between px-4 lg:px-6 py-3 border-b border-border/50 gap-2">
         <div>
           <h1 className="font-display text-lg font-semibold">Editor · {anguloNome}</h1>
           <p className="text-xs text-muted-foreground">
@@ -563,7 +592,7 @@ function Editor({ criativoId, focus }: EditorProps) {
             {criativo.export_status === "renderizando" ? "Renderizando..." : criativo.export_status ?? "rascunho"}
           </p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="hidden lg:flex gap-2 items-center">
           {exporting && <Loader2 className="size-4 animate-spin text-primary-glow" />}
           {renderProgress && (
             <span className="text-xs text-muted-foreground">{renderProgress}</span>
@@ -607,10 +636,58 @@ function Editor({ criativoId, focus }: EditorProps) {
             />
           </Dialog>
         </div>
+        <div className="lg:hidden flex items-center gap-2">
+          {exporting && <Loader2 className="size-4 animate-spin text-primary-glow" />}
+          <Dialog open={scoreOpen} onOpenChange={setScoreOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" className="min-h-11 bg-gradient-primary border-0 shadow-glow" disabled={exporting}>
+                <Download className="size-4 mr-1" /> Exportar
+              </Button>
+            </DialogTrigger>
+            <ExportDialog
+              score={scoreData}
+              onExport={handleExport}
+              onReavaliar={handleAvaliar}
+              exporting={exporting}
+              downloadUrls={downloadUrls}
+              exportPaths={exportPaths}
+              exportEtaLabel={exportEtaLabel}
+            />
+          </Dialog>
+        </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
-        <aside className="w-72 border-r border-border/50 p-4 space-y-4 overflow-auto">
+      <div className="lg:hidden border-b border-border/50 px-2 py-2">
+        <div className="grid grid-cols-3 gap-1">
+          {(
+            [
+              { id: "roteiro", label: "Roteiro" },
+              { id: "preview", label: "Preview" },
+              { id: "export", label: "Export" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setMobileTab(tab.id)}
+              className={`min-h-11 rounded-lg text-sm font-medium transition ${
+                mobileTab === tab.id
+                  ? "bg-primary/20 text-primary-glow border border-primary/40"
+                  : "text-muted-foreground border border-transparent"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+        <aside
+          className={`w-full lg:w-72 border-r border-border/50 p-4 space-y-4 overflow-auto ${
+            mobileTab !== "roteiro" ? "hidden lg:block" : ""
+          }`}
+        >
           {isVsl && (
             <div className="p-3 rounded-lg bg-primary/10 border border-primary/30 text-xs space-y-1">
               <p className="font-semibold text-primary-glow">Roteiro VSL · 2 min</p>
@@ -683,7 +760,11 @@ function Editor({ criativoId, focus }: EditorProps) {
           </div>
         </aside>
 
-        <section className="flex-1 flex items-center justify-center p-6 bg-background/40">
+        <section
+          className={`flex-1 flex items-center justify-center p-4 lg:p-6 bg-background/40 ${
+            mobileTab !== "preview" ? "hidden lg:flex" : "flex"
+          }`}
+        >
           <div className="relative" style={{ width: 270, height: 480 }}>
             <div className="absolute inset-0 rounded-3xl overflow-hidden border border-border bg-gradient-to-br from-primary/30 to-accent/20">
               {backgroundUrl && (
@@ -707,7 +788,11 @@ function Editor({ criativoId, focus }: EditorProps) {
           </div>
         </section>
 
-        <aside className="w-72 border-l border-border/50 p-4 space-y-5 overflow-auto">
+        <aside
+          className={`w-full lg:w-72 border-l border-border/50 p-4 space-y-5 overflow-auto ${
+            mobileTab !== "export" ? "hidden lg:block" : ""
+          }`}
+        >
           {isVsl && vslExtras.vsl_diagnostico && (
             <Collapsible defaultOpen>
               <CollapsibleTrigger className="flex items-center justify-between w-full text-left">
