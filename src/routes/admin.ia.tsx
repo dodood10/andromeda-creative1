@@ -56,9 +56,70 @@ function AdminIa() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <AdminKpiCard label="Eventos" value={data.totalEvents} />
             <AdminKpiCard label="Tokens (est.)" value={data.totalTokens.toLocaleString("pt-BR")} />
-            <AdminKpiCard label="Custo (est.)" value={`US$ ${data.estimatedCostUsd}`} />
+            <AdminKpiCard label="Custo IA (est.)" value={`US$ ${data.estimatedCostUsd}`} />
             <AdminKpiCard label="Erros" value={data.recentErrors.length} sub="no período" />
           </div>
+
+          {data.videoRenders && (
+            <Card className="glass p-6 space-y-4">
+              <div className="flex items-end justify-between flex-wrap gap-2">
+                <div>
+                  <h2 className="font-semibold">Custos de vídeo</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Estimativa baseada em TTS (ElevenLabs), provedor de vídeo e FFmpeg.
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-2xl font-bold">US$ {data.videoRenders.totalCostUsd.toFixed(2)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {data.videoRenders.done} vídeo(s) · média US$ {data.videoRenders.avgCostUsd.toFixed(3)}
+                  </p>
+                </div>
+              </div>
+
+              {data.videoRenders.byProvider.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  {data.videoRenders.byProvider.map((p) => (
+                    <div
+                      key={p.provider}
+                      className="rounded-lg border border-border/40 p-3 space-y-1"
+                    >
+                      <p className="font-mono text-xs">{p.provider}</p>
+                      <p className="text-lg font-bold">US$ {p.cost.toFixed(2)}</p>
+                      <p className="text-[11px] text-muted-foreground">{p.count} render(s)</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {data.videoRenders.recent.length > 0 && (
+                <div className="space-y-1 max-h-72 overflow-auto">
+                  <p className="text-xs text-muted-foreground pb-1">Últimos renders</p>
+                  {data.videoRenders.recent.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center justify-between text-xs border-b border-border/20 py-1.5 last:border-0 gap-3"
+                    >
+                      <span className="font-mono truncate max-w-[200px]">{r.criativoId}</span>
+                      <Badge
+                        variant={r.status === "done" ? "outline" : r.status === "failed" ? "destructive" : "secondary"}
+                        className="text-[10px]"
+                      >
+                        {r.status}
+                      </Badge>
+                      <span className="font-mono text-muted-foreground">{r.provider}</span>
+                      <span className="text-muted-foreground">
+                        {r.durationMs ? `${(r.durationMs / 1000).toFixed(1)}s` : "—"}
+                      </span>
+                      <span className="font-semibold tabular-nums w-20 text-right">
+                        US$ {r.costUsd.toFixed(3)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
 
           <Card className="glass p-6 space-y-4">
             <h2 className="font-semibold">Eventos por dia</h2>
