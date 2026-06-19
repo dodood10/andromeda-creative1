@@ -46,7 +46,7 @@ import { analyzeReferenceTranscription } from "./reference-transcription-analyze
 import { TomCalibracaoSchema } from "./types/enums";
 import { championFromCriativoRow, type ChampionForRanking } from "./champion-angle-ranking";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/integrations/supabase/types";
+
 import type { ProjectPerformanceContext } from "./project-performance-context";
 import {
   computeQueuePriorityScore,
