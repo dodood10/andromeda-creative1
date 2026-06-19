@@ -170,10 +170,20 @@ export async function executeCriativoRender(params: {
       paths = result.paths;
     }
 
+    const cost = estimateRenderCost({
+      pipeline: resolved.pipeline,
+      provider,
+      roteiro,
+      clipsGenerated: resolved.pipeline === "broll_ia" ? roteiro.length : undefined,
+    });
+
     await updateRenderJob(jobId, {
       status: "done",
       result_paths: paths,
       progress: { step: "done", message: "Export concluído" },
+      cost_usd: cost.total_usd,
+      cost_breakdown: cost as unknown as Record<string, unknown>,
+      duration_ms: Date.now() - startedAt,
     });
 
     return { paths, devMode: false, resolved };
@@ -181,6 +191,7 @@ export async function executeCriativoRender(params: {
     await updateRenderJob(jobId, {
       status: "failed",
       error: e instanceof Error ? e.message : String(e),
+      duration_ms: Date.now() - startedAt,
     });
     throw e;
   }
