@@ -984,6 +984,7 @@ function CriativoCard({
   userId,
   onStatusUpdated,
   onNextDraft,
+  editorPath = "/app/editor",
 }: CriativoActionsProps & { compact?: boolean }) {
   const dataFmt = format(new Date(row.created_at), "dd/MM", { locale: ptBR });
   const paths = (row.export_paths as string[]) ?? [];
@@ -1092,6 +1093,7 @@ function CriativoRowItem({
   userId,
   onStatusUpdated,
   onNextDraft,
+  editorPath = "/app/editor",
 }: CriativoActionsProps) {
   const dataFmt = format(new Date(row.created_at), "dd/MM", { locale: ptBR });
   const paths = (row.export_paths as string[]) ?? [];
