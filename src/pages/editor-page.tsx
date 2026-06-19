@@ -264,7 +264,7 @@ function Editor({ criativoId, focus, mode }: EditorProps) {
     } else if (
       mode === "vsl" &&
       criativo.formato_saida === "criativo_curto" &&
-      !isVslRoteiro(criativo.roteiro_json as RoteiroBloco[] | null ?? [])
+      !isVslRoteiro((criativo.roteiro as unknown as RoteiroBloco[] | null) ?? [])
     ) {
       navigate({
         to: "/app/editor",
@@ -829,8 +829,8 @@ function Editor({ criativoId, focus, mode }: EditorProps) {
         {mode !== "vsl" && (
         <AppBreadcrumbs
           items={[
-            { label: mode === "vsl" ? "VSL" : "Dashboard", to: mode === "vsl" ? config.cockpitPath : "/app" },
-            { label: mode === "vsl" ? "Pipeline VSL" : "Pipeline", to: config.pipelinePath, search: pipelineSearchForMode(mode) },
+            { label: "Dashboard", to: "/app" },
+            { label: "Pipeline", to: config.pipelinePath, search: pipelineSearchForMode(mode) },
             { label: anguloNome },
           ]}
         />
@@ -1422,7 +1422,7 @@ function ExportDialog({
             Export liberado, mas revise o hook — score de congruência abaixo de 70%.
           </p>
         )}
-        <Link to={config.geradorPath} className="text-xs text-primary-glow underline block">
+        <Link to="/app/gerador" className="text-xs text-primary-glow underline block">
           Ajustar ângulos no gerador
         </Link>
       </div>

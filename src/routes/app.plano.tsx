@@ -38,7 +38,7 @@ function PlanoPage() {
   const checkoutMutation = useMutation({
     mutationFn: () => {
       if (!organizationId) throw new Error("Workspace não carregado");
-      trackMetaInitiateCheckout();
+      trackMetaInitiateCheckout("pro");
       return runCheckout({ data: { organizationId, tier: "pro" } });
     },
     onSuccess: (data) => {
