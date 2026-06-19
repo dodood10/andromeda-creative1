@@ -222,7 +222,7 @@ export async function appendOrgReferenceTranscription(
   const { error } = await supabase
     .from("organizations")
     .update({
-      intel_settings: next as Record<string, unknown>,
+      intel_settings: next as unknown as Json,
     })
     .eq("id", organizationId);
 
@@ -270,7 +270,7 @@ export async function appendOrgReferenceTranscriptionsBatch(
   const { error } = await supabase
     .from("organizations")
     .update({
-      intel_settings: settings as Record<string, unknown>,
+      intel_settings: settings as unknown as Json,
     })
     .eq("id", organizationId);
 
@@ -314,7 +314,7 @@ export async function saveOrgReferenceCombo(
 
   const { error } = await supabase
     .from("organizations")
-    .update({ intel_settings: next as Record<string, unknown> })
+    .update({ intel_settings: next as unknown as Json })
     .eq("id", organizationId);
 
   if (error) throw new Error(error.message);
@@ -356,7 +356,7 @@ export async function removeOrgReferenceTranscription(
         ...existing,
         reference_transcriptions: list,
         reference_combo: comboUsesRemoved ? undefined : combo,
-      } as Record<string, unknown>,
+      } as unknown as Json,
     })
     .eq("id", organizationId);
 
