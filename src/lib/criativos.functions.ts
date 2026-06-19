@@ -167,7 +167,8 @@ export const updateCriativoStatus = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
-    const patch: Record<string, unknown> = { status: data.status };
+    type CriativosUpdate = Database["public"]["Tables"]["criativos"]["Update"];
+    const patch: CriativosUpdate = { status: data.status };
 
     if (data.status === "Performando") {
       patch.performando_intel_status = "pending";
