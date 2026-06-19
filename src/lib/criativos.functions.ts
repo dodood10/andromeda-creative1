@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import type { Database, Json } from "@/integrations/supabase/types";
 import { AnguloSchema, ResultadoAngulosSchema, RoteiroBlocoSchema, type RoteiroBloco } from "./schemas/angulos.schema";
 import type { ResultadoAngulos } from "./schemas/angulos.schema";
 import { normalizeAngulo, getProjectFormatContext } from "./formato-recomendacao";
