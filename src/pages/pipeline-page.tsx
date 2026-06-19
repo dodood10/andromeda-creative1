@@ -737,6 +737,7 @@ export function PipelinePage({
                   userId={user?.id}
                   onStatusUpdated={() => queryClient.invalidateQueries({ queryKey: ["criativos", projectId] })}
                   onNextDraft={(id) => navigate({ to: config.editorPath, search: { criativoId: id, focus: "audio" } })}
+                  editorPath={config.editorPath}
                 />
               ))}
             </div>
@@ -767,6 +768,7 @@ export function PipelinePage({
                           userId={user?.id}
                           onStatusUpdated={() => queryClient.invalidateQueries({ queryKey: ["criativos", projectId] })}
                           onNextDraft={(id) => navigate({ to: config.editorPath, search: { criativoId: id, focus: "audio" } })}
+                  editorPath={config.editorPath}
                         />
                       ))}
                   </div>
@@ -804,6 +806,7 @@ export function PipelinePage({
                         userId={user?.id}
                         onStatusUpdated={() => queryClient.invalidateQueries({ queryKey: ["criativos", projectId] })}
                         onNextDraft={(id) => navigate({ to: config.editorPath, search: { criativoId: id, focus: "audio" } })}
+                  editorPath={config.editorPath}
                       />
                     ))}
                   </TableBody>
