@@ -34,7 +34,7 @@ function VslLayout() {
       </div>
       <nav className="flex flex-wrap gap-1 border-b border-border/50 pb-px">
         {subnav.map((item) => {
-          const active = item.exact
+          const active = "exact" in item && item.exact
             ? pathname === item.to
             : pathname === item.to || pathname.startsWith(`${item.to}/`);
           return (
