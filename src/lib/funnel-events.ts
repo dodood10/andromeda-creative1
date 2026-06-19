@@ -51,7 +51,7 @@ export function trackFunnelEvent(params: {
     event_type: params.event,
     success: params.success ?? true,
     duration_ms: params.durationMs ?? null,
-    metadata: params.metadata ?? {},
+    metadata: (params.metadata ?? {}) as unknown as Json,
   };
 
   void supabaseAdmin
