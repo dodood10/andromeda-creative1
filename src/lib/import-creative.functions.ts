@@ -362,7 +362,7 @@ export async function executeImportCriativoCampeao(
   const whisperSnapshot =
     snapshot ??
     (transcription.trim()
-      ? buildImportTranscriptionSnapshot(analysis.roteiro, transcription, "whisper", snapshot?.duracao_estimada_seg)
+      ? buildImportTranscriptionSnapshot(analysis.roteiro, transcription, "whisper", undefined)
       : null);
 
   return finalizeImportCriativo({

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import type { Database, Json } from "@/integrations/supabase/types";
 import { AnguloSchema, ResultadoAngulosSchema, RoteiroBlocoSchema, type RoteiroBloco } from "./schemas/angulos.schema";
 import type { ResultadoAngulos } from "./schemas/angulos.schema";
 import { normalizeAngulo, getProjectFormatContext } from "./formato-recomendacao";
@@ -45,7 +46,7 @@ import { analyzeReferenceTranscription } from "./reference-transcription-analyze
 import { TomCalibracaoSchema } from "./types/enums";
 import { championFromCriativoRow, type ChampionForRanking } from "./champion-angle-ranking";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/integrations/supabase/types";
+
 import type { ProjectPerformanceContext } from "./project-performance-context";
 import {
   computeQueuePriorityScore,
@@ -167,7 +168,8 @@ export const updateCriativoStatus = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
-    const patch: Record<string, unknown> = { status: data.status };
+    type CriativosUpdate = Database["public"]["Tables"]["criativos"]["Update"];
+    const patch: CriativosUpdate = { status: data.status };
 
     if (data.status === "Performando") {
       patch.performando_intel_status = "pending";
@@ -224,7 +226,7 @@ export const updateCriativoRoteiro = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const patch: Record<string, unknown> = { roteiro: data.roteiro };
+    const patch: Database["public"]["Tables"]["criativos"]["Update"] = { roteiro: data.roteiro as unknown as Json };
     if (data.voiceId !== undefined) patch.voice_id = data.voiceId;
     if (data.backgroundMediaPath !== undefined) {
       assertUserOwnedMediaPath(userId, data.backgroundMediaPath);
@@ -1952,7 +1954,7 @@ export const importMetricasCsv = createServerFn({ method: "POST" })
 
       const strong = csvRowIndicatesStrongPerformance(row.metrics);
       if (utmExact && strong) {
-        const patch: Record<string, unknown> = {};
+        const patch: Database["public"]["Tables"]["criativos"]["Update"] = {};
         if (match.status === "Rodando" || match.status === "Subiu") {
           patch.status = "Performando";
           performandoAuto++;

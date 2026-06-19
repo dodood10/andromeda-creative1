@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { Json } from "@/integrations/supabase/types";
 import type { RoteiroBloco } from "./schemas/angulos.schema";
 import { AnguloSchema } from "./schemas/angulos.schema";
 import {
@@ -72,7 +73,7 @@ export const listVozes = createServerFn({ method: "GET" })
   });
 
 async function uploadAudioBlock(
-  supabase: ReturnType<typeof import("@supabase/supabase-js").createClient>,
+  supabase: { storage: { from: (bucket: string) => { upload: (path: string, buffer: ArrayBuffer, opts: { contentType: string; upsert: boolean }) => Promise<{ error: { message: string } | null }> } } },
   criativoId: string,
   blocoIndex: number,
   buffer: ArrayBuffer,
@@ -460,7 +461,7 @@ export const avaliarCriativo = createServerFn({ method: "POST" })
       .every((d) => d.ok);
     const scoreJson: CriativoScore = { dimensoes, podeExportar, avaliadoEm: new Date().toISOString() };
 
-    await supabase.from("criativos").update({ score_json: scoreJson }).eq("id", data.criativoId);
+    await supabase.from("criativos").update({ score_json: scoreJson as unknown as Json }).eq("id", data.criativoId);
 
     return scoreJson;
   });
@@ -501,14 +502,14 @@ export const getRenderJobStatus = createServerFn({ method: "POST" })
   .inputValidator(z.object({ criativoId: z.string().uuid() }))
   .handler(async ({ data }) => {
     const job = await getLatestRenderJob(data.criativoId);
-    if (!job) return { job: null as const };
+    if (!job) return { job: null as { id: string; status: string; provider: string; progress: Json; error: string | null } | null };
 
     return {
       job: {
         id: job.id,
         status: job.status,
         provider: job.provider,
-        progress: (job.progress as Record<string, unknown>) ?? {},
+        progress: (job.progress as Json) ?? ({} as Json),
         error: job.error,
       },
     };

@@ -17,20 +17,18 @@ export const ScoreDimensaoSchema = z.object({
   dica: z.string().optional(),
 });
 
-export const ScoreJsonSchema = z
-  .object({
-    dimensoes: z.array(ScoreDimensaoSchema).optional(),
-    podeExportar: z.boolean().optional(),
-    avaliadoEm: z.string().optional(),
-    exportDevMode: z.boolean().optional(),
-    exportDevMessage: z.string().optional(),
-    ugc_recommended: z.boolean().optional(),
-    ugc_message: z.string().optional(),
-    render_fallback: z.string().optional(),
-    ugc_provider: z.string().optional(),
-    total: z.number().optional(),
-  })
-  .passthrough();
+export const ScoreJsonSchema = z.object({
+  dimensoes: z.array(ScoreDimensaoSchema).optional(),
+  podeExportar: z.boolean().optional(),
+  avaliadoEm: z.string().optional(),
+  exportDevMode: z.boolean().optional(),
+  exportDevMessage: z.string().optional(),
+  ugc_recommended: z.boolean().optional(),
+  ugc_message: z.string().optional(),
+  render_fallback: z.string().optional(),
+  ugc_provider: z.string().optional(),
+  total: z.number().optional(),
+});
 
 export type ScoreDimensao = z.infer<typeof ScoreDimensaoSchema>;
 export type ScoreJson = z.infer<typeof ScoreJsonSchema>;
