@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as PlanosRouteImport } from './routes/planos'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/app'
@@ -38,6 +39,11 @@ import { Route as AppVslPipelineRouteImport } from './routes/app.vsl.pipeline'
 import { Route as AppVslGeradorRouteImport } from './routes/app.vsl.gerador'
 import { Route as AppVslEditorRouteImport } from './routes/app.vsl.editor'
 
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlanosRoute = PlanosRouteImport.update({
   id: '/planos',
   path: '/planos',
@@ -186,6 +192,7 @@ export interface FileRoutesByFullPath {
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/planos': typeof PlanosRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/admin/auditoria': typeof AdminAuditoriaRoute
   '/admin/avaliacao': typeof AdminAvaliacaoRoute
   '/admin/criativos': typeof AdminCriativosRoute
@@ -214,6 +221,7 @@ export interface FileRoutesByTo {
   '/accept-invite': typeof AcceptInviteRoute
   '/login': typeof LoginRoute
   '/planos': typeof PlanosRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/admin/auditoria': typeof AdminAuditoriaRoute
   '/admin/avaliacao': typeof AdminAvaliacaoRoute
   '/admin/criativos': typeof AdminCriativosRoute
@@ -244,6 +252,7 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/planos': typeof PlanosRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/admin/auditoria': typeof AdminAuditoriaRoute
   '/admin/avaliacao': typeof AdminAvaliacaoRoute
   '/admin/criativos': typeof AdminCriativosRoute
@@ -276,6 +285,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/login'
     | '/planos'
+    | '/reset-password'
     | '/admin/auditoria'
     | '/admin/avaliacao'
     | '/admin/criativos'
@@ -304,6 +314,7 @@ export interface FileRouteTypes {
     | '/accept-invite'
     | '/login'
     | '/planos'
+    | '/reset-password'
     | '/admin/auditoria'
     | '/admin/avaliacao'
     | '/admin/criativos'
@@ -333,6 +344,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/login'
     | '/planos'
+    | '/reset-password'
     | '/admin/auditoria'
     | '/admin/avaliacao'
     | '/admin/criativos'
@@ -364,10 +376,18 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
   PlanosRoute: typeof PlanosRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/planos': {
       id: '/planos'
       path: '/planos'
@@ -643,6 +663,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
   PlanosRoute: PlanosRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
