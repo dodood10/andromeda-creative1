@@ -72,7 +72,7 @@ export const listVozes = createServerFn({ method: "GET" })
   });
 
 async function uploadAudioBlock(
-  supabase: ReturnType<typeof import("@supabase/supabase-js").createClient>,
+  supabase: { storage: { from: (bucket: string) => { upload: (path: string, buffer: ArrayBuffer, opts: { contentType: string; upsert: boolean }) => Promise<{ error: { message: string } | null }> } } },
   criativoId: string,
   blocoIndex: number,
   buffer: ArrayBuffer,
