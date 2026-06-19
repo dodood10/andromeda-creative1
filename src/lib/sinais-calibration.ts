@@ -153,7 +153,7 @@ export async function refreshProjectCalibration(
 
   await supabase
     .from("projects")
-    .update({ intel_settings: settings as Record<string, unknown> })
+    .update({ intel_settings: settings as unknown as import("@/integrations/supabase/types").Json })
     .eq("id", projectId);
 
   return settings;
