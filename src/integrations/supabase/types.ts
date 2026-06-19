@@ -658,8 +658,11 @@ export type Database = {
       }
       video_render_jobs: {
         Row: {
+          cost_breakdown: Json
+          cost_usd: number
           created_at: string
           criativo_id: string
+          duration_ms: number | null
           error: string | null
           external_job_id: string | null
           id: string
@@ -670,8 +673,11 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          cost_breakdown?: Json
+          cost_usd?: number
           created_at?: string
           criativo_id: string
+          duration_ms?: number | null
           error?: string | null
           external_job_id?: string | null
           id?: string
@@ -682,8 +688,11 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          cost_breakdown?: Json
+          cost_usd?: number
           created_at?: string
           criativo_id?: string
+          duration_ms?: number | null
           error?: string | null
           external_job_id?: string | null
           id?: string
