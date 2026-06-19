@@ -11,6 +11,7 @@ import {
 import { callFfmpegRender } from "@/lib/render/render-ffmpeg";
 import { executeBrollRender } from "@/lib/render/render-broll";
 import { createRenderJob, updateRenderJob } from "@/lib/render/render-jobs";
+import { estimateRenderCost } from "@/lib/render/render-cost";
 import {
   actorFromRecomendacao,
   buildUgcScript,
