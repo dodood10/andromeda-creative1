@@ -147,7 +147,7 @@ export function PipelinePage({
   const fetchReviewStatus = useServerFn(getIntelReviewStatus);
   const fetchDashboardStats = useServerFn(
     mode === "vsl" ? getVslDashboardStats : getDashboardStats,
-  );
+  ) as (input: { data: { projectId: string } }) => Promise<Record<string, unknown>>;
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
@@ -414,7 +414,7 @@ export function PipelinePage({
       />
       )}
 
-      {mode === "criativo" && dashStats && "showCsvReminder" in dashStats && dashStats.showCsvReminder && (
+      {mode === "criativo" && dashStats && (dashStats as { showCsvReminder?: boolean }).showCsvReminder && (
         <Card className="glass p-4 border border-primary/30 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
             <strong className="text-foreground">Flywheel de dados:</strong> export há 3+ dias sem CSV importado.
@@ -427,10 +427,10 @@ export function PipelinePage({
         </Card>
       )}
 
-      {mode === "criativo" && dashStats && "rodandoMetricsReminderCount" in dashStats && dashStats.rodandoMetricsReminderCount ? (
+      {mode === "criativo" && dashStats && (dashStats as { rodandoMetricsReminderCount?: number }).rodandoMetricsReminderCount ? (
         <Card className="glass p-4 border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
-            <strong className="text-foreground">{dashStats.rodandoMetricsReminderCount} criativo(s)</strong> em Rodando há 7+ dias sem métricas reportadas.
+            <strong className="text-foreground">{(dashStats as { rodandoMetricsReminderCount?: number }).rodandoMetricsReminderCount} criativo(s)</strong> em Rodando há 7+ dias sem métricas reportadas.
           </p>
           <Button size="sm" variant="outline" onClick={() => setStatusFilter("Rodando")}>
             Ver e reportar
@@ -573,7 +573,7 @@ export function PipelinePage({
             <Select
               value={formatoFilter}
               onValueChange={(v) => {
-                setFormatoFilter(v);
+                setFormatoFilter(v as "all" | "criativo_curto" | "vsl_curta");
                 navigate({
                   to: "/app/historico",
                   search: {
