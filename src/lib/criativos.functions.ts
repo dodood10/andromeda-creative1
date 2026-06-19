@@ -561,7 +561,7 @@ export const getDashboardStats = createServerFn({ method: "POST" })
 
     const { data: resultadosProjeto } = await supabase
       .from("resultados_reportados")
-      .select("criativo_id, metrica, valor, intel_review_status, observacao")
+      .select("criativo_id, metrica, valor, intel_review_status, observacao, tipo")
       .in(
         "criativo_id",
         (criativos ?? []).map((c) => c.id),
@@ -854,9 +854,12 @@ export const getVslDashboardStats = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
 
     const { data: resultadosProjeto } = await supabase
-      .from("resultados")
-      .select("observacao")
-      .eq("project_id", data.projectId);
+      .from("resultados_reportados")
+      .select("observacao, criativo_id")
+      .in(
+        "criativo_id",
+        (criativos ?? []).map((c) => c.id),
+      );
 
     const temCsvImport = (resultadosProjeto ?? []).some((r) =>
       r.observacao?.includes("Import CSV"),

@@ -29,31 +29,33 @@ function parseAdminEmails(): Set<string> {
 
 export const requirePlatformAdmin = createMiddleware({ type: "function" }).server(
   async ({ next, context }) => {
-    const ctx = context as {
+    const ctx = context as unknown as {
       supabase?: { from: (t: string) => unknown };
       userId?: string;
       claims?: { email?: string };
     };
 
-    if (!ctx.supabase || !ctx.userId) {
+    const supabase = ctx.supabase;
+    const userId = ctx.userId;
+    if (!supabase || !userId) {
       throw new Error("Forbidden: authentication required");
     }
 
-    checkRateLimit(ctx.userId);
+    checkRateLimit(userId);
 
     const email = (ctx.claims?.email ?? "").toLowerCase();
     const allowlist = parseAdminEmails();
 
     if (email && allowlist.has(email)) {
-      return next({ context: { ...ctx, isPlatformAdmin: true as const } });
+      return next({ context: { ...ctx, userId, supabase, isPlatformAdmin: true as const } });
     }
 
-    const { data: profile, error } = await (ctx.supabase as ReturnType<
+    const { data: profile, error } = await (supabase as ReturnType<
       typeof import("@supabase/supabase-js").createClient
     >)
       .from("profiles")
       .select("is_platform_admin")
-      .eq("id", ctx.userId)
+      .eq("id", userId)
       .maybeSingle();
 
     if (error) throw new Error(error.message);
@@ -63,6 +65,6 @@ export const requirePlatformAdmin = createMiddleware({ type: "function" }).serve
       throw new Error("Forbidden: platform admin access required");
     }
 
-    return next({ context: { ...ctx, isPlatformAdmin: true as const } });
+    return next({ context: { ...ctx, userId, supabase, isPlatformAdmin: true as const } });
   },
 );
