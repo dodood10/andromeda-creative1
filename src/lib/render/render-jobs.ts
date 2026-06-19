@@ -38,6 +38,9 @@ export async function updateRenderJob(
     result_paths?: string[];
     error?: string;
     external_job_id?: string;
+    cost_usd?: number;
+    cost_breakdown?: Record<string, unknown>;
+    duration_ms?: number;
   },
 ) {
   const { error } = await supabaseAdmin
