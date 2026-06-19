@@ -39,7 +39,7 @@ export async function updateRenderJob(
     error?: string;
     external_job_id?: string;
     cost_usd?: number;
-    cost_breakdown?: Record<string, unknown>;
+    cost_breakdown?: Record<string, unknown> | unknown;
     duration_ms?: number;
   },
 ) {
