@@ -108,6 +108,8 @@ export async function executeCriativoRender(params: {
   const jobId =
     params.existingJobId ?? (await createRenderJob({ criativoId: criativo.id, provider }));
 
+  const startedAt = Date.now();
+
   try {
     await updateRenderJob(jobId, {
       status: "running",
