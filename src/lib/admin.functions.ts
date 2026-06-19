@@ -748,6 +748,30 @@ export const getAdminApiUsage = createServerFn({ method: "POST" })
     const totalTokens = rows.reduce((s, e) => s + (e.tokens_estimated ?? 0), 0);
     const estimatedCostUsd = (totalTokens / 1000) * COST_PER_1K_TOKENS;
 
+    // Video render costs
+    const { data: renderJobs } = await supabaseAdmin
+      .from("video_render_jobs")
+      .select("id, provider, status, cost_usd, cost_breakdown, duration_ms, created_at, criativo_id")
+      .gte("created_at", since.toISOString())
+      .order("created_at", { ascending: false });
+
+    const renders = renderJobs ?? [];
+    const rendersDone = renders.filter((r) => r.status === "done");
+    const totalVideoCostUsd =
+      Math.round(rendersDone.reduce((s, r) => s + Number(r.cost_usd ?? 0), 0) * 100) / 100;
+    const avgVideoCostUsd =
+      rendersDone.length > 0
+        ? Math.round((totalVideoCostUsd / rendersDone.length) * 1000) / 1000
+        : 0;
+
+    const videoByProvider: Record<string, { count: number; cost: number }> = {};
+    for (const r of rendersDone) {
+      const p = r.provider ?? "unknown";
+      if (!videoByProvider[p]) videoByProvider[p] = { count: 0, cost: 0 };
+      videoByProvider[p].count++;
+      videoByProvider[p].cost += Number(r.cost_usd ?? 0);
+    }
+
     await logAdminAction({
       actorUserId: context.userId,
       action: "admin.view_api_usage",
@@ -763,6 +787,28 @@ export const getAdminApiUsage = createServerFn({ method: "POST" })
       topUsers,
       eventsByDay,
       recentErrors: rows.filter((e) => !e.success).slice(0, 15),
+      videoRenders: {
+        total: renders.length,
+        done: rendersDone.length,
+        failed: renders.filter((r) => r.status === "failed").length,
+        totalCostUsd: totalVideoCostUsd,
+        avgCostUsd: avgVideoCostUsd,
+        byProvider: Object.entries(videoByProvider).map(([provider, s]) => ({
+          provider,
+          count: s.count,
+          cost: Math.round(s.cost * 100) / 100,
+        })),
+        recent: renders.slice(0, 20).map((r) => ({
+          id: r.id,
+          criativoId: r.criativo_id,
+          provider: r.provider,
+          status: r.status,
+          costUsd: Number(r.cost_usd ?? 0),
+          durationMs: r.duration_ms,
+          createdAt: r.created_at,
+          breakdown: r.cost_breakdown,
+        })),
+      },
     };
   });
 
