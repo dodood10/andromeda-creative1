@@ -23,7 +23,7 @@ export function createUserRateLimit(opts: {
   windowMs: number;
 }) {
   return createMiddleware({ type: "function" }).server(async ({ next, context }) => {
-    const userId = (context as { userId?: string }).userId;
+    const userId = (context as unknown as { userId?: string }).userId;
     if (!userId) return next();
     checkLimit(`${opts.key}:${userId}`, opts.max, opts.windowMs);
     return next();
