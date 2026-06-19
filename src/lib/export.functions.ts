@@ -502,14 +502,14 @@ export const getRenderJobStatus = createServerFn({ method: "POST" })
   .inputValidator(z.object({ criativoId: z.string().uuid() }))
   .handler(async ({ data }) => {
     const job = await getLatestRenderJob(data.criativoId);
-    if (!job) return { job: null as const };
+    if (!job) return { job: null as { id: string; status: string; provider: string; progress: Json; error: string | null } | null };
 
     return {
       job: {
         id: job.id,
         status: job.status,
         provider: job.provider,
-        progress: (job.progress as Record<string, unknown>) ?? {},
+        progress: (job.progress as Json) ?? ({} as Json),
         error: job.error,
       },
     };
