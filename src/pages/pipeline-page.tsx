@@ -733,7 +733,7 @@ export function PipelinePage({
                   onViewResultados={() => setViewResultados({ id: r.id, angulo: r.angulo })}
                   onPreview={() => handlePreview(r)}
                   previewLoading={previewLoading === r.id}
-                  organizationId={organizationId}
+                  organizationId={organizationId ?? undefined}
                   userId={user?.id}
                   onStatusUpdated={() => queryClient.invalidateQueries({ queryKey: ["criativos", projectId] })}
                   onNextDraft={(id) => navigate({ to: config.editorPath, search: { criativoId: id, focus: "audio" } })}
@@ -763,7 +763,7 @@ export function PipelinePage({
                           onViewResultados={() => setViewResultados({ id: r.id, angulo: r.angulo })}
                           onPreview={() => handlePreview(r)}
                           previewLoading={previewLoading === r.id}
-                          organizationId={organizationId}
+                          organizationId={organizationId ?? undefined}
                           userId={user?.id}
                           onStatusUpdated={() => queryClient.invalidateQueries({ queryKey: ["criativos", projectId] })}
                           onNextDraft={(id) => navigate({ to: config.editorPath, search: { criativoId: id, focus: "audio" } })}
@@ -800,7 +800,7 @@ export function PipelinePage({
                         onViewResultados={() => setViewResultados({ id: r.id, angulo: r.angulo })}
                         onPreview={() => handlePreview(r)}
                         previewLoading={previewLoading === r.id}
-                        organizationId={organizationId}
+                        organizationId={organizationId ?? undefined}
                         userId={user?.id}
                         onStatusUpdated={() => queryClient.invalidateQueries({ queryKey: ["criativos", projectId] })}
                         onNextDraft={(id) => navigate({ to: config.editorPath, search: { criativoId: id, focus: "audio" } })}
@@ -1048,7 +1048,7 @@ function CriativoCard({
             anguloNome={row.angulo}
             utm={row.utm_content ?? row.id}
             exportPaths={paths}
-            organizationId={organizationId}
+            organizationId={organizationId ?? undefined}
             userId={userId}
             onStatusUpdated={onStatusUpdated}
             onNextDraft={onNextDraft}
@@ -1184,7 +1184,7 @@ function CriativoRowItem({
             anguloNome={row.angulo}
             utm={row.utm_content ?? row.id}
             exportPaths={paths}
-            organizationId={organizationId}
+            organizationId={organizationId ?? undefined}
             userId={userId}
             onStatusUpdated={onStatusUpdated}
             onNextDraft={onNextDraft}
