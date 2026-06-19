@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/integrations/supabase/types";
+import type { Database, Json } from "@/integrations/supabase/types";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { EstiloProducao } from "@/lib/formato-recomendacao";
 import type { RoteiroBloco } from "@/lib/schemas/angulos.schema";
 import type { AudioPaths, ScoreJson } from "@/lib/types/criativo-json";
