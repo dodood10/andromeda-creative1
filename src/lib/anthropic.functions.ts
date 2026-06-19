@@ -406,7 +406,7 @@ Execute o processo completo: visite a URL com web_search, pesquise o que escala 
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
-          "x-api-key": apiKey,
+          "x-api-key": apiKey!,
           "anthropic-version": "2023-06-01",
           "content-type": "application/json",
         },

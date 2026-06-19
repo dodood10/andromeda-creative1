@@ -30,7 +30,7 @@ export function UpgradeBanner({
     }
     setLoading(true);
     try {
-      trackMetaInitiateCheckout();
+      trackMetaInitiateCheckout("pro");
       const { checkoutUrl } = await runCheckout({
         data: { organizationId, tier: "pro" },
       });

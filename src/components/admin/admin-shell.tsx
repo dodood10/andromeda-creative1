@@ -98,7 +98,7 @@ export function AdminShell() {
               key={item.url}
               to={item.url}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition ${
-                isActive(item.url, item.exact)
+                isActive(item.url, "exact" in item ? item.exact : undefined)
                   ? "bg-primary/15 text-primary-glow"
                   : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
               }`}
