@@ -460,7 +460,7 @@ export const avaliarCriativo = createServerFn({ method: "POST" })
       .every((d) => d.ok);
     const scoreJson: CriativoScore = { dimensoes, podeExportar, avaliadoEm: new Date().toISOString() };
 
-    await supabase.from("criativos").update({ score_json: scoreJson }).eq("id", data.criativoId);
+    await supabase.from("criativos").update({ score_json: scoreJson as unknown as Json }).eq("id", data.criativoId);
 
     return scoreJson;
   });
