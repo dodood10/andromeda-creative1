@@ -1041,7 +1041,7 @@ function CriativoCard({
             <Download className="size-3.5" />
           </Button>
         )}
-        <Link to={config.editorPath} search={{ criativoId: row.id }}>
+        <Link to={editorPath} search={{ criativoId: row.id }}>
           <Button size="sm" variant="outline" className="min-h-11">Editor</Button>
         </Link>
         {row.export_status === "pronto" && (
@@ -1063,7 +1063,7 @@ function CriativoCard({
           />
         )}
         {row.export_status !== "pronto" && (
-          <Link to={config.editorPath} search={{ criativoId: row.id, focus: "score" }}>
+          <Link to={editorPath} search={{ criativoId: row.id, focus: "score" }}>
             <Button size="sm" className="min-h-11 bg-gradient-primary border-0">Exportar</Button>
           </Link>
         )}
@@ -1178,7 +1178,7 @@ function CriativoRowItem({
             </DropdownMenu>
           )
         ) : null}
-        <Link to={config.editorPath} search={{ criativoId: row.id }}>
+        <Link to={editorPath} search={{ criativoId: row.id }}>
           <Button size="sm" variant="ghost">Editor</Button>
         </Link>
         {row.export_status === "pronto" && (
@@ -1200,7 +1200,7 @@ function CriativoRowItem({
           />
         )}
         {row.export_status !== "pronto" && row.status !== "Pausado" && (
-          <Link to={config.editorPath} search={{ criativoId: row.id, focus: "score" }}>
+          <Link to={editorPath} search={{ criativoId: row.id, focus: "score" }}>
             <Button size="sm" variant="outline" className="border-warning/40 text-warning">
               Exportar
             </Button>
