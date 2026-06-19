@@ -37,7 +37,7 @@ export function estimateRenderCost(params: {
   clipsGenerated?: number;
 }): RenderCostBreakdown {
   const blocos = params.roteiro.length;
-  const chars = params.roteiro.reduce((s, b) => s + (b.texto?.length ?? 0), 0);
+  const chars = params.roteiro.reduce((s, b) => s + (b.conteudo?.length ?? 0), 0);
 
   let tts = chars * RENDER_COST_TABLE.ttsPerChar;
   let video = 0;
