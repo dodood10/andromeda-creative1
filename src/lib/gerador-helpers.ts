@@ -141,6 +141,7 @@ export function angleIntelBadge(
 
 export { pickFunnelSchwartzPackage } from "./schwartz-angulo";
 export { explainAnguloRank, scoreAnguloVsChampions } from "./champion-angle-ranking";
+export type { ChampionRankingContext } from "./champion-angle-ranking";
 
 /** Monta formatos diversificados para pacote A/B com base no histórico do projeto. */
 export function buildAbTestFormatoMap(
