@@ -1954,7 +1954,7 @@ export const importMetricasCsv = createServerFn({ method: "POST" })
 
       const strong = csvRowIndicatesStrongPerformance(row.metrics);
       if (utmExact && strong) {
-        const patch: Record<string, unknown> = {};
+        const patch: Database["public"]["Tables"]["criativos"]["Update"] = {};
         if (match.status === "Rodando" || match.status === "Subiu") {
           patch.status = "Performando";
           performandoAuto++;
