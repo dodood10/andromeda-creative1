@@ -463,7 +463,11 @@ export function GeradorPage({
       if (!saved.geracaoId) return;
       setGeracaoId(saved.geracaoId);
       setSelectedAngulos(new Set(saved.selectedAngulos));
-      setWizardStep(saved.wizardStep === "formato" || saved.wizardStep === "estilo" || saved.wizardStep === "selecao" ? "producao" : saved.wizardStep);
+      {
+        const legacySteps = ["formato", "estilo", "selecao"] as const;
+        const step = saved.wizardStep as string;
+        setWizardStep((legacySteps as readonly string[]).includes(step) ? "producao" : (step as WizardStep));
+      }
       if (saved.formatoPorAngulo) {
         setFormatoPorAngulo(saved.formatoPorAngulo);
       } else if ("formatoSaida" in saved && saved.formatoSaida) {
@@ -979,8 +983,8 @@ export function GeradorPage({
       {mode !== "vsl" && (
       <AppBreadcrumbs
         items={[
-          { label: mode === "vsl" ? "VSL" : "Dashboard", to: mode === "vsl" ? config.cockpitPath : "/app" },
-          { label: mode === "vsl" ? "Gerar VSL" : "Gerador", to: config.geradorPath },
+          { label: "Dashboard", to: "/app" },
+          { label: "Gerador", to: config.geradorPath },
           ...(etapa !== "input"
             ? [
                 {
