@@ -38,12 +38,17 @@ export async function updateRenderJob(
     result_paths?: string[];
     error?: string;
     external_job_id?: string;
+    cost_usd?: number;
+    cost_breakdown?: Record<string, unknown>;
+    duration_ms?: number;
   },
 ) {
+  const { cost_breakdown, ...rest } = patch;
   const { error } = await supabaseAdmin
     .from("video_render_jobs")
     .update({
-      ...patch,
+      ...rest,
+      cost_breakdown: cost_breakdown as never,
       result_paths: patch.result_paths ?? undefined,
       updated_at: new Date().toISOString(),
     })

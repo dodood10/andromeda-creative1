@@ -11,6 +11,7 @@ import {
 import { callFfmpegRender } from "@/lib/render/render-ffmpeg";
 import { executeBrollRender } from "@/lib/render/render-broll";
 import { createRenderJob, updateRenderJob } from "@/lib/render/render-jobs";
+import { estimateRenderCost } from "@/lib/render/render-cost";
 import {
   actorFromRecomendacao,
   buildUgcScript,
@@ -107,6 +108,8 @@ export async function executeCriativoRender(params: {
   const jobId =
     params.existingJobId ?? (await createRenderJob({ criativoId: criativo.id, provider }));
 
+  const startedAt = Date.now();
+
   try {
     await updateRenderJob(jobId, {
       status: "running",
@@ -167,10 +170,20 @@ export async function executeCriativoRender(params: {
       paths = result.paths;
     }
 
+    const cost = estimateRenderCost({
+      pipeline: resolved.pipeline,
+      provider,
+      roteiro,
+      clipsGenerated: resolved.pipeline === "broll_ia" ? roteiro.length : undefined,
+    });
+
     await updateRenderJob(jobId, {
       status: "done",
       result_paths: paths,
       progress: { step: "done", message: "Export concluído" },
+      cost_usd: cost.total_usd,
+      cost_breakdown: cost as unknown as Record<string, unknown>,
+      duration_ms: Date.now() - startedAt,
     });
 
     return { paths, devMode: false, resolved };
@@ -178,6 +191,7 @@ export async function executeCriativoRender(params: {
     await updateRenderJob(jobId, {
       status: "failed",
       error: e instanceof Error ? e.message : String(e),
+      duration_ms: Date.now() - startedAt,
     });
     throw e;
   }
