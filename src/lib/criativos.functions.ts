@@ -226,7 +226,7 @@ export const updateCriativoRoteiro = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const patch: Record<string, unknown> = { roteiro: data.roteiro };
+    const patch: Database["public"]["Tables"]["criativos"]["Update"] = { roteiro: data.roteiro as unknown as Json };
     if (data.voiceId !== undefined) patch.voice_id = data.voiceId;
     if (data.backgroundMediaPath !== undefined) {
       assertUserOwnedMediaPath(userId, data.backgroundMediaPath);
