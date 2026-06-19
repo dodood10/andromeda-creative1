@@ -966,6 +966,7 @@ type CriativoActionsProps = {
   userId?: string;
   onStatusUpdated?: () => void;
   onNextDraft?: (criativoId: string) => void;
+  editorPath?: "/app/editor" | "/app/vsl/editor";
 };
 
 function CriativoCard({
