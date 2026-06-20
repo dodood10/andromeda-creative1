@@ -68,6 +68,7 @@ export async function callAnthropicJson(params: {
   userMessage: string;
   maxTokens?: number;
   useWebSearch?: boolean;
+  webSearchMaxUses?: number;
 }): Promise<string> {
   const body: Record<string, unknown> = {
     model: "claude-sonnet-4-5",
@@ -77,7 +78,9 @@ export async function callAnthropicJson(params: {
     stream: true,
   };
   if (params.useWebSearch) {
-    body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }];
+    body.tools = [
+      { type: "web_search_20250305", name: "web_search", max_uses: params.webSearchMaxUses ?? 3 },
+    ];
   }
 
   const delays = [0, 1000, 3000];
