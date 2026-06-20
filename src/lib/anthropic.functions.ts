@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { refineBlockWithAI } from "./anthropic-refine";
+import { callAnthropicJson, extractJsonFromAnthropicText } from "./anthropic-json";
 import { trackApiUsage } from "./api-usage";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getProjectFormatContext, normalizeAngulo } from "./formato-recomendacao";
@@ -91,44 +92,20 @@ ${contextBlocks}
 
 Gere a pergunta cirúrgica adaptada a este produto específico (não genérica) seguindo a regra acima. Use o contexto do projeto quando disponível para evitar perguntas óbvias já respondidas pelos dados.`;
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 512,
+    try {
+      const text = await callAnthropicJson({
+        apiKey,
         system: PERGUNTA_SYSTEM,
-        messages: [{ role: "user", content: userMsg }],
-      }),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
+        userMessage: userMsg,
+        maxTokens: 512,
+      });
+      const raw = extractJsonFromAnthropicText(text) as { pergunta: string; justificativa: string };
+      trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: true });
+      return raw;
+    } catch (e) {
       trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: false });
-      throw new Error(`Anthropic ${res.status}: ${errText}`);
+      throw e;
     }
-
-    const payload = (await res.json()) as {
-      content: Array<{ type: string; text?: string }>;
-    };
-    const text = payload.content
-      .filter((b) => b.type === "text" && b.text)
-      .map((b) => b.text as string)
-      .join("\n")
-      .trim();
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: false });
-      throw new Error("Resposta sem JSON: " + text.slice(0, 200));
-    }
-
-    trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: true });
-    return JSON.parse(jsonMatch[0]) as { pergunta: string; justificativa: string };
   });
 
 // =====================================================
