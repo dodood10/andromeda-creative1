@@ -1,30 +1,21 @@
-# Corrigir erro "Anthropic 524"
+Plano para corrigir o erro `Anthropic 524`:
 
-## Diagnóstico
-O 524 é um timeout da Cloudflare entre nosso servidor e a Anthropic — significa que a API demorou mais de ~100s para responder. Hoje em `src/lib/anthropic-json.ts` fazemos uma chamada POST não-streaming para `claude-sonnet-4-5` com `max_tokens: 8192` (e opcionalmente `web_search`), que frequentemente excede esse limite, especialmente em VSL, escala, congruence-check, offer-snapshot e import-creative.
+1. **Centralizar as chamadas Anthropic**
+   - Reutilizar `callAnthropicJson` nas partes que ainda fazem `fetch` direto para Anthropic.
+   - Aplicar streaming e retry também em `gerar_angulos` e `pergunta_cirurgica`, que ainda podem estourar 524.
 
-## O que mudar
+2. **Reduzir risco nas chamadas longas**
+   - Diminuir `max_tokens` das chamadas mais pesadas que ainda usam `8192`, especialmente VSL, escala e geração de ângulos.
+   - Reduzir `web_search.max_uses` das chamadas mais lentas para evitar timeout.
 
-1. **Usar streaming na chamada Anthropic** (`src/lib/anthropic-json.ts`)
-   - Adicionar `stream: true` no body.
-   - Manter a conexão viva chunk-a-chunk (evita o 524 do edge).
-   - Concatenar `content_block_delta` (`text_delta`) e retornar a mesma string final — assinatura pública de `callAnthropicJson` inalterada.
+3. **Melhorar mensagem para o usuário**
+   - Atualizar `formatAnthropicError` para tratar `524`, `522`, `502`, `503` e `504` como demora/instabilidade temporária da IA.
+   - Evitar mostrar o erro cru `Anthropic 524: error code: 524` no toast.
 
-2. **Retry com backoff em erros transitórios**
-   - Reexecutar até 2 vezes em caso de 524/529/502/503/timeout de rede.
-   - Backoff curto (1s, 3s) para não bloquear a UX.
+4. **Manter fallback onde já existe**
+   - Preservar o fallback da VSL que já retorna roteiro em modo dev quando a IA falha.
+   - Nas outras rotas, manter o comportamento atual, mas com erro amigável e retry antes de falhar.
 
-3. **Reduzir `max_tokens` padrão**
-   - De 8192 → 4096 quando o caller não especificar.
-   - Callers que precisam de mais (VSL longa) continuam passando explicitamente.
-
-4. **Mensagem de erro amigável**
-   - Em `src/lib/lovable-error-reporting.ts` (ou no toast do caller), traduzir "Anthropic 524" para "A IA demorou demais para responder. Tente novamente." em vez de expor o código bruto.
-
-## Fora de escopo
-- Sem trocar modelo (continua `claude-sonnet-4-5`).
-- Sem mexer nos prompts/system.
-- Sem alterar UI das páginas que chamam.
-
-## Validação
-- Rodar gerador de VSL e import-creative após o build; conferir logs de servidor (`stack_modern--server-function-logs`) para garantir que não há mais 524 e que o streaming completa.
+5. **Validar depois da implementação**
+   - Conferir logs de server functions para confirmar que o erro bruto não continua sendo propagado.
+   - Verificar as chamadas principais afetadas: geração de ângulos, VSL e escala.

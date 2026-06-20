@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { refineBlockWithAI } from "./anthropic-refine";
+import { callAnthropicJson, extractJsonFromAnthropicText } from "./anthropic-json";
 import { trackApiUsage } from "./api-usage";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getProjectFormatContext, normalizeAngulo } from "./formato-recomendacao";
@@ -91,44 +92,20 @@ ${contextBlocks}
 
 Gere a pergunta cirúrgica adaptada a este produto específico (não genérica) seguindo a regra acima. Use o contexto do projeto quando disponível para evitar perguntas óbvias já respondidas pelos dados.`;
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 512,
+    try {
+      const text = await callAnthropicJson({
+        apiKey,
         system: PERGUNTA_SYSTEM,
-        messages: [{ role: "user", content: userMsg }],
-      }),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
+        userMessage: userMsg,
+        maxTokens: 512,
+      });
+      const raw = extractJsonFromAnthropicText(text) as { pergunta: string; justificativa: string };
+      trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: true });
+      return raw;
+    } catch (e) {
       trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: false });
-      throw new Error(`Anthropic ${res.status}: ${errText}`);
+      throw e;
     }
-
-    const payload = (await res.json()) as {
-      content: Array<{ type: string; text?: string }>;
-    };
-    const text = payload.content
-      .filter((b) => b.type === "text" && b.text)
-      .map((b) => b.text as string)
-      .join("\n")
-      .trim();
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: false });
-      throw new Error("Resposta sem JSON: " + text.slice(0, 200));
-    }
-
-    trackApiUsage({ userId: context.userId, eventType: "pergunta_cirurgica", success: true });
-    return JSON.parse(jsonMatch[0]) as { pergunta: string; justificativa: string };
   });
 
 // =====================================================
@@ -403,41 +380,16 @@ Calibração de tom: ${tomLabel}${projectContextBlock}
 Execute o processo completo: visite a URL com web_search, pesquise o que escala agora no nicho, mapeie persona e micropersonas, identifique variáveis fixas vs exploráveis, e devolva o JSON especificado com diagnóstico + 5 ângulos. Aplique as REGRAS DE CALIBRAÇÃO DE TOM POR BLOCO. Inclua nivel_conspiracao, saturacao_hook, janela_relevancia e recomendacao_formato em cada ângulo. Inclua panorama_formatos_nicho no diagnóstico.`;
 
     async function callAngulos(extraHint = ""): Promise<ResultadoAngulos> {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey!,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-5",
-          max_tokens: 8192,
-          system: SYSTEM_PROMPT,
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
-          messages: [{ role: "user", content: userMsg + extraHint }],
-        }),
+      const text = await callAnthropicJson({
+        apiKey: apiKey!,
+        system: SYSTEM_PROMPT,
+        userMessage: userMsg + extraHint,
+        maxTokens: 6144,
+        useWebSearch: true,
+        webSearchMaxUses: 3,
       });
 
-      if (!res.ok) {
-        const errText = await res.text();
-        trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
-        throw new Error(`Anthropic ${res.status}: ${errText}`);
-      }
-
-      const payload = (await res.json()) as {
-        content: Array<{ type: string; text?: string }>;
-      };
-      const text = payload.content
-        .filter((b) => b.type === "text" && b.text)
-        .map((b) => b.text as string)
-        .join("\n")
-        .trim();
-
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("Resposta sem JSON: " + text.slice(0, 200));
-
-      const parsed = ResultadoAngulosSchema.safeParse(JSON.parse(jsonMatch[0]));
+      const parsed = ResultadoAngulosSchema.safeParse(extractJsonFromAnthropicText(text));
       if (!parsed.success) {
         trackApiUsage({ userId: context.userId, eventType: "gerar_angulos", success: false });
         throw new Error("JSON inválido: " + parsed.error.message.slice(0, 200));

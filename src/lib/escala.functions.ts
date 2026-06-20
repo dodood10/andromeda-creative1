@@ -159,7 +159,7 @@ Execute as 4 operações e devolva o menu completo das 7 variações.`;
     apiKey,
     system: escalaAnaliseSystemFor(campeao.formato_saida),
     userMessage: userMsg,
-    maxTokens: 8192,
+    maxTokens: 6144,
   });
 
   const parsed = EscalaAnaliseSchema.safeParse(extractJsonFromAnthropicText(text));
@@ -313,7 +313,7 @@ Gere roteiro COMPLETO com a variação aplicada. Mantenha corpo idêntico exceto
           apiKey,
           system: variacaoSystem,
           userMessage: userMsg,
-          maxTokens: 6144,
+          maxTokens: 4096,
         });
         const parsed = EscalaVariacaoOutputSchema.safeParse(extractJsonFromAnthropicText(text));
         if (!parsed.success) {
