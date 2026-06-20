@@ -42,6 +42,9 @@ export async function runWithConcurrency<T>(
 const CONFIANCA_RANK: Record<string, number> = { alta: 3, media: 2, baixa: 1 };
 
 export function formatAnthropicError(raw: string): string {
+  if (/\b(502|503|504|522|524)\b/.test(raw)) {
+    return "A IA demorou demais para responder. Tente novamente em alguns instantes.";
+  }
   if (raw.includes("429") || raw.toLowerCase().includes("rate limit")) {
     return "Limite de requisições atingido — aguarde ~30s e tente novamente.";
   }
