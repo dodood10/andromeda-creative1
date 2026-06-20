@@ -1,26 +1,30 @@
-## Plano
+# Corrigir erro "Anthropic 524"
 
-1. **Parar de depender do `.env` para a service role no frontend/preview**
-   - Manter `SUPABASE_SERVICE_ROLE_KEY` como segredo server-side, não como variável `VITE_` nem exposta ao navegador.
-   - Ajustar a mensagem de erro para não sugerir reconectar Supabase quando o segredo já existe no ambiente do projeto.
+## Diagnóstico
+O 524 é um timeout da Cloudflare entre nosso servidor e a Anthropic — significa que a API demorou mais de ~100s para responder. Hoje em `src/lib/anthropic-json.ts` fazemos uma chamada POST não-streaming para `claude-sonnet-4-5` com `max_tokens: 8192` (e opcionalmente `web_search`), que frequentemente excede esse limite, especialmente em VSL, escala, congruence-check, offer-snapshot e import-creative.
 
-2. **Corrigir imports server-only carregados cedo demais**
-   - Remover imports diretos de `@/integrations/supabase/client.server` de arquivos `*.functions.ts` e helpers que entram no grafo do cliente.
-   - Carregar `supabaseAdmin` apenas dentro de handlers/funções server-side usando `await import(...)`, especialmente em:
-     - `src/lib/criativos.functions.ts`
-     - `src/lib/admin.functions.ts`
-     - `src/lib/stock-media.functions.ts`
-     - helpers de rastreio como `api-usage` e `funnel-events`
+## O que mudar
 
-3. **Preservar segurança**
-   - Não mover `SUPABASE_SERVICE_ROLE_KEY` para `VITE_`.
-   - Não expor a chave no bundle do browser.
-   - Manter operações admin apenas no servidor.
+1. **Usar streaming na chamada Anthropic** (`src/lib/anthropic-json.ts`)
+   - Adicionar `stream: true` no body.
+   - Manter a conexão viva chunk-a-chunk (evita o 524 do edge).
+   - Concatenar `content_block_delta` (`text_delta`) e retornar a mesma string final — assinatura pública de `callAnthropicJson` inalterada.
 
-4. **Validar o ponto do erro**
-   - Conferir logs do dev server depois da alteração.
-   - Verificar que a página inicial/fluxo não dispara mais `Missing Supabase environment variable(s): SUPABASE_SERVICE_ROLE_KEY` por import prematuro.
+2. **Retry com backoff em erros transitórios**
+   - Reexecutar até 2 vezes em caso de 524/529/502/503/timeout de rede.
+   - Backoff curto (1s, 3s) para não bloquear a UX.
 
-## Observação
+3. **Reduzir `max_tokens` padrão**
+   - De 8192 → 4096 quando o caller não especificar.
+   - Callers que precisam de mais (VSL longa) continuam passando explicitamente.
 
-Mesmo que o `.env` tenha credenciais públicas (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`), a `SUPABASE_SERVICE_ROLE_KEY` precisa existir como segredo server-side e só pode ser lida em código executado no servidor. O erro atual indica principalmente que algum módulo admin está sendo importado antes/fora do contexto correto.
+4. **Mensagem de erro amigável**
+   - Em `src/lib/lovable-error-reporting.ts` (ou no toast do caller), traduzir "Anthropic 524" para "A IA demorou demais para responder. Tente novamente." em vez de expor o código bruto.
+
+## Fora de escopo
+- Sem trocar modelo (continua `claude-sonnet-4-5`).
+- Sem mexer nos prompts/system.
+- Sem alterar UI das páginas que chamam.
+
+## Validação
+- Rodar gerador de VSL e import-creative após o build; conferir logs de servidor (`stack_modern--server-function-logs`) para garantir que não há mais 524 e que o streaming completa.
