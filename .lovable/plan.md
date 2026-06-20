@@ -1,100 +1,54 @@
 ## Objetivo
 
-Evoluir o gerador com as 5 melhorias propostas: pergunta cirúrgica gerada pela IA (etapa 0), calibração de tom aplicada por bloco, nível de conspiração no output, alerta de saturação do hook e janela de relevância por ângulo.
+Substituir toda a copy da landing page atual (`src/routes/index.tsx`) pela nova narrativa de vendas fornecida, mantendo o stack visual (cores, fontes, gradientes, `glass`, badges) e gerando novos visuais para ilustrar as seções-chave. Sem mexer no checkout — o preço R$67 fica apenas como texto, com CTA apontando para o fluxo de cadastro/onboarding existente.
 
-## 1. Etapa 0 — Pergunta cirúrgica gerada pela IA
+## Estrutura final da página (de cima para baixo)
 
-Hoje o campo `perguntaCirurgica` é preenchido livremente pelo usuário. Vamos transformar em fluxo de duas etapas no gerador:
+1. **Nav** — manter como está (logo, links, Entrar, Criar conta).
+2. **Hero**
+   - H1: "Transforme qualquer oferta em criativos que convertem."
+   - Sub: "Cole a URL da sua oferta e receba 5 novos ângulos de venda e 5 criativos prontos para anunciar em menos de 5 minutos."
+   - CTA primário: "Criar meus primeiros criativos" → `/login?redirect=/app/onboarding`
+   - Microcopy: "Sem cartão de crédito"
+   - 3 selos de prova: "R$30M investidos em Meta Ads · R$10M gerados recentemente · Milhares de criativos testados"
+   - Visual hero novo (substitui `hero-dashboard.jpg`).
+3. **Problema** — "O Meta não recompensa quem cria anúncios. Recompensa quem encontra criativos vencedores mais rápido." + lista do processo tradicional + frase final "O problema não é falta de talento. É falta de velocidade."
+4. **Apresentando o Andromeda** — "O sistema que transforma ofertas em criativos prontos para escalar." + 3 negações ("Não é apenas...") + lista de 5 pilares (Pesquisa de mercado, Estratégia, Ângulos, Produção, Escala).
+5. **Como funciona** — 4 passos numerados (01–04): Cole a URL · Descubra oportunidades · 5 ângulos prontos · Gere seus criativos. Cada um com bullets curtos.
+6. **Tudo o que você recebe** — grid de 6 cards: Inteligência de mercado, 5 ângulos, 5 criativos, Editor integrado, Sistema de escala, Histórico completo.
+7. **Por que funciona** — bloco editorial destacando "geramos hipóteses de conversão, não conteúdo".
+8. **O verdadeiro benefício** — bloco com a frase "Você está comprando velocidade" + comparativos "Enquanto seu concorrente... você...".
+9. **Comparação** — 2 colunas: "Processo tradicional (dias)" × "Com Andromeda (menos de 5 minutos)".
+10. **Para quem é** — 5 cards: E-commerce, Infoprodutos, SaaS, Serviços, Agências.
+11. **O que está incluso (Starter — R$67)** — card com lista de entregas e CTA "Quero começar por R$67" (mesmo destino do CTA principal; nada de checkout novo).
+12. **FAQ** — accordion com as 6 perguntas fornecidas.
+13. **CTA final** — "Seu próximo criativo vencedor pode estar a menos de 5 minutos de distância." + "Criar meus primeiros criativos" + microcopy "Sem cartão. Sem assinatura. Sem fidelidade."
+14. **Footer** — manter.
 
-- **Nova server function `gerarPerguntaCirurgica`** em `src/lib/anthropic.functions.ts`:
-  - Input: `url`, `productType`, `goal`, `context`.
-  - Usa Claude (sem `web_search`, mais barato/rápido) com um system prompt curto que recebe regras por tipo de produto:
-    - `ecom` → "qual é a principal objeção que impede a compra"
-    - `info` → "qual transformação o cliente mais cita ao recomendar"
-    - `saas` → "qual workflow manual o avatar faz hoje que o produto elimina"
-    - `ticket` → "qual decisão grande está travada esperando esse serviço"
-    - `saude` → "qual solução o avatar já tentou e por que falhou"
-  - Retorna `{ pergunta: string, justificativa: string }` em JSON.
+## Visuais novos (imagegen)
 
-- **UI no `app.gerador.tsx`**:
-  - Botão principal vira **"Gerar pergunta cirúrgica"** quando ainda não há pergunta.
-  - Ao receber resposta, mostra card destacado com a pergunta + textarea para o usuário responder + botão **"Gerar 5 ângulos"**.
-  - O campo livre de pergunta cirúrgica atual vira só a resposta (label muda para "Sua resposta").
-  - Adicionar botão pequeno "Pular e gerar direto" para usuários experientes.
+Substituir/adicionar imagens em `src/assets/`:
+- `hero-andromeda.jpg` — hero principal: composição abstrata mostrando uma URL "virando" 5 cards de criativo (metáfora de transformação), paleta roxo/violeta do design system, estilo editorial premium.
+- `problem-speed.jpg` — ilustração da seção Problema: dois cronômetros/linhas-do-tempo lado a lado, sensação de velocidade.
+- `how-it-works.jpg` — visual abstrato da seção "Como funciona" (4 etapas conectadas).
 
-## 2. Calibração de tom aplicada bloco a bloco
+Tom: dark, sofisticado, gradientes roxo→azul já usados no projeto. Sem logos genéricos de IA, sem stock photos.
 
-No `SYSTEM_PROMPT` do `gerarAngulos`, adicionar bloco novo **REGRAS DE CALIBRAÇÃO DE TOM POR BLOCO**:
+## Componentes a adicionar
 
-- Hook (0-3s): sempre linguagem exata da micropersona, ignora calibração escolhida.
-- Agitação da dor (3-10s): aplica a calibração no máximo da intensidade escolhida.
-- Mecanismo (10-20s): sempre técnico/preciso, ignora calibração.
-- Prova/consequência (20-30s): aplica calibração escolhida no nível médio.
-- CTA (30-45s): sempre direto, ignora calibração.
+- `Accordion` do shadcn (`@/components/ui/accordion`) para o FAQ — verificar se já existe; se não, adicionar.
 
-Sem mudanças no schema — apenas reforço de instrução para Claude gerar o `conteudo` de cada bloco respeitando essas regras.
+## Detalhes técnicos
 
-## 3. Nível de conspiração no output
+- Arquivo único: `src/routes/index.tsx`. Reescrever o `Landing` component inteiro.
+- Manter os imports/exports do `Route` e `head()` — apenas atualizar `title`/`description` para refletir a nova promessa ("Transforme qualquer oferta em criativos que convertem em menos de 5 minutos.").
+- Manter design tokens (`bg-gradient-primary`, `glass`, `shadow-glow`, `text-primary-glow`). Nada de classes de cor hardcoded.
+- CTAs: todos os botões "Criar meus primeiros criativos" e "Quero começar por R$67" usam `<Link to="/login" search={{ redirect: "/app/onboarding" }}>`.
+- Nav mobile: manter o comportamento existente.
+- Sem mudanças em rotas, backend, schema ou secrets.
 
-Adicionar ao schema de cada ângulo:
+## Fora de escopo
 
-```ts
-nivel_conspiracao: "sem" | "leve" | "forte"
-// "sem" = foco em mecanismo científico
-// "leve" = "a indústria não quer que você saiba"
-// "forte" = big pharma / governo / convencional escondendo
-```
-
-- No `SYSTEM_PROMPT`: instruir que para nichos onde conspiração é variável fixa (saúde, emagrecimento, finanças) o nível precisa estar coerente com o que escala no nicho; para outros nichos pode ser `"sem"`.
-- Na UI: badge inline no header de cada ângulo (cor sutil) ao lado do badge de tipo, e linha no grid de metadados.
-
-## 4. Alerta de saturação do hook
-
-Adicionar ao schema de cada ângulo:
-
-```ts
-saturacao_hook: {
-  status: "saturado" | "neutro" | "sub_explorado",
-  observacao: string  // por que está nesse estado segundo a pesquisa de mercado
-}
-```
-
-- No `SYSTEM_PROMPT`: na etapa 2 (pesquisa via web_search), a IA já mapeia hooks saturando — agora deve devolver explicitamente esse sinal por ângulo.
-- Na UI: ícone + badge colorido (vermelho saturado, neutro cinza, verde sub_explorado) dentro do card "Sinais Andromeda esperados", com tooltip mostrando a observação.
-
-## 5. Janela de relevância
-
-Adicionar ao schema de cada ângulo:
-
-```ts
-janela_relevancia: {
-  tipo: "atemporal" | "media" | "curta",
-  estimativa: string,  // ex: "60-90 dias antes de saturar no nicho"
-  motivo: string       // por que essa janela
-}
-```
-
-- No `SYSTEM_PROMPT`: instrução para classificar (ângulos de mecanismo único e objeção invertida tendem a atemporal; tendência/sazonal tendem a curta).
-- Na UI: pequena seção "Janela de relevância" abaixo dos sinais Andromeda, com ícone de relógio, badge do tipo e texto da estimativa/motivo.
-
-## Arquivos a editar
-
-- `src/lib/anthropic.functions.ts`
-  - Adicionar `gerarPerguntaCirurgica` (nova server fn) e o tipo de retorno.
-  - Atualizar `SYSTEM_PROMPT` do `gerarAngulos` com: regras de calibração por bloco, exigência de `nivel_conspiracao`, `saturacao_hook`, `janela_relevancia`.
-  - Atualizar `ResultadoAngulos` com os três novos campos por ângulo.
-
-- `src/routes/app.gerador.tsx`
-  - Estado novo: `pergunta` (objeto vindo da etapa 0), `etapa` ("input" | "respondendo" | "resultado").
-  - Card de pergunta cirúrgica gerada (etapa intermediária) com textarea de resposta e dois CTAs (Gerar ângulos / Pular).
-  - Renderizar `nivel_conspiracao`, `saturacao_hook` e `janela_relevancia` em cada `AccordionItem`.
-
-## Sem mudança em
-
-- Modelo continua `claude-sonnet-4-5` + `web_search_20250305`.
-- Secrets já configurados (`ANTHROPIC_API_KEY`).
-- Demais rotas e infra.
-
-## Validação
-
-Rodar uma geração end-to-end no preview com uma URL real, conferir no console que o JSON volta com `nivel_conspiracao`, `saturacao_hook`, `janela_relevancia` populados, e que o fluxo de pergunta cirúrgica funciona (geração → resposta → ângulos).
+- Checkout R$67 funcional (apenas texto).
+- Mudanças em `/planos`, `/app/*`, ou qualquer página além da landing.
+- Mudanças no design system (`src/styles.css`).
