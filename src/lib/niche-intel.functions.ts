@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { callAnthropicJson, extractJsonFromAnthropicText } from "./anthropic-json";
 
 function nichoKey(nicho: string) {
   return nicho
@@ -42,16 +43,12 @@ async function generateNicheIntel(nichoLabel: string): Promise<NicheIntelGenerat
     };
   }
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-5",
-      max_tokens: 1024,
+  try {
+    const text = await callAnthropicJson({
+      apiKey,
+      maxTokens: 1024,
+      useWebSearch: true,
+      webSearchMaxUses: 2,
       system: `Você é analista de Meta Ads. Gere 3 insights curtos sobre o que está escalando HOJE no nicho informado.
 Inclua benchmarks típicos do nicho (estimativa conservadora baseada em mercado BR).
 Responda APENAS JSON: {
@@ -59,17 +56,14 @@ Responda APENAS JSON: {
   "benchmarks": { "cpa_medio_brl": number|null, "roas_medio": number|null, "hook_rate_medio_pct": number|null }
 }
 Português do Brasil. Sem markdown.`,
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
-      messages: [
-        {
-          role: "user",
-          content: `Nicho: ${nichoLabel}. O que está funcionando em criativos de vídeo para Meta Ads neste nicho agora?`,
-        },
-      ],
-    }),
-  });
-
-  if (!res.ok) {
+      userMessage: `Nicho: ${nichoLabel}. O que está funcionando em criativos de vídeo para Meta Ads neste nicho agora?`,
+    });
+    const parsed = extractJsonFromAnthropicText(text) as NicheIntelGenerated;
+    return {
+      insights: parsed.insights?.slice(0, 3) ?? [],
+      benchmarks: parsed.benchmarks,
+    };
+  } catch {
     return {
       insights: [
         {
@@ -79,25 +73,6 @@ Português do Brasil. Sem markdown.`,
         },
       ],
     };
-  }
-
-  const payload = (await res.json()) as {
-    content: Array<{ type: string; text?: string }>;
-  };
-  const text = payload.content
-    .filter((b) => b.type === "text" && b.text)
-    .map((b) => b.text as string)
-    .join("\n");
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) return { insights: [] };
-  try {
-    const parsed = JSON.parse(match[0]) as NicheIntelGenerated;
-    return {
-      insights: parsed.insights?.slice(0, 3) ?? [],
-      benchmarks: parsed.benchmarks,
-    };
-  } catch {
-    return { insights: [] };
   }
 }
 
