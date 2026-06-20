@@ -129,8 +129,9 @@ Gere a VSL completa em JSON respeitando a duração alvo e a calibração de tom
       apiKey: params.apiKey,
       system: VSL_CURTA_SYSTEM,
       userMessage: userMsg,
-      maxTokens: 8192,
+      maxTokens: 6144,
       useWebSearch: true,
+      webSearchMaxUses: 2,
     });
     const parsed = VslOutputSchema.safeParse(extractJsonFromAnthropicText(text));
     if (!parsed.success) {
